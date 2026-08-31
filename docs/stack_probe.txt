@@ -1,0 +1,15 @@
+numpy
+scipy
+matplotlib
+galois
+soundfile
+sigmf
+scikit-commpy
+reedsolo
+scikit-learn
+lightgbm
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+pytest
