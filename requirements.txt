@@ -1,0 +1,59 @@
+# Raaya - pinned against Python 3.11.9.
+#
+# TARGET: Python 3.11.9 on every machine and in the image.
+#   Windows/macOS:  winget install --id Python.Python.3.11    (gives 3.11.9)
+#   container:      FROM python:3.11.9-slim
+# Why 3.11.9 specifically and not "latest 3.11": 3.11 is in security-only mode,
+# and those releases are source-only - python.org publishes no Windows
+# installer past 3.11.9. So 3.11.9 is the newest 3.11 the whole team can
+# actually install with one command, and pinning the image to match means
+# local and container are the same interpreter. See docs/python-version-decision.md.
+#
+# Every version below was resolved by pip ON 3.11.9 and then exercised:
+# docs/stack_check.py passes 11/11 (GF(2) rank, Viterbi hard+soft, RS
+# correction, a LightGBM fit), and tests/unit passes 83/83.
+#
+# DO NOT copy pins from a 3.13 environment. numpy 2.5.x and scipy 1.18.x both
+# declare Requires-Python >=3.12 and are NOT INSTALLABLE on 3.11 - an earlier
+# version of this file pinned exactly those and would have failed the image
+# build outright.
+
+# core numerics - everything sits on these
+numpy==2.4.6
+scipy==1.17.1
+matplotlib==3.11.1
+
+# S4's whole reason for existing: rank over GF(2)
+galois==0.4.11
+# pulled in by galois. These are the compiled wheels that tie the stack to a
+# Python minor version (cp311); listed so the pin is visible.
+numba==0.67.0
+llvmlite==0.49.0
+
+# file I/O.  soundfile needs libsndfile1 in the image.
+soundfile==0.14.0
+SigMF==1.13.0
+
+# forward error correction - do NOT write your own.
+# Two conventions are pinned by tests/unit/test_s5_decode.py:
+#   - generators are LSB-first (the octal's LSB multiplies the current input bit)
+#   - viterbi_decode(decoding_type='unquantized') wants soft values as 2b-1,
+#     i.e. bit 0 -> -1, bit 1 -> +1. Raw 0/1, or the opposite sign, decodes to
+#     noise without raising anything.
+scikit-commpy==0.8.0
+reedsolo==1.7.0
+
+# the one ML component.  LightGBM needs libgomp1 in the image - without it it
+# imports fine and dies the first time it trains.
+scikit-learn==1.9.0
+lightgbm==4.7.0
+
+# service layer
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.5
+python-multipart==0.0.32     # required for file upload - easy to forget
+
+# tests
+pytest==9.1.1
+pytest-cov==7.1.0
