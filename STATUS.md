@@ -49,7 +49,7 @@ not hard bits — and be aware the ceiling below is measured against
 - `registry/protocols.py` — **strawman, Naidhruv owns this, overwrite freely.**
   Written only because S4 could not satisfy "recovers through the registry"
   without a registry existing. Protocol shapes match the Command Center.
-- `tests/unit/` — 125 tests, 94% coverage, 3 min 21 s.
+- `tests/unit/` — 209 tests, ~6 min.
 - `docs/`, `reports/` — see below.
 
 **31 Aug gate (my column): PASS.**
@@ -170,9 +170,27 @@ fails at *any* non-zero BER, under every error model. Bursts move it from 0 %
 to 83 % at 0.1 % BER but nothing reaches 100 %. The pipeline recovers the code
 under noise, not the interleaver. That is the Oct-Nov robustness window's job.
 
-**Tomorrow (2 Sep):** soft-input Viterbi wired to recovered polynomials (the
-plug-in already does this), Reed-Solomon (255,223) registered, and the LLR
-contract test with Anvith. `docs/HANDOFF.md` has the LLR convention.
+**Also landed, off-plan: S6 and a readable payload.** `--demo --text` runs
+the whole chain blind and prints the message — period, interleaver, code,
+generators, de-interleave, Viterbi, text — in about 21 s. Blind scrambler
+recovery works for degrees 5/7/8 with no dictionary of known polynomials.
+
+**Three things REAL data broke that random data never would have**, all now
+tested. The consistency guard assumed a random source: ASCII has bit 7 clear in
+every byte, so text is rank-deficient before the code touches it, and the first
+stream carrying an actual message failed outright. Relaxing that let a 4x24
+de-interleave of an 8x12 stream win as "rate 1/16 K=2". And it made "no
+interleaver" fire on six interleaved streams.
+**Dheeraj — this is the argument for the zoo carrying real payloads rather than
+random bits. Random data hides this entire class of bug.**
+
+**One thing NOT solved, guarded rather than hidden:** a scrambled stream yields
+the code-XOR-scrambler composite, which annihilates the stream exactly and so
+cannot be rejected by any residual test. K=7 under a degree-8 scrambler reads
+back as K=15. Such results are downgraded and labelled, never announced.
+
+**Tomorrow (2 Sep):** Reed-Solomon (255,223) registered, and the LLR contract
+test with Anvith. `docs/HANDOFF.md` has the LLR convention.
 
 **Blocked on:** nothing.
 
