@@ -105,8 +105,40 @@ ended the search.
 - Everything is still measured against `tests/fixtures/local_zoo.py`, not
   Dheeraj's zoo.
 
-**Tomorrow (1 Sep), first task:** diagonal + convolutional interleaver plug-ins,
-each registered with its rank signature.
+**1 Sep gate: PASS, both bars cleared with room.**
+
+| Family | Bar | Result |
+|---|---|---|
+| Block, depths 1-16 | >=15/16 | **16/16** |
+| Diagonal, 10 combinations | >=8/10 | **10/10** |
+| Convolutional (Forney) | not set | 4/4 |
+
+`GET /registry` now lists **3 interleavers + 1 code**. `recover_interleaver`
+no longer names a scheme - it iterates `INTERLEAVERS`, so pseudo-random on
+7 Sep is a new file and one registration line.
+
+**The finding worth two minutes at standup.** Block and diagonal produce
+*byte-identical* rank profiles - same deficient row lengths, same deficiency
+values (see `reports/interleaver_families.png`). The curve cannot name the
+family at all. Every family is therefore tried functionally: de-interleave and
+ask whether the code comes back. That is decisive rather than a threshold,
+because a wrong hypothesis leaves the stream looking random.
+
+Convolutional *is* identifiable from the profile: its deficiency repeats every
+N bits starting well above N, so `step < first` means convolutional with N
+branches and `step == first` means block-like with that period. Two numbers,
+32 extra rank computations, and each family gets handed a parameter instead of
+searching blind - the difference between a bounded sweep and risk #5.
+
+One trap it walks into on its own: a raw rate-1/2 stream has first=14 step=2,
+which looks exactly like a 2-branch convolutional interleaver. The code's own
+symbol size is indistinguishable from a branch count. `blind_recover` checks
+the direct code structure *before* trying any family, and there is now a test
+asserting that ordering so nobody removes it quietly.
+
+**Tomorrow (2 Sep):** soft-input Viterbi wired to recovered polynomials (the
+plug-in already does this), Reed-Solomon (255,223) registered, and the LLR
+contract test with Anvith. `docs/HANDOFF.md` has the LLR convention.
 
 **Blocked on:** nothing.
 
