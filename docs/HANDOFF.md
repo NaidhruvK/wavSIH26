@@ -65,7 +65,7 @@ Environment: **Python 3.11.9** (not 3.13 — see
 `docs/python-version-decision.md`). `.venv` in the clone is already built.
 
 ```
-.venv/Scripts/python.exe -m pytest tests/unit -q      # 175 passed, ~3m40s
+.venv/Scripts/python.exe -m pytest tests/unit -q      # 196 passed, ~4m
 .venv/Scripts/python.exe docs/stack_check.py          # 11/11
 .venv/Scripts/python.exe -m pipeline.s4_recover.cli --demo
 ```
@@ -123,7 +123,7 @@ both registered. `registry.describe()` is the `GET /registry` payload.
 
 No method has ever returned a confidently wrong answer. They fail to *nothing*.
 
-**Test suite:** 175 tests, ~3 min 40 s.
+**Test suite:** 196 tests, ~4 min.
 
 ## 5. What is NOT done
 
@@ -198,12 +198,25 @@ This is the concrete argument for running **gr-satellites** as an independent
 oracle, and for doing it earlier than the plan's October window. Recommend it
 at a standup.
 
-## 8. Caveat on every number in `reports/`
+## 8. Caveat on every number in `reports/` — CORRECTED 1 Sep
 
-The errors are **independent**, injected by the local zoo. Real demodulator
-errors are bursty and correlated. **Every ceiling is an optimistic bound.** The
-honest figures get measured on 3 September against real LLRs from Anvith's S3,
-and those are what go in the envelope report and what gets said to a judge.
+This section used to say every ceiling was an *optimistic* bound because real
+errors are bursty. **That was reasoning, not measurement, and it was
+backwards.** See `reports/burst_channel.md`.
+
+Rank collapse counts damaged **rows**, not damaged bits, so clustering the same
+errors into fewer rows leaves more clean rows. Measured: the exact rank test
+goes from 0.30 % BER (independent) to 5.0 % (mean burst 100), roughly 16x
+wider. The independent-error numbers are the **pessimistic** bound for Stage 4.
+
+Both halves have to be quoted together, though: bursts help recovery and hurt
+*decoding*, since they are what a convolutional decoder cannot absorb. And
+interleaver-parameter recovery still fails at any non-zero BER under every
+model - that is the real open problem, not the ceiling.
+
+The measurement against Anvith's real LLRs on 3 September still stands. It
+should land between the two models, and now there is a predicted shape to
+compare it against rather than a surprise.
 
 Metrics CSVs are byte-comparable across runs and across Python versions
 (verified 3.13.7 → 3.11.9). Timing lives in a separate file so a "numbers

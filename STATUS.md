@@ -136,6 +136,40 @@ symbol size is indistinguishable from a branch count. `blind_recover` checks
 the direct code structure *before* trying any family, and there is now a test
 asserting that ordering so nobody removes it quietly.
 
+**Also 1 Sep, off-plan: the realistic error model, measured two days early.**
+`reports/burst_channel.md`. Every ceiling until today used *independent* bit
+flips, and every report called them "an optimistic bound" because real errors
+are bursty. That was reasoning, not measurement, and it was **backwards**:
+
+| Error model | Exact rank test | Statistical |
+|---|---|---|
+| Independent | 0.30 % BER | 3.0 % |
+| Mean burst 20 | 2.0 % | >= 5.0 % |
+| Mean burst 100 | **5.0 %** | >= 5.0 % |
+
+Rank collapse counts damaged *rows*, not damaged bits. At 1 % BER, independent
+errors damage 62.8 % of rows and mean-burst-100 damages 3.7 % — same error
+count, seventeen times fewer rows. So Stage 4's envelope is ~16x wider than we
+have been claiming, and the independent-error numbers are the **pessimistic**
+bound. `ber_ceiling.md` is marked superseded in part rather than quietly edited.
+
+**Anvith, this is the one for you:** it cuts both ways. Bursts help S4 and
+*hurt* S5 — they are exactly what a convolutional decoder cannot absorb, which
+is why interleavers exist. Do not let anyone quote the first half alone.
+
+**Two bugs found doing it.** The fixture's scrambler was commented as
+"degree-6 maximal-length" and has period **7**, not 63 — the 7 Sep
+Berlekamp-Massey work would have been validated against something far too
+easy. Now the real CCSDS 131.0-B randomiser, period 255, verified by measuring.
+And scrambling turns out **not** to hide the code from rank collapse, so the
+5 Sep concatenated profile can be unwound without descrambling first — that
+removes the chicken-and-egg it appeared to have.
+
+**Still unsolved, stated plainly:** recovering the interleaver's depth x width
+fails at *any* non-zero BER, under every error model. Bursts move it from 0 %
+to 83 % at 0.1 % BER but nothing reaches 100 %. The pipeline recovers the code
+under noise, not the interleaver. That is the Oct-Nov robustness window's job.
+
 **Tomorrow (2 Sep):** soft-input Viterbi wired to recovered polynomials (the
 plug-in already does this), Reed-Solomon (255,223) registered, and the LLR
 contract test with Anvith. `docs/HANDOFF.md` has the LLR convention.
