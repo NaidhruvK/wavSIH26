@@ -50,6 +50,7 @@ class Truth:
     injected_ber: float
     n_flipped: int
     seed: int
+    payload_text: str | None = None
     mean_burst: float = 1.0
     start_trim: int = 0
 
@@ -174,7 +175,7 @@ def inject_burst_errors(bits: np.ndarray, ber: float, mean_burst: float,
 def make_stream(n_source_bits: int = 20000, depth: int | None = 8, width: int | None = 12,
                 polys=POLY_171_133, K: int = 7, scramble: bool = False,
                 scrambler_poly: int = CCSDS_SCRAMBLER, ber: float = 0.0, seed: int = 0,
-                mean_burst: float = 1.0):
+                mean_burst: float = 1.0, payload_text: str | None = None):
     """Build one coded stream and its truth. Returns (bits, Truth).
 
     `mean_burst` selects the error model: 1.0 keeps the independent flips that
@@ -182,7 +183,16 @@ def make_stream(n_source_bits: int = 20000, depth: int | None = 8, width: int | 
     Gilbert-Elliott channel, which is what a real receiver produces.
     """
     rng = np.random.default_rng(seed)
-    src = rng.integers(0, 2, n_source_bits, dtype=np.uint8)
+    if payload_text is None:
+        src = rng.integers(0, 2, n_source_bits, dtype=np.uint8)
+    else:
+        # Real text, repeated to length. Random source bits prove the maths but
+        # demonstrate nothing: "20000 bits matched 20000 bits" is a claim a
+        # viewer has to take on trust, whereas a message appearing on screen
+        # from a file the system was told nothing about is self-evident.
+        raw = payload_text.encode("utf-8")
+        reps = max(1, n_source_bits // (8 * len(raw)) + 1)
+        src = np.unpackbits(np.frombuffer(raw * reps, dtype=np.uint8))[:n_source_bits]
     bits = conv_encode(src, polys=polys, K=K)
 
     period = None
@@ -203,7 +213,7 @@ def make_stream(n_source_bits: int = 20000, depth: int | None = 8, width: int | 
         depth=depth, width=width, period=period,
         scrambler_poly=scrambler_poly if scramble else None,
         injected_ber=ber, n_flipped=n_flipped, seed=seed,
-        mean_burst=mean_burst,
+        payload_text=payload_text, mean_burst=mean_burst,
     )
     return bits, truth
 

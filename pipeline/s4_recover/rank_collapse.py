@@ -277,8 +277,25 @@ def recover_code_structure(bits: np.ndarray, max_span: int = MAX_CODE_SPAN) -> C
     if m < 0:
         return CodeStructure(None, None, span, False)
 
+    # The test is deliberately ONE-SIDED, and which side matters enormously.
+    #
+    # Source structure ADDS deficiency. A real payload is not random - ASCII
+    # text has bit 7 clear in every byte, which is a linear constraint every 8
+    # bits, and the source is rank-deficient before the code touches it. Text
+    # measures 3 where the code alone predicts 2, and 14 where it predicts 10.
+    # Demanding equality assumed a random source and rejected every real
+    # payload. That is how this was found: the first stream carrying an actual
+    # message failed to decode.
+    #
+    # Errors REDUCE deficiency, and that is the dangerous direction. Erasing
+    # the deficiency at the true span slides the estimate upward and
+    # overstates the memory - at 0.05% BER an unguarded readout returns K=8
+    # for a K=7 code. So a measured deficiency BELOW the prediction is still
+    # rejected outright.
+    #
+    # Hence: at or above prediction is fine, below it is not.
     consistent = all(
-        prof.deficiency[L] == L // n - m
+        prof.deficiency[L] >= L // n - m
         for L in deficient if L % n == 0
     )
     return CodeStructure(n=n, memory=m, span=span, consistent=consistent)
@@ -360,12 +377,36 @@ def recover_interleaver(bits: np.ndarray, first: int, step: int, offset: int = 0
             if len(de) < 4096:
                 continue
             code = recover_code_structure(de)
-            if code.n and code.memory is not None and code.consistent:
-                score = min(1.0, 0.55 + 0.05 * code.span)
-                out.append(InterleaverHypothesis(
-                    name, dict(params), score,
-                    "restores rate 1/%d K=%d (span %d)"
-                    % (code.n, code.memory + 1, code.span)))
+            if not (code.n and code.memory is not None and code.consistent):
+                continue
+
+            # Consistency alone is not enough to RANK. Once the check became
+            # one-sided to admit structured payloads, several wrong
+            # factorisations began passing it too - a 4x24 de-interleave of a
+            # genuine 8x12 stream reads as "rate 1/16, K=2, span 32", which is
+            # consistent and completely wrong.
+            #
+            # The decisive test is whether the recovered parity check actually
+            # annihilates the whole de-interleaved stream, not just the rows
+            # the null space was computed from. For the true hypothesis the
+            # residual is exactly zero; artefacts leak. One vectorised pass.
+            gens, taps = recover_generators(de, code)
+            residual = 1.0
+            if taps:
+                h = np.asarray(taps, dtype=np.uint8)
+                win = np.lib.stride_tricks.sliding_window_view(de, len(h))[::code.n]
+                if len(win):
+                    residual = float(((win @ h) % 2).mean())
+            if residual > 0.0:
+                continue
+
+            # Among survivors, the SHORTEST span wins. The fundamental parity
+            # check is the shortest one; longer spans are composites of it.
+            score = 1.0 / (1.0 + code.span)
+            out.append(InterleaverHypothesis(
+                name, dict(params), score,
+                "restores rate 1/%d K=%d (span %d, residual syndrome 0)"
+                % (code.n, code.memory + 1, code.span)))
 
     out.sort(key=lambda h: -h.score)
     return out
@@ -466,14 +507,45 @@ def blind_recover(bits: np.ndarray, statistical_fallback: bool = True) -> Recove
     # as "convolutional, 2 branches" - the code's own symbol size looks exactly
     # like a 2-branch interleaver. Checking the direct code structure up front
     # is what stops that being a confident wrong answer.
+    # "No interleaver" is a CANDIDATE, not a short circuit. Once the
+    # consistency test became one-sided (to admit structured payloads), the
+    # direct reading of an interleaved stream also became consistent - a
+    # convolutionally interleaved rate-1/2 stream reads as a bare rate-1/4
+    # code with span 20, and returning here claimed six interleaved streams as
+    # un-interleaved. Both routes now compete on the same rule used to rank
+    # families: SHORTEST SPAN WINS, because the fundamental parity check is
+    # the shortest one and everything longer is a composite of it.
+    direct = None
     code_direct = recover_code_structure(bits)
     if code_direct.consistent and code_direct.span == first:
         gens, taps = recover_generators(bits, code_direct)
-        return RecoveryResult("ok", 0.95, period=period, offset=0, interleaver=None,
-                              code=code_direct, generators_octal=gens, parity_taps=taps,
-                              reason="no interleaver detected", profile=prof,
-                              searched_to=prof.l_max_searched,
-                              data_limited=prof.data_limited)
+
+        # A scrambled stream yields the code-XOR-scrambler COMPOSITE, and that
+        # composite is a perfectly valid linear description of what arrived -
+        # it annihilates the stream exactly, so no residual test can reject it.
+        # It is simply not the transmitter's code. Measured: a rate-1/2 K=7
+        # stream under a degree-8 scrambler reads back as "rate 1/2 K=15,
+        # G=(0o67611, 0o41513)".
+        #
+        # There is no way to tell those apart from this stream alone. What we
+        # CAN do is refuse to state it as a bare fact. Real deployed
+        # convolutional codes have K <= 9; anything longer is far more likely
+        # to be a composite than a genuine constraint length, so it is
+        # downgraded and labelled rather than announced.
+        suspect = code_direct.memory is not None and code_direct.memory + 1 > 9
+        direct = RecoveryResult(
+            "ok" if not suspect else "low_confidence",
+            0.95 if not suspect else 0.40,
+            period=period, offset=0, interleaver=None,
+            code=code_direct, generators_octal=gens, parity_taps=taps,
+            reason=("no interleaver detected" if not suspect else
+                    "no interleaver detected, but K=%d is longer than any code in "
+                    "practical use - this is very likely a code-XOR-scrambler "
+                    "composite rather than the transmitter's code. Descrambling "
+                    "before recovery is an open problem (see reports/burst_channel.md)"
+                    % (code_direct.memory + 1)),
+            profile=prof, searched_to=prof.l_max_searched,
+            data_limited=prof.data_limited)
 
     # Align to the block boundary before trying block-like families. The
     # collapse survives any start offset but is largest at the true boundary,
@@ -490,7 +562,22 @@ def blind_recover(bits: np.ndarray, statistical_fallback: bool = True) -> Recove
         offset = best_off
 
     hyps = recover_interleaver(bits, first, step, offset)
+
+    # Shortest span wins. A family hypothesis only beats the direct reading if
+    # de-interleaving actually exposed a TIGHTER constraint than the stream
+    # showed on its own.
+    if hyps and direct is not None and direct.code is not None:
+        best_family_span = None
+        de_probe = INTERLEAVERS[hyps[0].family].deinterleave(bits[offset:], **hyps[0].params)
+        probe = recover_code_structure(de_probe)
+        if probe.span:
+            best_family_span = probe.span
+        if best_family_span is None or best_family_span >= direct.code.span:
+            return direct
+
     if not hyps:
+        if direct is not None:
+            return direct
         # A collapse was found but nothing explains it. On a noisy raw coded
         # stream this is the common case: errors erase the deficiency at the
         # true span, the estimate slides upward, and no factorisation of the
