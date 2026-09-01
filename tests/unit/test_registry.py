@@ -164,7 +164,7 @@ def test_interleaver_candidate_params_are_bounded():
     assert len(cands) < 20_000, "candidate list is unbounded: %d" % len(cands)
     for c in cands:
         assert c["depth"] * c["width"] <= 512
-        assert c["depth"] >= 2 and c["width"] >= 1
+        assert c["depth"] >= 1 and c["width"] >= 1
 
 
 # --------------------------------------------------------------------------

@@ -7,13 +7,32 @@ Regenerate with `python reports/ber_ceiling_study.py`. Outputs
 
 ---
 
-## Read this before quoting any number below
+## SUPERSEDED IN PART — read this first
+
+**The claim below that these are "optimistic bounds" is wrong, and was
+corrected on 1 Sep.** See `burst_channel.md`.
+
+The errors on this page are independent bit flips. Real demodulator errors are
+bursty, and it was assumed — by reasoning, not measurement — that clustering
+would make recovery harder. The opposite is true: rank collapse counts damaged
+*rows*, not damaged bits, so clustering the same errors into fewer rows leaves
+more clean rows. Measured, the exact rank test's ceiling goes from 0.30 % to
+**5.0 %** as mean burst length rises from 1 to 100.
+
+So for Stage 4 recovery, every ceiling on this page is a **pessimistic** bound.
+The numbers themselves stand — they are correct for the independent-error
+model, which is what they were measured against. What was wrong was the
+direction of the caveat attached to them.
+
+Two things below remain true and are not superseded: the *ordering* of the
+methods, and the fact that no method ever returned a confidently wrong answer.
+
+## The original caveat, kept for the record
 
 **The errors here are independent.** They are injected bit flips from the zoo's
 bits-only mode. Real demodulator errors are bursty and correlated, because a
 carrier or timing loop that slips produces a run of wrong symbols, not a
-scattering of them. Every ceiling on this page is therefore an **optimistic
-bound**.
+scattering of them.
 
 The honest version gets measured on **3 September**, when S4 first consumes
 real LLRs out of Anvith's S3. That is the number that goes in the envelope
@@ -115,9 +134,11 @@ all. Both effects push the same way.
 
 Curve: `reports/ber_ceiling.png`. Raw data: `reports/ber_ceiling.csv`.
 
-**Stated: the exact rank test holds to 0.30 % BER. The statistical
-parity-check method holds to 3.0 %. Both against independent injected errors,
-which is an optimistic model — the real figure lands on 3 September.**
+**Stated: against INDEPENDENT errors, the exact rank test holds to 0.30 % BER
+and the statistical method to 3.0 %. Against realistic bursty errors those
+become 5.0 % and >= 5.0 % respectively (`burst_channel.md`). The independent
+figure is the pessimistic one; the real measurement against Anvith's LLRs
+lands on 3 September and should fall between them.**
 
 ## Reproducibility, checked rather than assumed
 

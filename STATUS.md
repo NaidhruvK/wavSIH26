@@ -49,7 +49,7 @@ not hard bits — and be aware the ceiling below is measured against
 - `registry/protocols.py` — **strawman, Naidhruv owns this, overwrite freely.**
   Written only because S4 could not satisfy "recovers through the registry"
   without a registry existing. Protocol shapes match the Command Center.
-- `tests/unit/` — 125 tests, 94% coverage, 3 min 21 s.
+- `tests/unit/` — 209 tests, ~6 min.
 - `docs/`, `reports/` — see below.
 
 **31 Aug gate (my column): PASS.**
@@ -105,8 +105,92 @@ ended the search.
 - Everything is still measured against `tests/fixtures/local_zoo.py`, not
   Dheeraj's zoo.
 
-**Tomorrow (1 Sep), first task:** diagonal + convolutional interleaver plug-ins,
-each registered with its rank signature.
+**1 Sep gate: PASS, both bars cleared with room.**
+
+| Family | Bar | Result |
+|---|---|---|
+| Block, depths 1-16 | >=15/16 | **16/16** |
+| Diagonal, 10 combinations | >=8/10 | **10/10** |
+| Convolutional (Forney) | not set | 4/4 |
+
+`GET /registry` now lists **3 interleavers + 1 code**. `recover_interleaver`
+no longer names a scheme - it iterates `INTERLEAVERS`, so pseudo-random on
+7 Sep is a new file and one registration line.
+
+**The finding worth two minutes at standup.** Block and diagonal produce
+*byte-identical* rank profiles - same deficient row lengths, same deficiency
+values (see `reports/interleaver_families.png`). The curve cannot name the
+family at all. Every family is therefore tried functionally: de-interleave and
+ask whether the code comes back. That is decisive rather than a threshold,
+because a wrong hypothesis leaves the stream looking random.
+
+Convolutional *is* identifiable from the profile: its deficiency repeats every
+N bits starting well above N, so `step < first` means convolutional with N
+branches and `step == first` means block-like with that period. Two numbers,
+32 extra rank computations, and each family gets handed a parameter instead of
+searching blind - the difference between a bounded sweep and risk #5.
+
+One trap it walks into on its own: a raw rate-1/2 stream has first=14 step=2,
+which looks exactly like a 2-branch convolutional interleaver. The code's own
+symbol size is indistinguishable from a branch count. `blind_recover` checks
+the direct code structure *before* trying any family, and there is now a test
+asserting that ordering so nobody removes it quietly.
+
+**Also 1 Sep, off-plan: the realistic error model, measured two days early.**
+`reports/burst_channel.md`. Every ceiling until today used *independent* bit
+flips, and every report called them "an optimistic bound" because real errors
+are bursty. That was reasoning, not measurement, and it was **backwards**:
+
+| Error model | Exact rank test | Statistical |
+|---|---|---|
+| Independent | 0.30 % BER | 3.0 % |
+| Mean burst 20 | 2.0 % | >= 5.0 % |
+| Mean burst 100 | **5.0 %** | >= 5.0 % |
+
+Rank collapse counts damaged *rows*, not damaged bits. At 1 % BER, independent
+errors damage 62.8 % of rows and mean-burst-100 damages 3.7 % — same error
+count, seventeen times fewer rows. So Stage 4's envelope is ~16x wider than we
+have been claiming, and the independent-error numbers are the **pessimistic**
+bound. `ber_ceiling.md` is marked superseded in part rather than quietly edited.
+
+**Anvith, this is the one for you:** it cuts both ways. Bursts help S4 and
+*hurt* S5 — they are exactly what a convolutional decoder cannot absorb, which
+is why interleavers exist. Do not let anyone quote the first half alone.
+
+**Two bugs found doing it.** The fixture's scrambler was commented as
+"degree-6 maximal-length" and has period **7**, not 63 — the 7 Sep
+Berlekamp-Massey work would have been validated against something far too
+easy. Now the real CCSDS 131.0-B randomiser, period 255, verified by measuring.
+And scrambling turns out **not** to hide the code from rank collapse, so the
+5 Sep concatenated profile can be unwound without descrambling first — that
+removes the chicken-and-egg it appeared to have.
+
+**Still unsolved, stated plainly:** recovering the interleaver's depth x width
+fails at *any* non-zero BER, under every error model. Bursts move it from 0 %
+to 83 % at 0.1 % BER but nothing reaches 100 %. The pipeline recovers the code
+under noise, not the interleaver. That is the Oct-Nov robustness window's job.
+
+**Also landed, off-plan: S6 and a readable payload.** `--demo --text` runs
+the whole chain blind and prints the message — period, interleaver, code,
+generators, de-interleave, Viterbi, text — in about 21 s. Blind scrambler
+recovery works for degrees 5/7/8 with no dictionary of known polynomials.
+
+**Three things REAL data broke that random data never would have**, all now
+tested. The consistency guard assumed a random source: ASCII has bit 7 clear in
+every byte, so text is rank-deficient before the code touches it, and the first
+stream carrying an actual message failed outright. Relaxing that let a 4x24
+de-interleave of an 8x12 stream win as "rate 1/16 K=2". And it made "no
+interleaver" fire on six interleaved streams.
+**Dheeraj — this is the argument for the zoo carrying real payloads rather than
+random bits. Random data hides this entire class of bug.**
+
+**One thing NOT solved, guarded rather than hidden:** a scrambled stream yields
+the code-XOR-scrambler composite, which annihilates the stream exactly and so
+cannot be rejected by any residual test. K=7 under a degree-8 scrambler reads
+back as K=15. Such results are downgraded and labelled, never announced.
+
+**Tomorrow (2 Sep):** Reed-Solomon (255,223) registered, and the LLR contract
+test with Anvith. `docs/HANDOFF.md` has the LLR convention.
 
 **Blocked on:** nothing.
 

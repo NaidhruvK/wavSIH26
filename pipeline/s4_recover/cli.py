@@ -23,9 +23,15 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+DECODE_BITS = 24_000   # coded bits handed to Viterbi; ~1500 characters out
+
+from registry import CODES, INTERLEAVERS
 from pipeline.s4_recover.rank_collapse import blind_recover, max_searchable_period
 from pipeline.s4_recover.statistical import statistical_recover
-from pipeline.s4_recover.interleavers import block_deinterleave
+import pipeline.s4_recover.interleavers  # noqa: F401  (registers the families)
+import pipeline.s5_decode.conv_code  # noqa: F401  (registers ConvCode)
+from pipeline.s6_frame.descramble import recover_scrambler, descramble
+from pipeline.s6_frame.payload import extract_text
 
 
 def load_bits(path: Path) -> np.ndarray:
@@ -68,9 +74,56 @@ def report(bits: np.ndarray, statistical: bool, quiet: bool = False) -> int:
 
     deinterleaved = None
     if res.status == "ok" and res.interleaver:
-        deinterleaved = block_deinterleave(bits[res.offset:], **res.interleaver.params)
+        deinterleaved = INTERLEAVERS[res.interleaver.family].deinterleave(
+            bits[res.offset:], **res.interleaver.params)
         print()
-        print("de-interleaved    : %d bits ready for S5 (Viterbi)" % len(deinterleaved))
+        print("de-interleaved    : %d bits" % len(deinterleaved))
+
+    # ---- S6: is there a scrambler, and can we undo it? -------------------
+    stream = deinterleaved if deinterleaved is not None else bits
+    if res.status == "ok" and res.parity_taps:
+        scr = recover_scrambler(stream, res.parity_taps)
+        print()
+        print("--- S6 descramble ---------------------------------------------")
+        if scr is None:
+            print("scrambler         : none detected")
+        elif scr.ok:
+            print("scrambler         : RECOVERED blind - %s" % scr.describe())
+            print("                    taps %s state 0x%X"
+                  % ("".join(str(b) for b in scr.taps), scr.state))
+            stream = descramble(stream, scr)
+        else:
+            print("scrambler         : degree %d detected, not resolved - %s"
+                  % (scr.degree, scr.reason))
+
+    # ---- S5 + payload: the whole point ----------------------------------
+    if res.status == "ok" and res.code and res.code.n == 2 and res.generators_octal:
+        print()
+        print("--- S5 decode and payload -------------------------------------")
+        # commpy's Viterbi is pure Python and linear in stream length: 80k
+        # source bits takes ~120 s, which blows the 90 s per-analysis budget on
+        # its own. A prefix proves the chain exactly as well - a thousand
+        # readable characters is not a weaker claim than eighty thousand - and
+        # the full stream stays available for anyone who wants it.
+        budget = min(len(stream), DECODE_BITS)
+        t0 = time.time()
+        decoded = CODES["conv"].decode(stream[:budget], {
+            "n": res.code.n, "memory": res.code.memory,
+            "generators_octal": res.generators_octal,
+            "span": res.code.span, "parity_taps": res.parity_taps})
+        rep = extract_text(decoded)
+        print("decoded           : %d of %d source bits in %.1f s%s"
+              % (len(decoded), len(stream) // 2, time.time() - t0,
+                 "" if budget >= len(stream) else "   (prefix - Viterbi is the slow step)"))
+        print("printable         : %.1f%%  (random data scores ~38%%)"
+              % (rep.printable_fraction * 100))
+        if rep.looks_like_text:
+            print("payload           : TEXT RECOVERED")
+            print()
+            print("    " + rep.preview(200))
+        else:
+            print("payload           : binary - no readable text "
+                  "(correct if the source was not text)")
 
     if statistical:
         # Run the statistical search on the de-interleaved stream when we have
@@ -103,14 +156,26 @@ def main(argv=None) -> int:
     ap.add_argument("--depth", type=int, default=8, help="demo interleaver depth")
     ap.add_argument("--width", type=int, default=12, help="demo interleaver width")
     ap.add_argument("--ber", type=float, default=0.0, help="demo injected bit error rate")
+    ap.add_argument("--burst", type=float, default=1.0,
+                    help="demo mean burst length (1 = independent errors)")
+    ap.add_argument("--scramble", action="store_true", help="demo: scramble the stream")
+    ap.add_argument("--text", action="store_true",
+                    help="demo: carry a readable message as the payload")
     args = ap.parse_args(argv)
 
     if args.demo:
         from tests.fixtures.local_zoo import make_stream
-        bits, truth = make_stream(80_000, args.depth, args.width, ber=args.ber, seed=0)
+        msg = ("RAAYA SIH26147 -- blind recovery of modulation, interleaver and "
+               "code. Nothing about this file was supplied in advance. ")
+        bits, truth = make_stream(80_000, args.depth, args.width, ber=args.ber,
+                                  seed=0, mean_burst=args.burst,
+                                  scramble=args.scramble,
+                                  payload_text=msg if args.text else None)
         print("DEMO - generated locally, truth withheld from the recovery below")
-        print("truth             : period=%d depth=%d width=%d G=(0o171, 0o133) BER=%.4f"
-              % (truth.period, truth.depth, truth.width, truth.injected_ber))
+        print("truth             : period=%d depth=%d width=%d G=(0o171, 0o133) "
+              "BER=%.4f burst=%g scrambled=%s"
+              % (truth.period, truth.depth, truth.width, truth.injected_ber,
+                 truth.mean_burst, bool(args.scramble)))
         print()
         return report(bits, args.statistical)
 

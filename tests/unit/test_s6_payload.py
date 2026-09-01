@@ -1,0 +1,185 @@
+"""S6: blind descrambling, and getting a readable payload out the far end.
+
+The chain this pins: coded bits in, nothing supplied, readable text out.
+Recovered parameters are a claim a viewer has to trust; a message appearing
+from a file the system was told nothing about is not.
+
+Two of these tests exist because using REAL data broke things that random data
+never would have:
+
+  - a structured payload (ASCII has bit 7 clear in every byte) is
+    rank-deficient before the code touches it, so the consistency test had to
+    become one-sided. The first stream carrying an actual message failed.
+  - relaxing that test let a scrambled stream read back as a confident,
+    completely wrong code. That is the one failure mode this project has
+    otherwise never had, so it gets a test of its own.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from registry import CODES
+import pipeline.s4_recover.interleavers  # noqa: F401
+import pipeline.s5_decode.conv_code  # noqa: F401
+
+from pipeline.s4_recover.rank_collapse import blind_recover, recover_code_structure
+from pipeline.s5_decode.conv_reference import parity_check_taps
+from pipeline.s6_frame.descramble import (
+    berlekamp_massey,
+    descramble,
+    find_scrambler_period,
+    recover_scrambler,
+)
+from pipeline.s6_frame.payload import bits_to_bytes, extract_text
+from tests.fixtures.local_zoo import CCSDS_SCRAMBLER, lfsr_scramble, make_stream
+
+MSG = ("RAAYA SIH26147 -- blind recovery of modulation, interleaver and code. "
+       "Nothing about this file was supplied in advance. ")
+
+
+@pytest.fixture(scope="module")
+def coded():
+    rng = np.random.default_rng(0)
+    from pipeline.s5_decode.conv_reference import conv_encode
+    return conv_encode(rng.integers(0, 2, 40_000, dtype=np.uint8))
+
+
+# --------------------------------------------------------------------------
+# Berlekamp-Massey and blind scrambler recovery
+# --------------------------------------------------------------------------
+
+def test_berlekamp_massey_finds_the_degree_of_a_raw_sequence():
+    seq = lfsr_scramble(np.zeros(600, dtype=np.uint8))
+    degree, _ = berlekamp_massey(seq.tolist())
+    assert degree == CCSDS_SCRAMBLER.bit_length() - 1 == 8
+
+
+def test_syndrome_of_a_scrambled_stream_carries_the_scrambler(coded):
+    """h.r = h.(c XOR s) = h.s, because h annihilates any codeword. The
+    scrambler is not observable but a linear functional of it is, and that
+    functional obeys the same recurrence."""
+    scrambled = lfsr_scramble(coded)
+    h = parity_check_taps()
+    windows = np.lib.stride_tricks.sliding_window_view(scrambled, len(h))[0::2]
+    syndrome = (windows @ h) % 2
+    assert syndrome.mean() > 0.1, "syndrome vanished - the trick relies on it"
+    degree, _ = berlekamp_massey(syndrome[:200].tolist())
+    assert degree == 8
+
+
+def test_period_search_needs_a_multiple_of_the_symbol_size(coded):
+    """The shift must be a multiple of BOTH the scrambler period and n, or the
+    two codewords are out of phase and their sum is not a codeword. For a
+    period-255 scrambler on a rate-1/2 code the answer is 510, not 255."""
+    scrambled = lfsr_scramble(coded)
+    period = find_scrambler_period(scrambled, parity_check_taps())
+    assert period == 510 == np.lcm(255, 2)
+
+
+@pytest.mark.parametrize("poly", [0o45, 0o211, CCSDS_SCRAMBLER])
+def test_scrambler_recovered_blind_and_removed_exactly(coded, poly):
+    """No dictionary of known polynomials - the degree comes from
+    Berlekamp-Massey and bounds an exhaustive search from there."""
+    scrambled = lfsr_scramble(coded, poly)
+    hyp = recover_scrambler(scrambled, parity_check_taps())
+
+    assert hyp is not None and hyp.ok, "not recovered: %s" % (hyp and hyp.reason)
+    assert hyp.degree == poly.bit_length() - 1
+    assert np.array_equal(descramble(scrambled, hyp), coded[:len(scrambled)])
+
+
+def test_unscrambled_stream_reports_no_scrambler(coded):
+    assert recover_scrambler(coded, parity_check_taps()) is None
+
+
+# --------------------------------------------------------------------------
+# the payload
+# --------------------------------------------------------------------------
+
+def test_printable_fraction_separates_text_from_noise():
+    rng = np.random.default_rng(0)
+    noise = extract_text(rng.integers(0, 2, 8000, dtype=np.uint8))
+    assert not noise.looks_like_text
+    assert noise.printable_fraction < 0.55
+
+    src = np.unpackbits(np.frombuffer(MSG.encode() * 40, dtype=np.uint8))
+    real = extract_text(src)
+    assert real.looks_like_text
+    assert real.printable_fraction > 0.99
+    assert MSG.strip() in real.text
+
+
+def test_bits_to_bytes_is_msb_first():
+    bits = np.array([0, 1, 0, 0, 0, 0, 0, 1], dtype=np.uint8)   # 0x41 = 'A'
+    assert bits_to_bytes(bits) == b"A"
+
+
+# --------------------------------------------------------------------------
+# structured payloads, which is what broke the consistency test
+# --------------------------------------------------------------------------
+
+def test_a_text_payload_is_still_recognised_as_a_code():
+    """ASCII has bit 7 clear in every byte, so the source is rank-deficient
+    before encoding and the measured deficiency EXCEEDS the code's own
+    prediction. Demanding equality rejected every real payload."""
+    bits, truth = make_stream(60_000, None, None, seed=1, payload_text=MSG)
+    code = recover_code_structure(bits)
+    assert code.consistent
+    assert (code.n, code.memory, code.span) == (2, 6, 14)
+
+
+def test_the_noise_direction_is_still_rejected():
+    """Errors REDUCE deficiency and slide the span upward, overstating memory.
+    The relaxation must not have opened that door."""
+    for ber in (0.0005, 0.001):
+        code = recover_code_structure(make_stream(60_000, None, None,
+                                                  ber=ber, seed=3)[0])
+        assert not code.consistent, "BER %.4f accepted; K would read %s" % (
+            ber, code.memory + 1 if code.memory is not None else "?")
+
+
+def test_scrambled_stream_is_not_reported_as_a_confident_code():
+    """A scrambled stream yields the code-XOR-scrambler composite, which is a
+    valid linear description of what arrived and annihilates it exactly - no
+    residual test can reject it. It is simply not the transmitter's code, so
+    it must never be stated as one."""
+    bits, _ = make_stream(20_000, None, None, seed=1, scramble=True, payload_text=MSG)
+    res = blind_recover(bits)
+    if res.status == "ok" and res.generators_octal:
+        assert res.generators_octal == (0o171, 0o133), \
+            "stated a wrong code with confidence: %s" % res.summary()
+
+
+# --------------------------------------------------------------------------
+# the whole chain
+# --------------------------------------------------------------------------
+
+def test_end_to_end_coded_interleaved_stream_yields_readable_text():
+    """The demo, as an assertion. Nothing below is told anything about the
+    stream: the interleaver, its parameters, the code and its generators are
+    all recovered before a single bit is decoded."""
+    bits, truth = make_stream(30_000, 8, 12, seed=1, payload_text=MSG)
+
+    res = blind_recover(bits)
+    assert res.status == "ok"
+    assert res.interleaver.params == {"depth": 8, "width": 12}
+    assert res.generators_octal == tuple(truth.polys_octal)
+
+    from registry import INTERLEAVERS
+    de = INTERLEAVERS[res.interleaver.family].deinterleave(
+        bits[res.offset:], **res.interleaver.params)
+    decoded = CODES["conv"].decode(de[:24_000], {
+        "n": res.code.n, "memory": res.code.memory,
+        "generators_octal": res.generators_octal,
+        "span": res.code.span, "parity_taps": res.parity_taps})
+
+    report = extract_text(decoded)
+    assert report.looks_like_text, "printable %.2f" % report.printable_fraction
+    assert "RAAYA SIH26147" in report.text
