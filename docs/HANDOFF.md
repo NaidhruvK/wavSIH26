@@ -65,7 +65,7 @@ Environment: **Python 3.11.9** (not 3.13 — see
 `docs/python-version-decision.md`). `.venv` in the clone is already built.
 
 ```
-.venv/Scripts/python.exe -m pytest tests/unit -q      # 125 passed, ~3m30s
+.venv/Scripts/python.exe -m pytest tests/unit -q      # 175 passed, ~3m40s
 .venv/Scripts/python.exe docs/stack_check.py          # 11/11
 .venv/Scripts/python.exe -m pipeline.s4_recover.cli --demo
 ```
@@ -83,7 +83,10 @@ depth×width, rate, constraint length, and both generator polynomials.
 
 - `gf2.py` — packed-int rank (fast) + null space; `galois` kept as the
   reference the tests compare against
-- `interleavers.py` — block interleaver, registered, bounded sweep
+- `interleavers.py` — block, diagonal (helical) and convolutional (Forney)
+  families, all registered, all bounded. Block and diagonal have **identical**
+  rank profiles, so the family is resolved functionally, never read off the
+  curve.
 - `rank_collapse.py` — the detector, plus a statistical fallback
 - `statistical.py` — parity-check recovery by null-space voting + a syndrome
   bias test, wall-clock bounded
@@ -107,6 +110,7 @@ both registered. `registry.describe()` is the `GET /registry` payload.
 | 29 Aug | Rank spike, correct codeword length 10/10 on clean data | **PASS** — also recovers alignment and generators, on randomly parameterised streams with random start offsets |
 | 30 Aug | Recovery-vs-BER curve exists, ceiling stated as a number | **PASS** — `reports/ber_ceiling.{md,png,csv}` |
 | 31 Aug | Recovers through the registry; registry lists 1 code + 1 interleaver | **PASS** (the 2 modulations in that gate line are Anvith's) |
+| 1 Sep | Block depth recovered >=15/16, diagonal >=8/10 | **PASS** — block 16/16, diagonal 10/10, convolutional 4/4 |
 
 **Measured numbers** (all in `reports/`, all regenerable)
 
@@ -119,15 +123,15 @@ both registered. `registry.describe()` is the `GET /registry` payload.
 
 No method has ever returned a confidently wrong answer. They fail to *nothing*.
 
-**Test suite:** 125 tests, 94 % coverage on `pipeline/` + `registry/`.
+**Test suite:** 175 tests, ~3 min 40 s.
 
 ## 5. What is NOT done
 
 - **S6 is empty.** `pipeline/s6_frame/` contains only `__init__.py`. No
   descrambling, no Berlekamp–Massey, no framing.
 - **S5 is partial.** No Reed–Solomon plug-in. No concatenated CCSDS chain.
-- **Only block interleavers.** Diagonal, convolutional and pseudo-random
-  families are not implemented.
+- **Pseudo-random interleavers are not implemented** (7 Sep, via
+  Berlekamp-Massey). Block, diagonal and convolutional all are.
 - **Only rate 1/2 unpacks to generators.** Other rates report n and m only.
 - **Recovering an interleaver under noise is unsolved.** The statistical
   fallback handles the *code*, not the factorisation — a dozen statistical
