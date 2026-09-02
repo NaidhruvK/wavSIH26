@@ -57,21 +57,11 @@ Ignore it.
 
 - **Repo:** `https://github.com/NaidhruvK/wavSIH26.git`
 - **Local clone:** `C:\Users\aneha\OneDrive\Desktop\raaya` — work here
-- **PR #1 is merged** (commit `1390962`, 31 Aug) and carried the S4 core to
-  `main`. Everything since then is on branches and **not yet on `main`**:
-
-  | Branch | Carries |
-  |---|---|
-  | `nehal/handoff-post-merge` | a docs fix |
-  | `nehal/dockerfile` | tested base image; 125 tests pass inside it |
-  | `nehal/interleaver-families` | diagonal + convolutional families |
-  | `nehal/burst-channel` | burst error model (includes the families branch) |
-  | `nehal/s6-payload` | S6, payload, 209 tests (includes burst-channel) |
-
-  They stack, so **merging `nehal/s6-payload` brings everything current**.
-  Until that happens `main` describes a system three days out of date — it
-  still says S6 is empty and the suite is 125 tests. If you are reading this
-  from `main`, you are reading a stale copy.
+- **`main` is current as of 2 Sep**, carrying S4, S5, S6, the three
+  interleaver families, the burst-error study and the Dockerfile. Everything up
+  to `s6-payload` was merged on 2 Sep; the branches are deleted.
+- **One branch is open: `nehal/reed-solomon`** — the 2 Sep gate (RS registered,
+  20/20 per code). Not yet merged.
 - **Start your own branch** for new work — `nehal/<feature>`. Never commit to
   `main` directly, even though nothing currently stops you (see section 5).
 - **`C:\Users\aneha\OneDrive\Desktop\SIH`** is the pre-repo working copy,
@@ -82,7 +72,7 @@ Environment: **Python 3.11.9** (not 3.13 — see
 `docs/python-version-decision.md`). `.venv` in the clone is already built.
 
 ```
-.venv/Scripts/python.exe -m pytest tests/unit -q      # 209 passed, ~6m
+.venv/Scripts/python.exe -m pytest tests/unit -q      # 225 passed, ~19m
 .venv/Scripts/python.exe docs/stack_check.py          # 11/11
 .venv/Scripts/python.exe -m pipeline.s4_recover.cli --demo --text
 ```
@@ -142,8 +132,8 @@ printable : 100.0%   payload: TEXT RECOVERED
 Written only because S4 could not satisfy its 31 Aug gate ("recovers through
 the registry") before a registry existed. He should overwrite it; only the
 three protocol shapes need to survive. `registry.describe()` is the
-`GET /registry` payload and now reports **3 interleavers + 1 code**: block,
-diagonal and convolutional families plus `ConvCode`.
+`GET /registry` payload and now reports **3 interleavers + 2 codes**: block,
+diagonal and convolutional families, plus `ConvCode` and `ReedSolomonCode`.
 
 **Gates passed**
 
@@ -153,6 +143,7 @@ diagonal and convolutional families plus `ConvCode`.
 | 30 Aug | Recovery-vs-BER curve exists, ceiling stated as a number | **PASS** — `reports/ber_ceiling.{md,png,csv}` |
 | 31 Aug | Recovers through the registry; registry lists 1 code + 1 interleaver | **PASS** (the 2 modulations in that gate line are Anvith's) |
 | 1 Sep | Block depth recovered >=15/16, diagonal >=8/10 | **PASS** — block 16/16, diagonal 10/10, convolutional 4/4 |
+| 2 Sep | Exact bit match on 20 streams per code at 0% BER | **PASS** — conv 20/20, RS 20/20, both against *recovered* parameters |
 
 **Measured numbers** (all in `reports/`, all regenerable)
 
