@@ -1,6 +1,7 @@
 # Handoff — Nehal's stream (S4–S6)
 
-**Written 31 August 2026, end of day 3 of 12. For whoever picks this up next.**
+**Started 31 August 2026, kept current. Last updated 2 September, end of
+day 5 of 12. For whoever picks this up next.**
 
 Read this first, then crawl the three planning artifacts listed below. This
 document says what exists and what is true *right now*; the artifacts say what
@@ -56,10 +57,26 @@ Ignore it.
 
 - **Repo:** `https://github.com/NaidhruvK/wavSIH26.git`
 - **Local clone:** `C:\Users\aneha\OneDrive\Desktop\raaya` — work here
-- **Branch:** `nehal/s4-rank`, pushed. **PR not yet opened** at time of writing:
-  https://github.com/NaidhruvK/wavSIH26/pull/new/nehal/s4-rank
-- **`C:\Users\aneha\OneDrive\Desktop\SIH`** is the pre-repo working copy. It is
-  now redundant. Delete it once the PR merges — two copies is how they diverge.
+- **PR #1 is merged** (commit `1390962`, 31 Aug) and carried the S4 core to
+  `main`. Everything since then is on branches and **not yet on `main`**:
+
+  | Branch | Carries |
+  |---|---|
+  | `nehal/handoff-post-merge` | a docs fix |
+  | `nehal/dockerfile` | tested base image; 125 tests pass inside it |
+  | `nehal/interleaver-families` | diagonal + convolutional families |
+  | `nehal/burst-channel` | burst error model (includes the families branch) |
+  | `nehal/s6-payload` | S6, payload, 209 tests (includes burst-channel) |
+
+  They stack, so **merging `nehal/s6-payload` brings everything current**.
+  Until that happens `main` describes a system three days out of date — it
+  still says S6 is empty and the suite is 125 tests. If you are reading this
+  from `main`, you are reading a stale copy.
+- **Start your own branch** for new work — `nehal/<feature>`. Never commit to
+  `main` directly, even though nothing currently stops you (see section 5).
+- **`C:\Users\aneha\OneDrive\Desktop\SIH`** is the pre-repo working copy,
+  fully superseded. It should be deleted — two copies is how they diverge, and
+  the IDE has already been observed opening the stale one.
 
 Environment: **Python 3.11.9** (not 3.13 — see
 `docs/python-version-decision.md`). `.venv` in the clone is already built.
@@ -124,8 +141,9 @@ printable : 100.0%   payload: TEXT RECOVERED
 **Registry.** `registry/protocols.py` — **a strawman in Naidhruv's directory.**
 Written only because S4 could not satisfy its 31 Aug gate ("recovers through
 the registry") before a registry existed. He should overwrite it; only the
-three protocol shapes need to survive. `ConvCode` and `BlockInterleaver` are
-both registered. `registry.describe()` is the `GET /registry` payload.
+three protocol shapes need to survive. `registry.describe()` is the
+`GET /registry` payload and now reports **3 interleavers + 1 code**: block,
+diagonal and convolutional families plus `ConvCode`.
 
 **Gates passed**
 
@@ -138,12 +156,21 @@ both registered. `registry.describe()` is the `GET /registry` payload.
 
 **Measured numbers** (all in `reports/`, all regenerable)
 
-| Method | Ceiling |
+| Method | Independent errors | Realistic bursts |
+|---|---|---|
+| Exact rank test, interleaver period | 0.30 % BER | **5.0 %** (burst 100) |
+| Statistical parity-check recovery | 3.0 % BER | >= 5.0 % |
+| Interleaver *parameters* under noise | fails at any BER | fails at any BER |
+
+Read both columns together — see section 8. Quoting the independent column
+alone understates Stage 4 by roughly 16x; quoting the burst column alone hides
+that bursts make *decoding* harder, not easier.
+
+| Timing | |
 |---|---|
-| Exact rank test, interleaver period | 0.30 % BER |
-| Statistical parity-check recovery | 3.0 % BER |
 | Full blind recovery, 160 kbit stream | ~3 s |
 | Worst case (uncoded noise, fallback bounded) | ~8–10 s |
+| `--demo --text`, end to end including Viterbi | ~21 s |
 
 No method has ever returned a confidently wrong answer. They fail to *nothing*.
 
@@ -177,8 +204,12 @@ No method has ever returned a confidently wrong answer. They fail to *nothing*.
   stand-in for Dheeraj's zoo. **Delete it the moment the real zoo lands** and
   re-run the gates against the real corpus. Two sources of ground truth must
   not coexist.
-- Naidhruv had committed only `README.md` and `requirements.txt` as of 31 Aug —
-  no skeleton, no contract, no orchestrator. `main` has no branch protection.
+- **Nothing from the other three streams exists yet.** As of 2 Sep, `main`
+  contains Naidhruv's `README.md` and `requirements.txt` and this stream's
+  work, and nothing else — no stage contract, no orchestrator, no service, no
+  UI, no zoo, no demodulator. Dheeraj and Anvith have zero commits. `main` has
+  no branch protection, and five of this stream's PRs are unreviewed. This is
+  the project's live risk, not anything inside S4–S6.
 
 ## 6. Conventions that must not be broken
 
