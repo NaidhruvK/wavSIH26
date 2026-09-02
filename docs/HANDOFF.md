@@ -207,9 +207,18 @@ No method has ever returned a confidently wrong answer. They fail to *nothing*.
 - **Nothing from the other three streams exists yet.** As of 2 Sep, `main`
   contains Naidhruv's `README.md` and `requirements.txt` and this stream's
   work, and nothing else — no stage contract, no orchestrator, no service, no
-  UI, no zoo, no demodulator. Dheeraj and Anvith have zero commits. `main` has
-  no branch protection, and five of this stream's PRs are unreviewed. This is
-  the project's live risk, not anything inside S4–S6.
+  UI, no zoo, no demodulator. Dheeraj and Anvith have zero commits. This is the
+  project's live risk, not anything inside S4–S6.
+- **`main` has no branch protection, and everything so far has been
+  self-merged.** Hour Zero calls for require-a-PR plus one approval; neither is
+  configured. PR #1 was self-merged without waiting for the review it
+  requested, and on 2 Sep the remaining branches were merged the same way after
+  three days with no reviewer available. Both times the tree was green and
+  nothing broke — which is exactly why it is worth writing down rather than
+  forgetting. It is the habit, not either instance, that breaks `main` on 5 or
+  6 September when four people are merging nightly. **Ask for the setting to be
+  turned on rather than relying on discipline**, and treat a green suite as a
+  reason the shortcut was survivable, not a reason it was correct.
 
 ## 6. Conventions that must not be broken
 
