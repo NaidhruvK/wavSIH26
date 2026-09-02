@@ -174,13 +174,26 @@ that bursts make *decoding* harder, not easier.
 
 No method has ever returned a confidently wrong answer. They fail to *nothing*.
 
-**Test suite:** 209 tests, ~6 min.
+**Test suite:** 225 tests, ~19 min.
+
+**That runtime is a problem and it is new.** RS `blind_recover` searches up
+to 255 byte alignments x 3 profiles, RS-decoding 24 blocks each, and that
+alone is ~12 min of the suite. It needs a cheap pre-filter on alignment
+before the 6 Sep clean-rebuild gate, or it will not fit the 90 s
+per-analysis budget either. Logged, not fixed.
 
 ## 5. What is NOT done
 
 - **Framing is not implemented.** S6 has descrambling and payload
   extraction; there is no frame sync, no header/payload split, no ASM matching.
-- **S5 is partial.** No Reed–Solomon plug-in. No concatenated CCSDS chain.
+- **No concatenated CCSDS chain yet** (5 Sep). RS and conv both exist and
+  are registered, but they have never been chained.
+- **RS beyond its correction limit declines rather than decoding**, which is
+  correct: t = 16 symbols per 255-byte block, so ~0.5 % BER is the ceiling.
+  Weak profiles (255,247) and (255,251) were REMOVED from the search after
+  they produced confidently wrong answers - a 4-parity code fits almost
+  anything within distance 2 of a codeword. A genuine RS(255,251) stream is
+  therefore outside the searched set and will be declined.
 - **A SCRAMBLED stream is not solved, and this one is subtle.** It yields the
   code-XOR-scrambler *composite*, which annihilates the stream exactly — no
   residual test can reject it, because it is a genuinely valid linear

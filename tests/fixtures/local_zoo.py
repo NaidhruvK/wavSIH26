@@ -28,6 +28,7 @@ from pipeline.s4_recover.interleavers import block_interleave
 
 __all__ = ["Truth", "make_stream", "lfsr_scramble", "inject_errors",
            "inject_burst_errors", "gilbert_elliott_mask", "random_case",
+           "make_rs_stream",
            "CCSDS_SCRAMBLER"]
 
 # Factorisations worth drawing from: period >= 32 so the collapse is
@@ -249,3 +250,54 @@ def random_case(seed: int, n_source_bits: int | None = None, ber: float = 0.0,
         bits = bits[trim:]
         truth.start_trim = trim
     return bits, truth
+
+
+# ---------------------------------------------------------------------------
+# Reed-Solomon streams (2 Sep). Block code over GF(256), so it needs its own
+# generator - conv_encode has nothing to do with it.
+# ---------------------------------------------------------------------------
+
+def make_rs_stream(n_blocks: int = 12, n: int = 255, k: int = 223,
+                   ber: float = 0.0, seed: int = 0, mean_burst: float = 1.0,
+                   payload_text: str | None = None, offset_bytes: int = 0):
+    """RS(n, k) encoded stream and its truth. Returns (bits, Truth).
+
+    `offset_bytes` prepends junk so the first block boundary is NOT at bit
+    zero. Recovering the alignment is part of the problem; a fixture that
+    always starts aligned tests an easier one.
+    """
+    import reedsolo
+
+    rng = np.random.default_rng(seed)
+    rs = reedsolo.RSCodec(n - k)
+
+    if payload_text is None:
+        payload = rng.integers(0, 256, n_blocks * k, dtype=np.uint8).tobytes()
+    else:
+        raw = payload_text.encode("utf-8")
+        reps = n_blocks * k // len(raw) + 1
+        payload = (raw * reps)[: n_blocks * k]
+
+    encoded = bytearray()
+    for b in range(n_blocks):
+        encoded.extend(rs.encode(payload[b * k:(b + 1) * k]))
+
+    if offset_bytes:
+        encoded = bytearray(rng.integers(0, 256, offset_bytes,
+                                         dtype=np.uint8).tobytes()) + encoded
+
+    bits = np.unpackbits(np.frombuffer(bytes(encoded), dtype=np.uint8))
+
+    if ber > 0 and mean_burst > 1.0:
+        bits, n_flipped = inject_burst_errors(bits, ber, mean_burst, rng)
+    else:
+        bits, n_flipped = inject_errors(bits, ber, rng)
+
+    truth = Truth(
+        n_source_bits=n_blocks * k * 8, polys_octal=(n, k), K=0,
+        depth=None, width=None, period=n * 8, scrambler_poly=None,
+        injected_ber=ber, n_flipped=n_flipped, seed=seed,
+        payload_text=payload_text, mean_burst=mean_burst,
+        start_trim=offset_bytes * 8,
+    )
+    return bits, truth, payload
