@@ -57,21 +57,11 @@ Ignore it.
 
 - **Repo:** `https://github.com/NaidhruvK/wavSIH26.git`
 - **Local clone:** `C:\Users\aneha\OneDrive\Desktop\raaya` — work here
-- **PR #1 is merged** (commit `1390962`, 31 Aug) and carried the S4 core to
-  `main`. Everything since then is on branches and **not yet on `main`**:
-
-  | Branch | Carries |
-  |---|---|
-  | `nehal/handoff-post-merge` | a docs fix |
-  | `nehal/dockerfile` | tested base image; 125 tests pass inside it |
-  | `nehal/interleaver-families` | diagonal + convolutional families |
-  | `nehal/burst-channel` | burst error model (includes the families branch) |
-  | `nehal/s6-payload` | S6, payload, 209 tests (includes burst-channel) |
-
-  They stack, so **merging `nehal/s6-payload` brings everything current**.
-  Until that happens `main` describes a system three days out of date — it
-  still says S6 is empty and the suite is 125 tests. If you are reading this
-  from `main`, you are reading a stale copy.
+- **`main` is current as of 2 Sep**, carrying S4, S5, S6, the three
+  interleaver families, the burst-error study and the Dockerfile. Everything up
+  to `s6-payload` was merged on 2 Sep; the branches are deleted.
+- **One branch is open: `nehal/reed-solomon`** — the 2 Sep gate (RS registered,
+  20/20 per code). Not yet merged.
 - **Start your own branch** for new work — `nehal/<feature>`. Never commit to
   `main` directly, even though nothing currently stops you (see section 5).
 - **`C:\Users\aneha\OneDrive\Desktop\SIH`** is the pre-repo working copy,
@@ -82,7 +72,7 @@ Environment: **Python 3.11.9** (not 3.13 — see
 `docs/python-version-decision.md`). `.venv` in the clone is already built.
 
 ```
-.venv/Scripts/python.exe -m pytest tests/unit -q      # 209 passed, ~6m
+.venv/Scripts/python.exe -m pytest tests/unit -q      # 225 passed, ~19m
 .venv/Scripts/python.exe docs/stack_check.py          # 11/11
 .venv/Scripts/python.exe -m pipeline.s4_recover.cli --demo --text
 ```
@@ -142,8 +132,8 @@ printable : 100.0%   payload: TEXT RECOVERED
 Written only because S4 could not satisfy its 31 Aug gate ("recovers through
 the registry") before a registry existed. He should overwrite it; only the
 three protocol shapes need to survive. `registry.describe()` is the
-`GET /registry` payload and now reports **3 interleavers + 1 code**: block,
-diagonal and convolutional families plus `ConvCode`.
+`GET /registry` payload and now reports **3 interleavers + 2 codes**: block,
+diagonal and convolutional families, plus `ConvCode` and `ReedSolomonCode`.
 
 **Gates passed**
 
@@ -153,6 +143,7 @@ diagonal and convolutional families plus `ConvCode`.
 | 30 Aug | Recovery-vs-BER curve exists, ceiling stated as a number | **PASS** — `reports/ber_ceiling.{md,png,csv}` |
 | 31 Aug | Recovers through the registry; registry lists 1 code + 1 interleaver | **PASS** (the 2 modulations in that gate line are Anvith's) |
 | 1 Sep | Block depth recovered >=15/16, diagonal >=8/10 | **PASS** — block 16/16, diagonal 10/10, convolutional 4/4 |
+| 2 Sep | Exact bit match on 20 streams per code at 0% BER | **PASS** — conv 20/20, RS 20/20, both against *recovered* parameters |
 
 **Measured numbers** (all in `reports/`, all regenerable)
 
@@ -174,13 +165,26 @@ that bursts make *decoding* harder, not easier.
 
 No method has ever returned a confidently wrong answer. They fail to *nothing*.
 
-**Test suite:** 209 tests, ~6 min.
+**Test suite:** 225 tests, ~19 min.
+
+**That runtime is a problem and it is new.** RS `blind_recover` searches up
+to 255 byte alignments x 3 profiles, RS-decoding 24 blocks each, and that
+alone is ~12 min of the suite. It needs a cheap pre-filter on alignment
+before the 6 Sep clean-rebuild gate, or it will not fit the 90 s
+per-analysis budget either. Logged, not fixed.
 
 ## 5. What is NOT done
 
 - **Framing is not implemented.** S6 has descrambling and payload
   extraction; there is no frame sync, no header/payload split, no ASM matching.
-- **S5 is partial.** No Reed–Solomon plug-in. No concatenated CCSDS chain.
+- **No concatenated CCSDS chain yet** (5 Sep). RS and conv both exist and
+  are registered, but they have never been chained.
+- **RS beyond its correction limit declines rather than decoding**, which is
+  correct: t = 16 symbols per 255-byte block, so ~0.5 % BER is the ceiling.
+  Weak profiles (255,247) and (255,251) were REMOVED from the search after
+  they produced confidently wrong answers - a 4-parity code fits almost
+  anything within distance 2 of a codeword. A genuine RS(255,251) stream is
+  therefore outside the searched set and will be declined.
 - **A SCRAMBLED stream is not solved, and this one is subtle.** It yields the
   code-XOR-scrambler *composite*, which annihilates the stream exactly — no
   residual test can reject it, because it is a genuinely valid linear
