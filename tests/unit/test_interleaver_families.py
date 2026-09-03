@@ -29,6 +29,7 @@ from registry import INTERLEAVERS
 import pipeline.s4_recover.interleavers  # noqa: F401  (registers the families)
 
 from pipeline.s4_recover.interleavers import (
+    block_deinterleave,
     block_interleave,
     conv_interleave,
     conv_latency,
@@ -195,3 +196,52 @@ def test_a_bad_parameter_does_not_crash_the_sweep():
     for name, plugin in INTERLEAVERS.items():
         for params in list(plugin.candidate_params(5000))[:40]:
             plugin.deinterleave(bits, **params)      # must not raise
+
+
+# --------------------------------------------------------------------------
+# the soft path - found 4 Sep, and it is the 3 Sep `harden` bug one stage on
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,params", [
+    ("block", {"depth": 8, "width": 12}),
+    ("diagonal", {"depth": 8, "width": 12}),
+    ("convolutional", {"branches": 4, "delay": 1}),
+])
+def test_deinterleave_preserves_soft_values(name, params):
+    """A permutation does not care what it is permuting, and casting to uint8
+    silently destroyed every LLR handed to it.
+
+    S3 emits floats. blind_recover hard-slices at its entry by design, so the
+    RECOVERY path never noticed - but the DECODE path needs the soft values,
+    and de-interleaving an LLR array returned an array of zeros. Viterbi then
+    decoded zeros into zeros, which is why the readable-text demo had never
+    once worked through the real receiver.
+    """
+    rng = np.random.default_rng(7)
+    llrs = rng.normal(0.0, 2.0, 96 * 40)
+
+    out = INTERLEAVERS[name].deinterleave(llrs, **params)
+
+    assert np.issubdtype(out.dtype, np.floating), \
+        "%s returned %s, which destroys the soft information" % (name, out.dtype)
+    assert np.any(out != 0), "%s zeroed the whole stream" % name
+    # every value that survived is one of the inputs, unchanged
+    kept = out[out != 0]
+    assert np.isin(kept, llrs).all(), "%s altered the values it permuted" % name
+
+
+def test_block_round_trip_is_exact_on_floats():
+    rng = np.random.default_rng(8)
+    llrs = rng.normal(0.0, 2.0, 96 * 40)
+    back = block_deinterleave(block_interleave(llrs, 8, 12), 8, 12)
+    assert np.array_equal(back, llrs)
+
+
+def test_deinterleave_still_returns_bits_for_bits():
+    """The fix must not change what the bit path does - the zoo, the fixtures
+    and every recovery test feed uint8 and expect uint8 back."""
+    rng = np.random.default_rng(9)
+    bits = rng.integers(0, 2, 96 * 40, dtype=np.uint8)
+    out = block_deinterleave(bits, 8, 12)
+    assert out.dtype == np.uint8
+    assert set(np.unique(out)).issubset({0, 1})

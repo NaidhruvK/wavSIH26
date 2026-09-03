@@ -1,14 +1,20 @@
 # The full chain through a real receiver — measured
 
-**Nehal · 3 September 2026.** First systematic end-to-end run: my Stage 4–6
-against Anvith's Stage 3, through a real modulator and channel. Regenerate with
+**Nehal · 4 September 2026.** My Stage 4–6 against Anvith's Stage 3, through a
+real modulator and channel. Regenerate with
 `python reports/end_to_end_study.py`.
+
+Supersedes the 3 September version of this file. **That version's numbers were
+right and its explanation of them was wrong** — see "Correcting yesterday"
+below. Measured against `origin/main` at `093f431`, so Anvith's roll-off fix
+and tap caps are in the path.
 
 ```
 payload -> conv encode 1/2 K=7 -> block interleave 8x12 -> QPSK
         -> AWGN + CFO + fractional timing offset
         -> S3 demodulate blind -> LLRs
         -> S4 recover interleaver and code blind
+        -> S5 Viterbi -> S6 payload
 ```
 
 Two arms, identical except for the payload: one carrying random bits, one
@@ -21,105 +27,143 @@ carrying ASCII text. 3 seeds x 6 SNRs each, 36 files.
 `raw BER` is the best rotation after FFT cross-correlation alignment, counting
 a fully inverted stream as a match.
 
-| Arm | SNR | raw BER | S4 recovered the interleaver |
-|---|---|---|---|
-| random | 16 dB | 0.00000 | **3/3** |
-| random | 14 dB | 0.00000 | **3/3** |
-| random | 12 dB | 0.00000 | **3/3** |
-| random | 10 dB | 0.00000 | **3/3** |
-| random | 8 dB | 0.00000 | **3/3** |
-| random | 6 dB | 0.00006 | **0/3** |
-| text | 16 dB | 0.00000 | **0/3** |
-| text | 14 dB | 0.00000 | **0/3** |
-| text | 12 dB | 0.00000 | **0/3** |
-| text | 10 dB | 0.00000 | **0/3** |
-| text | 8 dB | 0.00000 | **0/3** |
-| text | 6 dB | 0.00004 | **0/3** |
+| Arm | SNR | raw BER | interleaver + code recovered | message readable |
+|---|---|---|---|---|
+| random | 16 dB | 0.00000 | **3/3** | n/a |
+| random | 14 dB | 0.00000 | **3/3** | n/a |
+| random | 12 dB | 0.00000 | **3/3** | n/a |
+| random | 10 dB | 0.00000 | **3/3** | n/a |
+| random | 8 dB | 0.00000 | **3/3** | n/a |
+| random | 6 dB | 0.00006 | 0/3 | n/a |
+| text | 16 dB | 0.00000 | **3/3** | **3/3** |
+| text | 14 dB | 0.00000 | **3/3** | **3/3** |
+| text | 12 dB | 0.00000 | **3/3** | **3/3** |
+| text | 10 dB | 0.00000 | **3/3** | **3/3** |
+| text | 8 dB | 0.00000 | **3/3** | **3/3** |
+| text | 6 dB | 0.00005 | 0/3 | 0/3 |
 
-**15 of 36.** The 3 Sep gate asks for "at least one real end-to-end file at
-high SNR", so it passes — but that is a floor, and the shape of the 15 matters
-far more than the count.
+**30 of 36 recover. 15 of 18 text files print the message**, at a printable
+fraction of 1.000. Yesterday those columns read 15 of 36 and **0 of 18**.
 
-## What the numbers actually say
+Timing, whole chain per file including Viterbi: median 24 s, max 50 s. The 90 s
+per-analysis budget holds with room, and the maximum is a 6 dB file — the ones
+that fail are the ones that cost most, because nothing short-circuits.
 
-**1. The threshold is zero bit errors, not low BER.**
+**The two arms now agree.** They differ only in payload, so any gap between
+them was always a bug rather than a result. That sentence is the whole of
+yesterday's finding, and it is now an assertion in
+`tests/unit/test_structured_source.py::test_random_and_text_arms_agree`.
 
-Every success sits at raw BER exactly 0.00000. The single step from 0 to
-6e-5 — six errors in a hundred thousand bits — takes recovery from 3/3 to 0/3.
-There is no degradation region. This independently reproduces Anvith's claim 1
-from the other side of the junction, and it is the number that should govern
-the demo: **the chain needs an SNR high enough for a perfect demodulation, not
-merely a good one.** For QPSK on this channel that is about 8 dB.
+## Blind in, message out — through the real receiver, for the first time
 
-**2. A structured payload defeats it entirely, at every SNR.**
+Yesterday's file said this plainly:
 
-This is the finding I did not have this morning and it is the more serious one.
-The text arm fails **0/18 — including at 16 dB with a demodulation that has
-zero bit errors.** It is not a noise problem at all.
+> The readable-text demo has never run through the real receiver. It works
+> through the synthetic zoo, where the payload goes straight to the encoder.
 
-ASCII has bit 7 clear in every byte, so the source is rank-deficient before the
-code touches it. When the source's own periodicity is shorter than the
-interleaver period, that collapse comes first and `detect_signature` takes the
-smallest. Measured directly on the transmitted stream: a repeating
-11-character payload puts the first collapse at L=33, a 162-character one at
-L=54. The true interleaver period, 96, is never reached.
-
-**3. On the correct rotation it returns `ok` with garbage, rather than
-declining.**
-
-At 16 dB, text arm, the rotation with a perfect demodulation returns:
+That is no longer true, and it was not true for the reason anyone thought.
 
 ```
-status=ok  confidence=0.62  period=4  K=1  generators=None  interleaver=NONE
+16 dB, text arm, seed 1, rotation 0
+period=96  block(depth=8,width=12)  rate 1/2 K=7  G=(0o171, 0o133)
+printable : 100.0%
+plied. RAAYA SIH26147 -- this message went through a modulator, a noisy
+channel and a blind receiver. Nothing about the interleaver or the code...
 ```
 
-The three wrong rotations return `low_confidence`. So the *correct* one
-produces the most confident nonsense. That is the failure mode this project has
-worked hardest to avoid, and it is present.
+Nothing about that file was supplied: not the modulation, not the symbol rate,
+not the interleaver, not the code, not the generators, not the polarity.
 
-**4. It also breaks the rotation-selection rule I endorsed this morning.**
+## Correcting yesterday
 
-I verified Anvith's recommendation — rank rotations by shortest constraint span
-— and reported that it resolves the phase ambiguity completely. On a clean
-synthetic stream it does. Here it does not: the garbage answer has span 4,
-which is the *shortest*, so shortest-span actively selects it. The rule is
-sound only when the code is the sole source of structure. **That correction
-belongs on my earlier claim, not on Anvith's report** — his statement was about
-rotations on an unstructured stream and remains correct there.
+Yesterday's report named `detect_signature` taking the smallest collapse as
+the cause, and said a structured payload "defeats it entirely, at every SNR".
+**I checked that before fixing it, and it does not reproduce.**
+`detect_signature` returns the true period 96 on every rotation of every file
+in the text arm, and the transmitted stream recovers cleanly at every start
+offset. The measurement was real; the mechanism I attached to it was not.
 
-## What this means for the demo
+What actually happened was one step further on, and it took three separate
+defects lining up:
 
-Stated plainly, because it is easy to overclaim from the 15/36:
+**1. A false positive won the rotation ranking.** On the *wrong* rotations the
+statistical fallback returned `ok` at 0.59 with "period=4, rate 1/2 K=2" — a
+memory-1 artefact of ASCII, not a code. The study ranks rotations by shortest
+constraint span, so span 4 beat the true span 14 and the garbage rotation won.
+Every text row was decided by a rotation that should have declined. The
+correct rotations were sitting right there returning `period=96,
+block(8,12), G=(0o171, 0o133)`.
 
-- **Random payload, zero bit errors: the chain works end to end**, with the
-  interleaver, the code and both generators recovered from a real receiver's
-  LLRs. That is real and it is new today.
-- **The readable-text demo has never run through the real receiver.** It works
-  through the synthetic zoo, where the payload goes straight to the encoder. It
-  does not survive the structured-source problem above. Anyone showing
-  `--demo --text` should say it is a zoo file, not a received signal.
-- The gap between those two sentences is the honest state of the pipeline
-  tonight.
+**2. De-interleaving destroyed the LLRs.** Every function in
+`interleavers.py` began `np.asarray(bits, dtype=np.uint8)`. A permutation does
+not care what it is permuting, so that cast bought nothing and silently
+truncated every soft value handed to it. De-interleaving a real receiver's
+output returned an array of zeros, and Viterbi decoded zeros into zeros.
 
-## Corrections to earlier claims
+This is the 3 September `harden` bug one stage further along — that one was
+`blind_recover` assuming hard bits at its entry, this one is the
+de-interleavers assuming them at theirs. It hid because the *recovery* path
+hard-slices by design, so only the *decode* path was affected, and every test
+before today de-interleaved zoo bits. `tests/contract/test_llr_contract.py`
+has carried the rule since 2 Sep — "an integer dtype destroys the soft
+information" — and asserted it of S3's output, never of anything consuming it.
 
-- **`reports/end_to_end.csv` as first committed was meaningless.** raw BER was
-  computed without alignment and read ~0.49 at every SNR, because the receiver
-  has group delay and the streams were simply not lined up. Every row said
-  `recovered=0`. Replaced.
-- **My "gate PASS" was based on one hand-run case**, not this sweep. It happens
-  to hold, but it was thin evidence when I reported it.
-- **"Shortest span resolves the phase ambiguity"** is true only for
-  unstructured sources. See point 4.
+**3. Polarity.** With the LLRs surviving, the chain decoded — to the
+complement of the message. A coherent receiver cannot tell 0° from 180°, so
+half of S3's rotations carry the stream inverted; the rank test is blind to
+inversion, so both recover identical parameters and both decode without
+complaint. Measured on one file: rotation 2 printable 1.000, rotation 0
+printable 0.001, same parameters. The study picks by rotation index and got
+the inverted one.
 
-## What to fix, in order
+This is **risk #9 arriving exactly as the register worded it** — "decode
+succeeds but bits are inverted". The printable fraction was already the
+evidence needed to settle it, so `extract_text` now reads both polarities and
+keeps the better one, reporting which it used.
 
-1. `detect_signature` must not take the smallest collapse unconditionally. The
-   interleaver period is the one whose *deficiency profile* matches an
-   interleaver rather than a source artefact — a collapse at a period that does
-   not also produce a consistent code after de-interleaving should be skipped
-   rather than accepted.
-2. Returning `ok` at 0.62 with `period=4, K=1, generators=None` is wrong on its
-   face. A result with no generators and no interleaver is not `ok`.
-3. Only then re-run this study. The 6 dB row will not move — that is physics,
-   not a bug.
+Three defects, one visible symptom. The first is why nothing was recovered,
+and the second and third are why nothing would have been readable even if it
+had been.
+
+## What was fixed, and the one thing that was not
+
+Four paths could return `ok` on a structured source; all four are closed and
+the guards now meet at a single exit (`_finalise`). Details in the commits and
+in `tests/unit/test_structured_source.py`.
+
+**Still open, and now measured rather than assumed.** An interleaved stream
+carrying a *short repeating* payload is refused, not recovered. Two things
+defeat it, and only the first was known:
+
+- its own periodicity collapses before the interleaver's — a repeating
+  11-character payload collapses at L=44 against a true period of 96. The
+  candidate walk handles this: `iter_signatures` offers later collapses.
+- the block-boundary offset is chosen by argmax of deficiency, and on a
+  structured source that argmax carries **no signal at all**. Measured across
+  three fixtures, the true offset sits within **one** of the maximum while
+  ranking 39th, 59th and 71st of 96.
+
+So the alignment cannot be resolved from the curve — exactly as the family
+cannot (block and diagonal are byte-identical, 1 Sep) and the period cannot.
+It needs the same treatment, a functional test per candidate, and that costs a
+family search per offset, which does not fit the budget. Deferred with a test
+that fails loudly if it ever improves on its own.
+
+This does not affect the demo message, whose own period is longer than the
+interleaver's, and it does not affect random payloads. It would affect real
+telemetry with short repeating frame headers, which is why it is written down
+rather than filed away.
+
+## The threshold is still zero bit errors
+
+Unchanged from yesterday, and it is physics rather than a bug. Every success
+sits at raw BER exactly 0.00000; the step to 5e-5 takes recovery from 3/3 to
+0/3. There is no degradation region for the *exact* rank test, and the
+statistical fallback cannot help because it recovers the code, not the
+interleaver's factorisation.
+
+**For the demo this is the number that governs**: the chain needs an SNR high
+enough for a bit-perfect demodulation, not merely a good one. On this channel,
+QPSK, that is 8 dB. Anyone quoting the 5% burst-error ceiling from
+`burst_channel.md` must say in the same breath that it is the ceiling for
+recovering the CODE from an already-de-interleaved stream, not for this chain.

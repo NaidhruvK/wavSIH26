@@ -288,8 +288,120 @@ the code-XOR-scrambler composite, which annihilates the stream exactly and so
 cannot be rejected by any residual test. K=7 under a degree-8 scrambler reads
 back as K=15. Such results are downgraded and labelled, never announced.
 
-**Tomorrow (2 Sep):** Reed-Solomon (255,223) registered, and the LLR contract
-test with Anvith. `docs/HANDOFF.md` has the LLR convention.
+**2 Sep gate: PASS.** Reed-Solomon (255,223) registered. Exact bit match on 20
+streams per code at 0 % BER, both against *recovered* parameters - conv 20/20,
+RS 20/20. Weak profiles (255,247) and (255,251) were REMOVED from the search
+after they produced confidently wrong answers: a 4-parity code fits almost
+anything within distance 2 of a codeword. A genuine RS(255,251) stream is
+therefore outside the searched set and is declined rather than guessed at.
+
+**3 Sep gate: PASS**, and the day found the bug it existed to find.
+`blind_recover` assumed 0/1 and never hard-sliced, so real LLRs - which is what
+S3 actually emits - had float values packed through `np.packbits`. A *perfect*
+demodulation came back as "period=4, K=2, G=(0o1, 0o0)" at 0.95 confidence: a
+confident wrong answer on the one input the whole pipeline exists to consume,
+and it would have done that on every real file. Hardened at the entry
+(`harden()`), two regression tests.
+
+---
+
+**4 Sep. The correction is mine, and it matters more than the fix.**
+
+Last night's `reports/end_to_end.md` put the text arm at **0 of 18** - including
+16 dB with a bit-perfect demodulation - and blamed `detect_signature` for taking
+the smallest rank collapse. I re-measured that before fixing it and **the
+diagnosis was wrong**. `detect_signature` returns the true period 96 on every
+rotation of every file in that arm, and the transmitted stream recovers cleanly
+at every start offset. The numbers were real; the mechanism I attached to them
+was not. Three separate defects were lined up behind one symptom:
+
+1. **A false positive won the rotation ranking.** On the *wrong* rotations the
+   statistical fallback returned `ok` at 0.59 with "period=4, rate 1/2 K=2" - a
+   memory-1 artefact of ASCII, not a code. The study ranks rotations by shortest
+   span, so span 4 beat the true span 14 and the garbage rotation won. The
+   correct rotations were sitting there returning `period=96, block(8,12),
+   G=(0o171, 0o133)` the whole time.
+2. **De-interleaving destroyed the LLRs.** Every function in `interleavers.py`
+   began `np.asarray(bits, dtype=np.uint8)`. A permutation does not care what it
+   is permuting, so that cast bought nothing and truncated every soft value.
+   De-interleaving a real receiver's output returned **an array of zeros**, and
+   Viterbi decoded zeros into zeros. This is the 3 Sep `harden` bug one stage
+   further along, and it hid because the recovery path hard-slices by design -
+   only the *decode* path needed the soft values, and every test before today
+   de-interleaved zoo bits.
+3. **Polarity - risk #9, arriving in the register's own words.** With the LLRs
+   surviving, the chain decoded to the *complement* of the message. A coherent
+   receiver cannot tell 0 deg from 180, both polarities recover identical
+   parameters, and both decode without complaint. One file: rotation 2 printable
+   1.000, rotation 0 printable 0.001, same parameters.
+
+**Results, measured against `origin/main` at 093f431 so Anvith's roll-off fix is
+in the path** (`reports/end_to_end.md`):
+
+| | yesterday | today |
+|---|---|---|
+| interleaver + code recovered | 15/36 | **30/36** |
+| text arm recovered | 0/18 | **15/18** |
+| text arm printing the message | 0/18 | **15/18** at printable 1.000 |
+
+Whole chain per file, median 24 s, max 50 s - inside the 90 s budget.
+
+**Blind in, message out, through the real receiver - for the first time.**
+Yesterday's file said the readable-text demo "has never run through the real
+receiver". It has now: real modulator, real channel, blind S3, blind S4, Viterbi,
+text. Nothing about the file was supplied - not the modulation, symbol rate,
+interleaver, code, generators, or polarity. **This is the sentence to use in the
+demo, and it is now true of a received signal rather than a zoo file.**
+
+**Four paths could report `ok` on a structured source. All four are closed**, and
+the guards now meet at one exit (`_finalise`) instead of living in whichever
+branch happened to run. The recurring lesson, third instance: *deficiency cannot
+DECIDE - only a functional test can.* The discriminator turned out to be
+structural rather than a threshold - a real code has a **one**-dimensional null
+space at its span, and the ASCII artefacts have 4, 7 and 19.
+
+Also: a scrambled stream was walking around the K<=9 composite guard by coming
+back through the *interleaver* path as `block(depth=1,width=32)`. Depth 1 is the
+identity permutation - the direct reading wearing a hat, meeting a guard that
+only existed in the branch it did not take. Guard moved to the exit; depth 1 is
+no longer offered.
+
+**4 Sep column done: hypothesis fallback across the registry product, bounded.**
+`iter_signatures` walks successive collapse periods instead of only the first,
+resuming the sweep so an ordinary file costs exactly what it did before. Bounded
+by 6 candidates and a 12 s wall clock. Uncoded data produces *no* candidates at
+all, so the judge's first input is untouched - still 8.4 s, still `failed`.
+
+**Still open, and now measured rather than assumed.** An interleaved stream with a
+*short repeating* payload is refused, not recovered. The block-boundary offset is
+picked by argmax of deficiency, and on a structured source that argmax carries no
+signal: across three fixtures the true offset sits within **one** of the maximum
+while ranking 39th, 59th and 71st of 96. It needs a functional test per offset,
+which is a family search per offset, which does not fit the budget. Logged with a
+test that fails loudly if it ever improves on its own. Does not affect the demo
+message (its period is longer than the interleaver's) or random payloads; would
+affect real telemetry with short repeating frame headers.
+
+**Anvith:** your roll-off fix and tap caps are in my numbers and changed nothing
+in the recovery outcome - the 6 dB rows fail on non-zero BER, which is physics.
+Your 3 Sep claim 1 reproduces from my side: the threshold is **zero bit errors**,
+not low BER. And your shortest-span rotation rule is sound, but it was being
+handed a false positive to rank; that was my bug, not yours.
+
+**Dheeraj:** second time in three days that real payloads found something random
+bits cannot. The zoo needs text payloads AND short repeating ones - the second
+kind is what real telemetry frame headers look like and it is where this still
+breaks.
+
+**Naidhruv:** `PayloadReport` now carries `inverted` - the UI should say when a
+payload was read in inverted polarity, because blind, we cannot tell 0 deg from
+180 without a sync marker. That marker is 7 Sep framing work.
+
+**Next (5 Sep):** concatenated CCSDS chain. Before it, the RS runtime: RS
+`blind_recover` searches 255 alignments x 3 profiles, RS-decoding 24 blocks each,
+and the caller requires *every* block to decode - so it can abandon an alignment
+on the first failure instead of after 24. That is ~12 min of the suite and it
+does not fit the 90 s budget either. Not started.
 
 **Blocked on:** nothing.
 
