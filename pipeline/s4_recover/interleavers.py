@@ -100,7 +100,15 @@ class BlockInterleaver:
         for per in periods:
             if per < 2 or per > max_period:
                 continue
-            for depth in range(1, per + 1):
+            # Depth 1 is the IDENTITY permutation - writing one row and
+            # reading it back column-wise changes nothing - so offering it as
+            # a candidate lets an un-interleaved stream come back as
+            # "block(depth=1)". That is not a wrong permutation, it is the
+            # direct reading wearing a hat, and on 4 Sep it carried a
+            # scrambler composite around the K<=9 guard that only the direct
+            # branch applied. "No interleaver" is the honest way to say this,
+            # and blind_recover already has a route for it.
+            for depth in range(2, per + 1):
                 if per % depth == 0:
                     yield {"depth": depth, "width": per // depth}
 
