@@ -48,6 +48,7 @@ __all__ = [
     "blind_recover",
     "taps_to_poly",
     "max_searchable_period",
+    "harden",
 ]
 
 # --- bounds. every one of these exists to stop the sweep exploding. ---------
@@ -139,6 +140,32 @@ class RecoveryResult:
         if self.generators_octal:
             parts.append("G=(" + ", ".join("0o%o" % g for g in self.generators_octal) + ")")
         return "  ".join(parts)
+
+
+def harden(values) -> np.ndarray:
+    """Accept either hard bits or soft LLRs, and return bits.
+
+    Found on 3 Sep at the S3->S4 junction, which is exactly what that day was
+    for. blind_recover assumed 0/1 and did not hard-slice, so handing it real
+    LLRs - which is what S3 actually emits - packed float values through
+    np.packbits and produced nonsense: a PERFECT demodulation (raw BER 0.00000)
+    came back as "period=4, K=2, G=(0o1, 0o0)" at 0.95 confidence.
+
+    It never raised. It never declined. It returned a confident wrong answer on
+    the one input the whole pipeline is built to hand it, and it would have
+    done so on every real file.
+
+    ConvCode.blind_recover already had llr_to_bits; this path did not, because
+    every test until today fed it bits from the zoo. The project convention is
+    llr = log(P(0)/P(1)), so positive means bit 0 and the hard decision is
+    `llr < 0`.
+    """
+    arr = np.asarray(values)
+    if arr.dtype == np.uint8 or (arr.dtype.kind in "iub" and np.isin(arr, (0, 1)).all()):
+        return arr.astype(np.uint8).ravel()
+    if arr.dtype.kind == "f":
+        return (arr.ravel() < 0).astype(np.uint8)
+    return np.asarray(arr, dtype=np.uint8).ravel()
 
 
 def taps_to_poly(taps: np.ndarray) -> int:
@@ -457,7 +484,7 @@ def blind_recover(bits: np.ndarray, statistical_fallback: bool = True) -> Recove
     must land here and not in a confident answer - that is risk #15, and it is
     the test a judge runs first.
     """
-    bits = np.asarray(bits, dtype=np.uint8).ravel()
+    bits = harden(bits)
     if len(bits) < MIN_BITS:
         return RecoveryResult("failed", 0.0,
                               reason="only %d bits; need >= %d" % (len(bits), MIN_BITS))
