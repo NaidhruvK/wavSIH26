@@ -56,8 +56,29 @@ MESSAGE = ("RAAYA SIH26147 -- this message went through a modulator, a noisy "
            "channel and a blind receiver. Nothing about the interleaver or the "
            "code was supplied. ")
 SNRS = [16, 14, 12, 10, 8, 6]
+SEEDS = (1, 2, 3)
 DEPTH, WIDTH = 8, 12
 DECODE_BITS = 24_000
+
+
+def align(rx: np.ndarray, tx: np.ndarray):
+    """Offset of rx within tx by FFT cross-correlation, plus the error mask.
+
+    Borrowed from Anvith's junction study, and it is not optional. Comparing
+    rx[:n] against tx[:n] directly reports ~0.49 at EVERY SNR - the receiver
+    has group delay and a filter transient, so the streams are simply not
+    aligned. The first version of this file did exactly that and recorded 18
+    rows of meaningless data.
+    """
+    n = min(rx.size, 60000)
+    a = 1.0 - 2.0 * rx[:n].astype(float)
+    m = min(tx.size, n + 100000)
+    b = 1.0 - 2.0 * tx[:m].astype(float)
+    L = 1 << int(np.ceil(np.log2(m + n)))
+    c = np.fft.irfft(np.fft.rfft(b, L) * np.conj(np.fft.rfft(a, L)), L)[: m - n + 1]
+    off = int(np.argmax(np.abs(c)))
+    err = rx[:n] != tx[off:off + n]
+    return float(np.mean(err)), off, err
 
 
 def recover_with_rotation_search(candidates):
@@ -83,38 +104,42 @@ def recover_with_rotation_search(candidates):
     return best
 
 
-def run_one(snr_db: float, seed: int):
-    bits, truth = make_stream(60_000, DEPTH, WIDTH, seed=seed, payload_text=MESSAGE)
+def run_one(snr_db: float, seed: int, payload: str | None):
+    bits, truth = make_stream(60_000, DEPTH, WIDTH, seed=seed, payload_text=payload)
     spec = ChannelSpec(scheme="qpsk", sps=4, beta=0.35, snr_db=snr_db,
                        cfo_norm=1e-4, phase_rad=0.7, timing_offset_sym=0.3,
                        seed=seed)
-    iq, _ = through_channel(bits, spec)
+    iq, n_used = through_channel(bits, spec)
 
     t0 = time.time()
     s3 = MODULATIONS["qpsk"].receive(iq, {"fs": spec.fs,
                                           "symbol_rate": spec.symbol_rate})
+    arm = "text" if payload else "random"
+    base = {"arm": arm, "snr_db": snr_db, "seed": seed}
     if s3.llrs is None or np.asarray(s3.llrs).size == 0:
-        return {"snr_db": snr_db, "seed": seed, "raw_ber": 1.0, "recovered": 0,
+        return {**base, "raw_ber": 1.0, "s3_ok": 0, "recovered": 0,
                 "interleaver_ok": 0, "printable": 0.0, "text_ok": 0,
                 "seconds": round(time.time() - t0, 1), "rotation": "-", "span": 0}
 
-    hard = (np.asarray(s3.llrs, dtype=float) < 0).astype(np.uint8)
-    n = min(len(hard), len(bits))
-    raw_ber = float((hard[:n] != bits[:n]).mean())
-    raw_ber = min(raw_ber, 1.0 - raw_ber)          # ignore global inversion
+    # best rotation, properly aligned. A fully inverted stream is a match.
+    raw_ber = 1.0
+    for cand in s3.llrs_by_rotation:
+        h = (np.asarray(cand, dtype=float) < 0).astype(np.uint8)
+        b, _, _ = align(h, bits[:n_used])
+        raw_ber = min(raw_ber, b, 1.0 - b)
 
     found = recover_with_rotation_search(s3.llrs_by_rotation)
     if found is None:
-        return {"snr_db": snr_db, "seed": seed, "raw_ber": raw_ber,
-                "recovered": 0, "interleaver_ok": 0, "printable": 0.0,
-                "text_ok": 0, "seconds": round(time.time() - t0, 1)}
+        return {**base, "raw_ber": raw_ber, "s3_ok": 1, "recovered": 0,
+                "interleaver_ok": 0, "printable": 0.0, "text_ok": 0,
+                "seconds": round(time.time() - t0, 1), "rotation": "-", "span": 0}
 
     (span, _), rot, res, stream = found
     interleaver_ok = int(res.interleaver is not None and
                          res.interleaver.params == {"depth": DEPTH, "width": WIDTH})
 
     text_ok, printable = 0, 0.0
-    if interleaver_ok:
+    if interleaver_ok and payload:
         de = INTERLEAVERS[res.interleaver.family].deinterleave(
             stream[res.offset:], **res.interleaver.params)
         dec = CODES["conv"].decode(de[:DECODE_BITS], {
@@ -124,7 +149,7 @@ def run_one(snr_db: float, seed: int):
         rep = extract_text(dec)
         printable, text_ok = rep.printable_fraction, int("RAAYA SIH26147" in rep.text)
 
-    return {"snr_db": snr_db, "seed": seed, "raw_ber": raw_ber, "recovered": 1,
+    return {**base, "raw_ber": raw_ber, "s3_ok": 1, "recovered": 1,
             "interleaver_ok": interleaver_ok, "printable": round(printable, 4),
             "text_ok": text_ok, "seconds": round(time.time() - t0, 1),
             "rotation": rot, "span": span}
@@ -132,32 +157,47 @@ def run_one(snr_db: float, seed: int):
 
 if __name__ == "__main__":
     rows = []
-    for snr in SNRS:
-        for seed in (1, 2, 3):
-            r = run_one(snr, seed)
-            rows.append(r)
-            print("SNR=%2d seed=%d raw_BER=%.5f recovered=%d interleaver=%d "
-                  "printable=%.2f TEXT=%d [%.0fs]"
-                  % (snr, seed, r["raw_ber"], r["recovered"], r["interleaver_ok"],
-                     r["printable"], r["text_ok"], r["seconds"]), flush=True)
+    for arm_payload in (None, MESSAGE):          # random first, then structured
+        for snr in SNRS:
+            for seed in SEEDS:
+                r = run_one(snr, seed, arm_payload)
+                rows.append(r)
+                print("%-6s SNR=%2d seed=%d raw_BER=%.5f S3=%d recovered=%d "
+                      "interleaver=%d text=%d [%.0fs]"
+                      % (r["arm"], snr, seed, r["raw_ber"], r["s3_ok"],
+                         r["recovered"], r["interleaver_ok"], r["text_ok"],
+                         r["seconds"]), flush=True)
 
     out = ROOT / "reports" / "end_to_end.csv"
+    fields = ["arm", "snr_db", "seed", "raw_ber", "s3_ok", "recovered",
+              "interleaver_ok", "printable", "text_ok", "seconds", "rotation", "span"]
     with out.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=["snr_db", "seed", "raw_ber", "recovered",
-                                           "interleaver_ok", "printable", "text_ok",
-                                           "seconds", "rotation", "span"],
-                           extrasaction="ignore")
+        w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
     print("wrote", out)
 
-    ok = [r for r in rows if r["text_ok"]]
+    print()
+    print("%-8s %6s | %9s | %10s | %11s" % ("arm", "SNR", "raw BER", "recovered", "interleaver"))
+    for arm in ("random", "text"):
+        for snr in SNRS:
+            sub = [r for r in rows if r["arm"] == arm and r["snr_db"] == snr]
+            if not sub:
+                continue
+            print("%-8s %5d  | %9.5f | %5d/%-4d | %5d/%-5d"
+                  % (arm, snr, float(np.mean([r["raw_ber"] for r in sub])),
+                     sum(r["recovered"] for r in sub), len(sub),
+                     sum(r["interleaver_ok"] for r in sub), len(sub)))
+
+    ok = [r for r in rows if r["interleaver_ok"]]
     print()
     print("GATE (3 Sep): rank recovery on at least one real end-to-end file at high SNR")
-    print("  files with TEXT recovered end to end: %d of %d" % (len(ok), len(rows)))
+    print("  files where the interleaver was recovered: %d of %d" % (len(ok), len(rows)))
     if ok:
-        print("  highest raw BER that still produced text: %.5f"
+        print("  highest raw BER that still recovered:      %.5f"
               % max(r["raw_ber"] for r in ok))
+        print("  lowest SNR that still recovered:           %d dB"
+              % min(r["snr_db"] for r in ok))
         print("  PASS")
     else:
         print("  FAIL")
