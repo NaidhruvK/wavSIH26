@@ -19,15 +19,113 @@ must not coexist.
 
 ## Anvith — S3 receiver chain
 
-_(not started here)_
+**Landed 29 Aug – 3 Sep, all on `anvith/s3-receive`.** Two days late; the whole
+column is now in.
 
-**Nothing blocks on you and nothing should.** S4 reads zoo bitstreams with
-injected errors, so the BER ceiling is already measured (see below) without
-your demodulator existing. What I will need on **2 Sep** is float LLR arrays,
-not hard bits — and be aware the ceiling below is measured against
-*independent* errors. Yours will be bursty. That gap is the 3 Sep junction.
+- `pipeline/s3_receive/` — RRC matched filter with blind roll-off, Gardner
+  timing, CMA and MMA blind equalisers, Costas for M-PSK and a
+  decision-directed loop for QAM, non-coherent FSK tone bank, exact
+  (log-sum-exp) soft demapper.
+- **Six modulations registered**: `bpsk qpsk 8psk 16qam 2fsk 4fsk`. 4-FSK was
+  one registration line because `FSKDemod` already generalised on order, so the
+  2 Sep "all six" gate is literal rather than nearly-met; 7 Sep's 4-FSK row
+  becomes measurement rather than new code.
+- `pipeline/s3_receive/bitmap.py` — **the symbol-to-bit mapping, written down
+  once**. Dheeraj: when the zoo grows a modulator, import
+  `bits_to_symbol_indices` from here rather than restating it. Two
+  implementations of one convention is a bug that shows up as a payload of
+  noise with every stage reporting success.
+- `tests/contract/test_llr_contract.py` — the 2 Sep gate. Written into
+  Naidhruv's directory on the same basis Nehal wrote `registry/protocols.py`:
+  the gate fell due and the owner had not landed. Overwrite freely; keep the
+  properties.
+- `tests/unit/test_s3_receive.py` (46), `tests/fixtures/rf_channel.py` (bits →
+  RF, the missing half of the junction), `reports/s3_s4_junction_study.py`.
 
----
+**2 Sep gate: PASS.** LLR contract green for all six — float dtype, not
+confined to {0,1}, finite, `llr > 0` means bit 0 asserted against transmitted
+bits, and a real continuum of magnitudes at marginal SNR.
+
+**3 Sep gate (my row): PASS.** S3's own estimated output BER tracks the measured
+one within a factor of two on every scheme, at the SNR where each is marginal.
+The one case outside it is 8-PSK at 8 dB, where the receiver has genuinely lost
+lock and reports `low_confidence` rather than a number.
+
+**Nehal — four things from the junction, in order of how much they change what
+you do.** Full detail in `reports/s3_s4_junction.md`.
+
+1. **The rank test cannot select the rotation, and that breaks risk #9's stated
+   mitigation.** On an un-interleaved stream, all four QPSK rotations return
+   `status=ok` at confidence 0.90–0.95. Two give the true `0o171/0o133`; the
+   two I/Q-swapped ones give `0o355/0o213` at period 16. They are not false
+   positives in your sense — a rotation applies a fixed bit permutation to a
+   linear code, and the result is a genuinely valid linear code, just not ours.
+   **The discriminator you already have is span**: correct rotations recover at
+   period 14, wrong ones at 16. Your "shortest span wins" rule applied *across*
+   rotations picks the right one. Worth wiring into the 4 Sep fallback loop
+   rather than scoring rotations on confidence.
+2. **The interleaver is what fails, not the code.** Same stream, same SNRs, the
+   only difference being the 8×12 block interleaver: with it, recovery works
+   only at exactly zero raw BER; without it, the code comes back correctly down
+   to 3 dB and 0.29 % BER, via your statistical fallback. That is your
+   documented open problem, now measured against real receiver errors rather
+   than injected ones.
+3. **My errors are independent, not bursty — mean run length 1.00–1.22.** Your
+   prediction was that real demodulator errors would land between the injected
+   models. At the SNRs where a coherent receiver still holds lock they land at
+   the *independent* end, because the carrier loop either tracks or slips, and
+   while it tracks the errors are memoryless. Bursts appear when it slips, and
+   a slipped stream is not usable anyway. So the 0.30 % independent ceiling is
+   the relevant one for the junction, not the 5 % bursty one.
+4. **Cost note.** A rotation carrying no code structure runs the statistical
+   fallback to its full budget: ~7.5 s against ~0.1 s for one that recovers.
+   Four rotations is ~15 s, not 0.4 s. Stop at the first `ok`.
+
+**Four bugs found by measurement, all now pinned by tests.** Each cost real
+time, so they are written down rather than quietly fixed:
+
+- The Gardner error sign was inverted. The loop settled perfectly — onto the
+  zero crossing half a symbol from the decision instant. Steady error trace,
+  closed eye. Only the eye diagram distinguishes the two.
+- Timing loop gain was expressed in absolute samples, so it halved at 8 sps.
+  Showed up as a 0.13 % rate bias and a constellation that decayed over a long
+  record while looking clean at the start.
+- **LLRs were emitted for the acquisition transient.** On a 16-QAM file at
+  22 dB, 312 bit errors — every one of them in the first 2000 bits, the
+  remaining 38 000 exact. Large-and-wrong LLRs are worse for a soft decoder
+  than erasures. The equaliser warm-up and the carrier settle point are both
+  trimmed now, the latter against the stream's own final lock quality rather
+  than an absolute threshold.
+- The 16-QAM lock metric moved only between 0.24 and 0.33 across 10–20 dB, and
+  0.24 was a stream decoding at 49 % BER. No threshold fits in that gap. Fixed
+  with the reduced-constellation trick: measure on the top quartile by
+  magnitude, which for 16-QAM is the corners, and they sit at exact multiples
+  of 45°.
+
+**Stated plainly, not hidden**
+
+- Max-log demapping was replaced with exact log-sum-exp. Max-log is biased
+  over-confident on 16-QAM — it reported 0.00076 BER against an actual 0.00310.
+  Fine for feeding a decoder, not fine when the stage also has to report how
+  good its output is.
+- The non-coherent FSK LLR carries a **measured** calibration constant of 2.0,
+  not a derived one. It holds across both FSK orders and a 4 dB span, which is
+  why I trust it as a missing term rather than a fudge, but somebody should
+  derive it properly.
+- Blind roll-off estimation reads high at wide roll-off: 0.60 for a true 0.50,
+  within 0.05 at 0.2 and 0.35. Costs well under a decibel. October window.
+- Everything is measured against `tests/fixtures/rf_channel.py` driving Nehal's
+  `local_zoo`, because there is still no zoo. **Dheeraj: the moment yours
+  lands, my fixture dies and I re-run every number.**
+- **I am on Python 3.12, not the pinned 3.11.9** — no 3.11 on this machine yet.
+  Nehal's 225 tests pass unchanged under it and scipy resolves to 1.18.0 rather
+  than the pinned 1.17.1. Fixing before the 6 Sep clean rebuild; flagging it now
+  because it means my numbers are not yet byte-comparable with Nehal's.
+
+**Needs:** Dheeraj's zoo. Naidhruv's real `contracts/` — `S3Result` in
+`pipeline/s3_receive/result.py` is shaped for `StageResult`, point me at the
+Pydantic model and I will conform exactly. And branch protection on `main`,
+which Nehal has now asked for twice.
 
 ## Nehal — S4–S6 · the moat
 
