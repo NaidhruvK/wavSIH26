@@ -65,22 +65,34 @@ def test_matched_filter_preserves_length_and_alignment():
     assert int(np.argmax(c)) == c.size // 2
 
 
-@pytest.mark.parametrize("beta,tol", [(0.2, 0.1), (0.35, 0.1), (0.5, 0.15)])
-def test_rolloff_estimated_blind(beta, tol):
-    """Blind roll-off from the raised-cosine skirt.
+@pytest.mark.parametrize("beta", [0.15, 0.2, 0.35, 0.5, 0.7])
+def test_rolloff_estimated_blind(beta):
+    """Blind roll-off from a joint amplitude-and-shape fit to the raised cosine.
 
-    MEASURED BIAS: the estimator reads high at large roll-off - 0.60 for a true
-    0.50, and within 0.05 at 0.2 and 0.35. The skirt-width model assumes an
-    ideal raised cosine, and the noise-floor subtraction and smoothing both eat
-    into the shallow tail that a wide roll-off puts most of its information in.
-    The tolerance says so rather than being set to whatever passes.
+    Two earlier estimators are described in `filters.estimate_rolloff`; both
+    were biased and one of them shipped with a 0.15 tolerance written around
+    its error. This one is accurate to about 0.01 from 0.15 to 0.70, so the
+    tolerance is 0.03 and it means something again.
+    """
+    x = make("qpsk", 120000, snr_db=20.0, beta=beta)
+    est = estimate_rolloff(x, fs=1.0, symbol_rate=1.0 / SPS)
+    assert abs(est - beta) < 0.03, f"estimated {est:.3f} for a true {beta}"
 
-    Consequence is small and worth stating: beta only picks the matched filter,
-    and a mismatch of 0.1 costs well under a decibel of SNR. The zoo shapes at
-    0.35, where the estimate is good. Worth revisiting in the October window,
-    not tonight."""
-    x = make("qpsk", 40000, snr_db=30.0, beta=beta)
-    assert abs(estimate_rolloff(x, fs=1.0, symbol_rate=1.0 / SPS) - beta) < tol
+
+def test_estimated_ber_is_flagged_invalid_when_not_locked():
+    """The number is optimistic when the receiver has not locked, so it travels
+    with a flag saying whether to believe it. 8-PSK below its threshold is the
+    case that showed this: 0.003 reported against 0.035 actual."""
+    ok = MODULATIONS["qpsk"].receive(
+        make("qpsk", 120000, snr_db=20.0), {"fs": 200000.0, "symbol_rate": 50000.0})
+    assert ok.status == "ok"
+    assert ok.values["estimated_output_ber_valid"] is True
+
+    poor = MODULATIONS["8psk"].receive(
+        make("8psk", 120000, snr_db=4.0), {"fs": 200000.0, "symbol_rate": 50000.0})
+    if poor.status == "ok":
+        pytest.skip("8-PSK still locked at 4 dB on this build")
+    assert poor.values["estimated_output_ber_valid"] is False
 
 
 # --- bit mapping (a cross-stream contract) ---------------------------------
@@ -342,3 +354,117 @@ def test_stage_result_dict_form_drops_bulk_arrays():
     d = r.as_stage_result()
     assert not any(isinstance(v, np.ndarray) for v in d["values"].values())
     assert d["status"] in ("ok", "low_confidence")
+
+
+# --- degenerate and adversarial input ---------------------------------------
+#
+# The 4 Sep row is "clean give-up: return low_confidence, never garbage" and the
+# 8 Sep row is the adversarial set. These are the cheap half of both, written
+# early because every one of them is an input a judge can produce in five
+# seconds, and because "it raised an exception" is the one failure mode with no
+# good explanation.
+
+ADVERSARIAL = {
+    "pure noise": lambda rng, n: (rng.normal(0, 1, n) + 1j * rng.normal(0, 1, n)),
+    "DC only": lambda rng, n: np.full(n, 1.0 + 0j),
+    "all zeros": lambda rng, n: np.zeros(n, dtype=complex),
+    "clipped square": lambda rng, n: np.sign(rng.normal(0, 1, n)).astype(complex),
+    "single impulse": lambda rng, n: np.eye(1, n, 0, dtype=complex).ravel(),
+    "two overlapping tones": lambda rng, n: (
+        np.exp(2j * np.pi * 0.01 * np.arange(n))
+        + np.exp(2j * np.pi * 0.13 * np.arange(n))),
+}
+
+
+@pytest.mark.parametrize("case", list(ADVERSARIAL))
+@pytest.mark.parametrize("mod", ["qpsk", "16qam", "2fsk"])
+def test_adversarial_input_returns_a_status_never_an_exception(case, mod):
+    rng = np.random.default_rng(99)
+    x = ADVERSARIAL[case](rng, 120000)
+    res = MODULATIONS[mod].receive(x, {"fs": 200000.0, "symbol_rate": 50000.0})
+    assert res.status in ("ok", "low_confidence", "failed", "out_of_envelope")
+    if res.status == "failed":
+        assert res.reason, f"{mod}/{case}: failed without a reason"
+    # whatever it decides, the LLR array must still be usable by S4
+    out = MODULATIONS[mod].demodulate(x, {"fs": 200000.0, "symbol_rate": 50000.0})
+    assert isinstance(out, np.ndarray) and out.dtype == np.float64
+    assert np.all(np.isfinite(out))
+
+
+@pytest.mark.parametrize("mod", ["qpsk", "16qam", "2fsk", "4fsk"])
+def test_wrong_symbol_rate_fails_fast(mod):
+    """S2 will be wrong sometimes, and the 4 Sep hypothesis loop will try rates
+    that do not fit on purpose. Both must come back as a status, QUICKLY.
+
+    The timing assertion is the point. Before the cap in `rrc_taps` and the
+    length check in `_run`, a symbol rate of 1 Hz against 200 kHz asked for a
+    two-million-tap matched filter: this test took **257 seconds per
+    modulation** and returned the correct status at the end of it. A stage that
+    answers correctly after four minutes has not answered - it has become the
+    denial of service that risk #5 describes, reachable from a single wrong
+    number in an upstream estimate."""
+    import time as _time
+
+    x = make("qpsk", 60000, snr_db=20.0)
+    for rate in (1.0, 3.0, 199999.0):
+        t0 = _time.perf_counter()
+        res = MODULATIONS[mod].receive(x, {"fs": 200000.0, "symbol_rate": rate})
+        elapsed = _time.perf_counter() - t0
+        assert res.status in ("ok", "low_confidence", "failed")
+        assert elapsed < 5.0, (
+            f"{mod} took {elapsed:.1f}s to reject {rate} Hz")
+
+
+def test_rrc_taps_refuses_an_implausible_rate():
+    from pipeline.s3_receive.filters import MAX_TAPS
+
+    with pytest.raises(ValueError, match="cap"):
+        rrc_taps(0.35, sps=MAX_TAPS, span=10)
+
+
+def test_pure_noise_is_not_reported_as_a_confident_lock():
+    """The false-positive direction. Noise must not come back as `ok`, because
+    everything downstream reads that flag before it reads anything else."""
+    rng = np.random.default_rng(7)
+    x = rng.normal(0, 1, 200000) + 1j * rng.normal(0, 1, 200000)
+    for mod in ("qpsk", "8psk", "16qam"):
+        res = MODULATIONS[mod].receive(x, {"fs": 200000.0, "symbol_rate": 50000.0})
+        assert res.status != "ok", f"{mod} claims a lock on pure noise"
+
+
+# --- the plotting harness ---------------------------------------------------
+
+def test_plot_harness_writes_every_chart(tmp_path):
+    """plots.py had no coverage at all: it is only called from a report script,
+    so a break in it would surface as a failed report at the worst moment
+    rather than as a red test."""
+    from pipeline.s3_receive.plots import (chain_summary, cma_trace,
+                                           constellation_plot, eye_diagram,
+                                           timing_trace)
+
+    sch = scheme("qpsk")
+    x = make("qpsk", 60000, snr_db=20.0, timing_offset_sym=0.3)
+    y = matched_filter(x, BETA, SPS)
+    g = gardner_sync(y, SPS)
+
+    made = [
+        eye_diagram(y, SPS, tmp_path / "eye.png",
+                    align_sample=float(np.median(g.positions[500:] % SPS))),
+        constellation_plot(g.symbols, tmp_path / "const.png",
+                           reference=sch.points),
+        timing_trace(g.error, tmp_path / "timing.png",
+                     converged_at=g.converged_at,
+                     reference_error=np.zeros(g.error.size)),
+        cma_trace(cma_equalise(g.symbols[500:]).error, tmp_path / "cma.png"),
+        chain_summary([{"modulation": "qpsk", "snr_db": 20.0,
+                        "evm_percent": 5.0, "carrier_lock": 0.98}],
+                      tmp_path / "summary.png"),
+    ]
+    for path in made:
+        assert Path(path).exists() and Path(path).stat().st_size > 1000
+
+
+def test_eye_diagram_refuses_a_record_too_short_to_draw():
+    from pipeline.s3_receive.plots import eye_diagram
+    with pytest.raises(ValueError):
+        eye_diagram(np.zeros(20, dtype=complex), SPS, "unused.png")

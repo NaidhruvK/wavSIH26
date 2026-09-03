@@ -195,4 +195,7 @@ def chain_summary(rows: list[dict], path: str | Path,
     a2.grid(alpha=0.25)
 
     fig.suptitle(title)
+    # suptitle sits on top of the axes titles without this; the charts end up
+    # in a report, so the layout is part of the deliverable
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
     return _save(fig, path)

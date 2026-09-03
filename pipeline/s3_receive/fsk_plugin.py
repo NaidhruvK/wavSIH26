@@ -99,6 +99,13 @@ class FSKDemod:
         # claim about the data rather than about the receiver, and S4 would
         # spend its sweep budget on them.
         min_symbols = 64
+        if sps > x.size:
+            return S3Result(
+                status="failed", confidence=0.0,
+                values={"modulation": self.name},
+                reason=f"{sps:.1f} samples/symbol over {x.size} samples is not "
+                       "a plausible rate",
+                elapsed_ms=(time.perf_counter() - t0) * 1e3)
         if x.size < min_symbols * sps:
             return S3Result(
                 status="failed", confidence=0.0,
@@ -144,6 +151,9 @@ class FSKDemod:
                 "n_llrs": int(llrs.size),
                 "mean_margin": float(res.confidence),
                 "estimated_output_ber": float(estimated_ber(llrs)),
+                # see the note in linear.py - the same caveat applies, with the
+                # tone margin standing in for carrier lock
+                "estimated_output_ber_valid": bool(locked),
             },
             hypotheses=[Hypothesis(value={"tones": res.tones.tolist()},
                                    score=float(res.confidence),

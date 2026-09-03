@@ -111,6 +111,18 @@ class LinearDemod:
             return self._fail(
                 t0, f"S2 reports {sps:.2f} samples/symbol; S3 needs at least 2")
 
+        # Check the rate against the record BEFORE building any filter. Every
+        # stage of this chain scales with sps, so an implausible rate does not
+        # produce a wrong answer slowly - it produces no answer at all, very
+        # slowly, which is worse. Bounded here rather than at the first thing
+        # that happens to overflow.
+        needed = self.settle_symbols * 2 + _EQ_WARMUP[self.scheme.family]
+        available = x.size / sps
+        if available < needed:
+            return self._fail(
+                t0, f"{sps:.1f} samples/symbol over {x.size} samples gives "
+                    f"{available:.0f} symbols; this chain needs {needed}")
+
         if p.cfo_hz:
             x = x * np.exp(-2j * np.pi * (p.cfo_hz / p.fs) * np.arange(x.size))
 
@@ -198,6 +210,14 @@ class LinearDemod:
                 "n_symbols": int(sym.size),
                 "n_llrs": int(llrs.size),
                 "estimated_output_ber": float(ber_est),
+                # The estimate is derived from LLR magnitudes, which are
+                # calibrated against a noise variance measured on a
+                # constellation the receiver believes it has locked. When it has
+                # not, that reference is wrong and the number comes out
+                # optimistic - measured at 0.003 against an actual 0.035 on
+                # 8-PSK at 8 dB. The flag exists so a consumer cannot read the
+                # number without also being told whether to believe it.
+                "estimated_output_ber_valid": bool(carrier.locked),
             },
             hypotheses=hyps,
             reason=reason,

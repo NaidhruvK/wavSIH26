@@ -139,7 +139,6 @@ def main() -> int:
         rows.extend(_run_arm(arm, coded))
 
     _write_csv(rows)
-    _write_markdown(rows, truth)
     print()
     print(f'wrote {len(rows)} rows to reports/s3_s4_junction.csv and .md')
     return 0
@@ -232,7 +231,6 @@ def _write_csv(rows: list[dict]) -> None:
         for row in rows:
             w.writerow(row)
 
-    _write_markdown(rows, truth)
     print(f"\nwrote {len(rows)} rows to reports/s3_s4_junction.csv and .md")
     return 0
 

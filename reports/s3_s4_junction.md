@@ -14,12 +14,12 @@ Stream: 120 000 source bits, rate 1/2 K=7, generators 0o171/0o133, no scrambler,
 | interleaved | bpsk | 2 dB | 0.801 | 0.00015 | 0.00030 | 1.00 | 0/2 | 0 |
 | interleaved | bpsk | 1 dB | 0.754 | 0.00078 | 0.00116 | 1.00 | 0/2 | 0 |
 | interleaved | qpsk | 10 dB | 0.898 | 0.00000 | 0.00000 | 0.00 | 2/4 | 0 |
-| interleaved | qpsk | 6 dB | 0.760 | 0.00012 | 0.00005 | 1.00 | 0/4 | 0 |
-| interleaved | qpsk | 5 dB | 0.707 | 0.00023 | 0.00024 | 1.00 | 0/4 | 0 |
-| interleaved | qpsk | 4 dB | 0.643 | 0.00095 | 0.00097 | 1.00 | 0/4 | 0 |
+| interleaved | qpsk | 6 dB | 0.761 | 0.00012 | 0.00005 | 1.00 | 0/4 | 0 |
+| interleaved | qpsk | 5 dB | 0.707 | 0.00025 | 0.00024 | 1.00 | 0/4 | 0 |
+| interleaved | qpsk | 4 dB | 0.644 | 0.00097 | 0.00097 | 1.00 | 0/4 | 0 |
 | no-interleaver | qpsk | 10 dB | 0.894 | 0.00000 | 0.00000 | 0.00 | 2/4 | 2 |
-| no-interleaver | qpsk | 5 dB | 0.699 | 0.00027 | 0.00026 | 1.00 | 2/4 | 2 |
-| no-interleaver | qpsk | 3 dB | 0.561 | 0.00288 | 0.00282 | 1.00 | 2/4 | 2 |
+| no-interleaver | qpsk | 5 dB | 0.699 | 0.00022 | 0.00026 | 1.00 | 2/4 | 2 |
+| no-interleaver | qpsk | 3 dB | 0.562 | 0.00293 | 0.00282 | 1.00 | 2/4 | 2 |
 
 ## What this says
 
@@ -27,7 +27,7 @@ Stream: 120 000 source bits, rate 1/2 K=7, generators 0o171/0o133, no scrambler,
 
 With the 8x12 interleaver, the highest raw BER from which recovery still succeeded was **0.00000** - which is to say it needs the stream to be exact. The first errors that appear, at 1.2e-4, take it to zero.
 
-Without the interleaver, on the same bits through the same receiver, the code comes back correctly at a raw BER of **0.00288**, via the statistical fallback. That is close to the 0.30 % independent-error ceiling `ber_ceiling.md` already records - reached here with real demodulator errors rather than injected ones.
+Without the interleaver, on the same bits through the same receiver, the code comes back correctly at a raw BER of **0.00293**, via the statistical fallback. That is close to the 0.30 % independent-error ceiling `ber_ceiling.md` already records - reached here with real demodulator errors rather than injected ones.
 
 This confirms Nehal's documented open problem (recovering the interleaver's depth x width fails at any non-zero BER) from the other side of the junction. **The consequence for the demo envelope: the full chain needs an SNR high enough for ZERO raw bit errors, not merely a low BER.** For QPSK on this stream that is about 8-10 dB.
 
