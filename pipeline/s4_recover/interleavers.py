@@ -28,7 +28,32 @@ bits (the branch count) starting well above N, whereas a block-like
 interleaver first collapses exactly at its period. So `step < first` means
 convolutional and `step == first` means block-like. That comparison costs
 nothing and it bounds the search before it starts.
+
+DTYPE IS PRESERVED, AND THAT IS NOT A DETAIL (found 4 Sep)
+----------------------------------------------------------
+Every function here used to begin `np.asarray(bits, dtype=np.uint8)`. A
+permutation does not care what it is permuting, so that cast bought nothing -
+and it silently destroyed every LLR handed to it. An LLR of -0.4 truncates to
+0; a negative one wraps. De-interleaving a real receiver's soft output
+returned an array of zeros, and the Viterbi decoder downstream dutifully
+decoded zeros into zeros.
+
+This is the same bug as the 3 Sep `harden` finding one stage further along.
+That one was blind_recover assuming hard bits at its entry; this one is the
+de-interleavers assuming them at their entry, and it went unnoticed because
+every test until 4 Sep de-interleaved zoo BITS. The recovery path hard-slices
+by design, so nothing upstream complained - it was only the DECODE path, which
+needs the soft values, that quietly produced nothing.
+
+It is why the readable-text demo had never once worked through the real
+receiver: reports/end_to_end.md could recover the interleaver, the code and
+both generators from a real capture and still print no message.
+
+tests/contract/test_llr_contract.py already carried the rule - "an integer
+dtype destroys the soft information" - and asserted it of S3's output. It was
+never asserted of anything that consumes that output.
 """
+
 
 from __future__ import annotations
 
@@ -62,23 +87,23 @@ def block_permutation(depth: int, width: int) -> np.ndarray:
 
 def block_interleave(bits: np.ndarray, depth: int, width: int) -> np.ndarray:
     """Block-interleave, discarding any trailing partial block."""
-    bits = np.asarray(bits, dtype=np.uint8).ravel()
+    bits = np.asarray(bits).ravel()
     period = depth * width
     n_blocks = len(bits) // period
     if n_blocks == 0:
-        return np.zeros(0, dtype=np.uint8)
+        return np.zeros(0, dtype=bits.dtype)
     blocks = bits[: n_blocks * period].reshape(n_blocks, depth, width)
-    return blocks.transpose(0, 2, 1).reshape(-1).astype(np.uint8)
+    return blocks.transpose(0, 2, 1).reshape(-1)
 
 
 def block_deinterleave(bits: np.ndarray, depth: int, width: int) -> np.ndarray:
-    bits = np.asarray(bits, dtype=np.uint8).ravel()
+    bits = np.asarray(bits).ravel()
     period = depth * width
     n_blocks = len(bits) // period
     if n_blocks == 0:
-        return np.zeros(0, dtype=np.uint8)
+        return np.zeros(0, dtype=bits.dtype)
     blocks = bits[: n_blocks * period].reshape(n_blocks, width, depth)
-    return blocks.transpose(0, 2, 1).reshape(-1).astype(np.uint8)
+    return blocks.transpose(0, 2, 1).reshape(-1)
 
 
 class BlockInterleaver:
@@ -143,25 +168,25 @@ def diagonal_permutation(depth: int, width: int) -> np.ndarray:
 
 
 def diagonal_interleave(bits: np.ndarray, depth: int, width: int) -> np.ndarray:
-    bits = np.asarray(bits, dtype=np.uint8).ravel()
+    bits = np.asarray(bits).ravel()
     period = depth * width
     n_blocks = len(bits) // period
     if n_blocks == 0:
-        return np.zeros(0, dtype=np.uint8)
+        return np.zeros(0, dtype=bits.dtype)
     perm = diagonal_permutation(depth, width)
     blocks = bits[: n_blocks * period].reshape(n_blocks, period)
-    return blocks[:, perm].reshape(-1).astype(np.uint8)
+    return blocks[:, perm].reshape(-1)
 
 
 def diagonal_deinterleave(bits: np.ndarray, depth: int, width: int) -> np.ndarray:
-    bits = np.asarray(bits, dtype=np.uint8).ravel()
+    bits = np.asarray(bits).ravel()
     period = depth * width
     n_blocks = len(bits) // period
     if n_blocks == 0:
-        return np.zeros(0, dtype=np.uint8)
+        return np.zeros(0, dtype=bits.dtype)
     inverse = np.argsort(diagonal_permutation(depth, width))
     blocks = bits[: n_blocks * period].reshape(n_blocks, period)
-    return blocks[:, inverse].reshape(-1).astype(np.uint8)
+    return blocks[:, inverse].reshape(-1)
 
 
 class DiagonalInterleaver:
@@ -205,10 +230,10 @@ def conv_interleave(bits: np.ndarray, branches: int, delay: int) -> np.ndarray:
     and diagonal this has no block boundary at all - it is a continuous
     permutation with a fixed end-to-end latency of (branches-1)*delay*branches.
     """
-    bits = np.asarray(bits, dtype=np.uint8).ravel()
+    bits = np.asarray(bits).ravel()
     k = np.arange(len(bits))
     src = k - (k % branches) * delay * branches
-    out = np.zeros(len(bits), dtype=np.uint8)
+    out = np.zeros(len(bits), dtype=bits.dtype)
     ok = src >= 0
     out[ok] = bits[src[ok]]
     return out
@@ -221,10 +246,10 @@ def conv_deinterleave(bits: np.ndarray, branches: int, delay: int) -> np.ndarray
     (branches-1)*delay*branches bits are fill and must be discarded before the
     stream means anything.
     """
-    bits = np.asarray(bits, dtype=np.uint8).ravel()
+    bits = np.asarray(bits).ravel()
     k = np.arange(len(bits))
     src = k - (branches - 1 - (k % branches)) * delay * branches
-    out = np.zeros(len(bits), dtype=np.uint8)
+    out = np.zeros(len(bits), dtype=bits.dtype)
     ok = src >= 0
     out[ok] = bits[src[ok]]
     return out
