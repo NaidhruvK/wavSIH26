@@ -23,6 +23,7 @@ is influenced by file content, so nothing in this module may grow uncapped.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -42,9 +43,11 @@ __all__ = [
     "rank_profile",
     "detect_period",
     "detect_signature",
+    "iter_signatures",
     "recover_interleaver",
     "recover_code_structure",
     "recover_generators",
+    "parity_check_at_span",
     "blind_recover",
     "taps_to_poly",
     "max_searchable_period",
@@ -59,6 +62,16 @@ MAX_CODE_SPAN = 64        # largest constraint span n*(m+1) we will look for
 MAX_FACTORS = 64          # cap on candidate depth x width factorisations
 STEP_WINDOW = 32          # how far past the first collapse to look for the next
 MIN_BITS = 8192           # below this we refuse rather than guess
+MAX_SIGNATURE_CANDIDATES = 6   # collapse periods tried before giving up
+CANDIDATE_BUDGET_S = 12.0      # wall clock across all of them, per risk #5
+
+# A convolutional code with memory 0 or 1 is not a code anyone transmits;
+# it is what a structured SOURCE looks like when you read it as one. The
+# upper guard (K > 9 is very likely a code-XOR-scrambler composite) has
+# existed since 1 Sep and this is its missing lower half. Between them, a
+# bare code claim is only ever made for 3 <= K <= 9.
+MIN_CODE_MEMORY = 2       # K = m + 1 >= 3
+MAX_PRACTICAL_K = 9       # beyond this, far likelier a composite than a code
 
 
 @dataclass
@@ -242,21 +255,75 @@ def detect_signature(bits: np.ndarray, min_period: int = MIN_PERIOD,
     block-like interleaver's next collapse is at 2*first, far outside that
     window, so finding nothing in it *is* the block-like answer and costs 32
     rank computations rather than doubling the sweep.
+
+    This returns the FIRST collapse only. The smallest collapse is not always
+    the interleaver's - see iter_signatures - so blind_recover walks the
+    candidates rather than calling this.
+    """
+    return next(iter_signatures(bits, min_period, max_period, max_candidates=1))
+
+
+def iter_signatures(bits: np.ndarray, min_period: int = MIN_PERIOD,
+                    max_period: int = MAX_PERIOD,
+                    max_candidates: int = MAX_SIGNATURE_CANDIDATES):
+    """Yield (first, step, profile) for each successive collapse, cheapest first.
+
+    THE SMALLEST COLLAPSE IS NOT ALWAYS THE INTERLEAVER'S. Taking it
+    unconditionally was a real bug, and the input that exposes it is not
+    exotic: any payload whose own period is shorter than the interleaver's.
+    Measured on a rate-1/2 K=7 stream through an 8x12 block interleaver
+    (true period 96), payload repeated to length:
+
+        11-char payload   first collapse 44   -> read as "rate 1/4 K=11"
+        10-char payload   first collapse 24   -> read as "rate 1/6 K=4", ok(!)
+        16-char payload   first collapse 32   -> read as "rate 1/16 K=2", ok(!)
+
+    In every one of those the true period 96 IS in the profile - it is simply
+    never reached, because the source's own structure collapses first. Real
+    telemetry has repeating frame headers, so this is the common case rather
+    than a corner.
+
+    The sweep is resumed rather than restarted, so the ordinary file - where
+    the first collapse is the answer - costs exactly what it did before. Only
+    a stream whose first candidate explains nothing pays for the second, and
+    the walk is bounded by max_candidates and by blind_recover's wall clock.
+
+    Yields (None, None, profile) exactly once when nothing collapses at all.
+    That is the uncoded-data answer and it must stay that way (risk #15).
     """
     prof = rank_profile(bits, 2, max_period, stop_at_first=min_period)
     deficient = [L for L in prof.nonzero() if L >= min_period]
     if not deficient:
-        return None, None, prof
+        yield None, None, prof
+        return
 
-    first = deficient[0]
-    step = first
-    tail = rank_profile(bits, first + 1, min(first + STEP_WINDOW, max_period),
-                        stop_at_first=first + 1)
-    later = [L for L in tail.nonzero()]
-    if later:
-        step = later[0] - first
-    prof.deficiency.update(tail.deficiency)
-    return first, step, prof
+    L = deficient[0]
+    for _ in range(max_candidates):
+        # step = gap to the next collapse within STEP_WINDOW. step == first
+        # means block-like, step < first means convolutional.
+        tail = rank_profile(bits, L + 1, min(L + STEP_WINDOW, max_period),
+                            stop_at_first=L + 1)
+        prof.deficiency.update(tail.deficiency)
+        prof.l_max_searched = max(prof.l_max_searched, tail.l_max_searched)
+        later = tail.nonzero()
+        step = (later[0] - L) if later else L
+
+        yield L, step, prof
+
+        # The next candidate is the next collapse anywhere above this one. If
+        # the STEP_WINDOW sweep already found it, reuse it; otherwise resume
+        # past the window rather than sweeping from scratch.
+        if later:
+            L = later[0]
+            continue
+        more = rank_profile(bits, L + STEP_WINDOW + 1, max_period,
+                            stop_at_first=L + STEP_WINDOW + 1)
+        prof.deficiency.update(more.deficiency)
+        prof.l_max_searched = max(prof.l_max_searched, more.l_max_searched)
+        nz = more.nonzero()
+        if not nz:
+            return
+        L = nz[0]
 
 
 def detect_period(bits: np.ndarray, min_period: int = MIN_PERIOD,
@@ -284,15 +351,25 @@ def detect_period(bits: np.ndarray, min_period: int = MIN_PERIOD,
     return period, best_off, prof
 
 
-def recover_code_structure(bits: np.ndarray, max_span: int = MAX_CODE_SPAN) -> CodeStructure:
+def recover_code_structure(bits: np.ndarray, max_span: int = MAX_CODE_SPAN,
+                           min_span: int = 0) -> CodeStructure:
     """Read n and m off the raw (de-interleaved) rank profile.
 
     deficiency(L) = L/n - m for L a multiple of n with L >= n(m+1). So the
     smallest deficient L is the span n(m+1); the gap between consecutive
     deficient L is n; and the two together give m.
+
+    `min_span` starts the reading at a given row length instead of the
+    smallest collapse. Same reason iter_signatures exists: the smallest
+    collapse can belong to the SOURCE rather than the code, and without this
+    the direct reading is pinned to it forever. Measured on a rate-1/2 K=7
+    stream carrying a repeating 2-character payload, the source collapses at
+    8 and 12 and the code's own span of 14 is never read - blind_recover
+    would walk to candidate 14 and still be handed span 8, because this
+    function recomputed from scratch and took deficient[0] every time.
     """
     prof = rank_profile(bits, 2, max_span)
-    deficient = prof.nonzero()
+    deficient = [L for L in prof.nonzero() if L >= min_span]
     if len(deficient) < 2:
         return CodeStructure(None, None, deficient[0] if deficient else None, False)
 
@@ -328,24 +405,73 @@ def recover_code_structure(bits: np.ndarray, max_span: int = MAX_CODE_SPAN) -> C
     return CodeStructure(n=n, memory=m, span=span, consistent=consistent)
 
 
-def recover_generators(bits: np.ndarray, code: CodeStructure):
-    """Pull the parity check out of the null space, then unpack the generators.
+def parity_check_at_span(bits: np.ndarray, span: int | None, offset: int = 0):
+    """The code's parity check at L = span, or None when there is not exactly one.
 
-    At L = span the null space is one-dimensional, and that single vector is
-    the code's parity check. For rate 1/2 the check interleaves the two
-    generators in reverse order (see conv_reference.parity_check_taps), so we
-    undo exactly that. Getting this convention backwards is risk #10.
+    UNIQUENESS IS THE TEST, not a precondition. A genuine code has a
+    one-dimensional null space at its own span - that single vector IS the
+    parity check. A structured SOURCE read as a code does not: measured on
+    text through an 8x12 interleaver, the null space at the collapse the
+    source produced has 4, 7 and 19 dimensions in the three cases we have.
+    Many simultaneous constraints is what a source artefact looks like; a
+    convolutional code imposes exactly one.
+
+    So `ns.shape[0] != 1` is not "we cannot unpack this", it is "this is not a
+    code", and the direct reading in blind_recover now treats it that way.
     """
-    if not code.n or code.memory is None or code.n != 2 or not code.span:
-        return None, None       # only rate 1/2 is unpacked today
-    M = reshape_rows(bits, code.span, 0, max_rows=code.span + ROW_MARGIN)
+    if not span or span <= 0:
+        return None
+    M = reshape_rows(bits, span, offset, max_rows=span + ROW_MARGIN)
+    if M.size == 0:
+        return None
     ns = null_space_gf2(M)
     if ns.shape[0] != 1:
+        return None
+    return np.asarray(ns[0], dtype=np.uint8)
+
+
+def _residual_syndrome(stream: np.ndarray, taps, stride: int) -> float:
+    """Fraction of stride-aligned windows the check FAILS to annihilate.
+
+    Exactly 0.0 for the true parity check, because it holds on every window of
+    the stream and not merely on the rows the null space was computed from.
+    Artefacts leak. One vectorised pass, and it is the same test used to rank
+    interleaver hypotheses - the direct reading had been exempt from it, which
+    is how a source artefact reached the caller as `ok`.
+    """
+    if taps is None or stride is None or stride <= 0:
+        return 1.0
+    h = np.asarray(taps, dtype=np.uint8).ravel()
+    if len(h) == 0 or len(stream) < len(h):
+        return 1.0
+    win = np.lib.stride_tricks.sliding_window_view(stream, len(h))[::stride]
+    if not len(win):
+        return 1.0
+    return float(((win @ h) % 2).mean())
+
+
+def _unpack_generators(taps: np.ndarray, code: CodeStructure):
+    """Rate-1/2 parity check -> the two generator polynomials.
+
+    The check interleaves the two generators in reverse order (see
+    conv_reference.parity_check_taps), so we undo exactly that. Getting this
+    convention backwards is risk #10.
+    """
+    if code.n != 2:
+        return None             # only rate 1/2 is unpacked today
+    g1 = taps[0::2][::-1]
+    g0 = taps[1::2][::-1]
+    return (taps_to_poly(g0), taps_to_poly(g1))
+
+
+def recover_generators(bits: np.ndarray, code: CodeStructure):
+    """(generators, parity taps) for a rate-1/2 code, or (None, None)."""
+    if not code.n or code.memory is None or code.n != 2 or not code.span:
+        return None, None       # only rate 1/2 is unpacked today
+    taps = parity_check_at_span(bits, code.span)
+    if taps is None:
         return None, None
-    h = np.asarray(ns[0], dtype=np.uint8)
-    g1 = h[0::2][::-1]
-    g0 = h[1::2][::-1]
-    return (taps_to_poly(g0), taps_to_poly(g1)), [int(x) for x in h]
+    return _unpack_generators(taps, code), [int(x) for x in taps]
 
 
 MAX_CANDIDATES = 600      # hard cap on the family x parameter product
@@ -417,14 +543,8 @@ def recover_interleaver(bits: np.ndarray, first: int, step: int, offset: int = 0
             # annihilates the whole de-interleaved stream, not just the rows
             # the null space was computed from. For the true hypothesis the
             # residual is exactly zero; artefacts leak. One vectorised pass.
-            gens, taps = recover_generators(de, code)
-            residual = 1.0
-            if taps:
-                h = np.asarray(taps, dtype=np.uint8)
-                win = np.lib.stride_tricks.sliding_window_view(de, len(h))[::code.n]
-                if len(win):
-                    residual = float(((win @ h) % 2).mean())
-            if residual > 0.0:
+            check = parity_check_at_span(de, code.span)
+            if _residual_syndrome(de, check, code.n) > 0.0:
                 continue
 
             # Among survivors, the SHORTEST span wins. The fundamental parity
@@ -467,7 +587,18 @@ def _statistical_code_attempt(bits: np.ndarray, max_span: int = STAT_FALLBACK_MA
     if n <= 0 or span % n:
         return None
 
-    code = CodeStructure(n=n, memory=span // n - 1, span=span, consistent=False)
+    memory = span // n - 1
+    # A memory-0 or memory-1 "code" is a source artefact, not a code. The
+    # statistical search will happily find one in ASCII text, and on 3 Sep it
+    # did: on the wrong QPSK rotations of a text-payload stream it returned
+    # `ok` at 0.59 with "period=4, rate 1/2 K=2". That answer then WON the
+    # rotation ranking, because shortest-span is the tie-break and span 4
+    # beats the true span 14. Fifteen of thirty-six became zero of eighteen
+    # for the text arm on exactly this.
+    if memory < MIN_CODE_MEMORY:
+        return None
+
+    code = CodeStructure(n=n, memory=memory, span=span, consistent=False)
 
     generators = None
     if n == 2:
@@ -477,57 +608,81 @@ def _statistical_code_attempt(bits: np.ndarray, max_span: int = STAT_FALLBACK_MA
     return code, generators, [int(b) for b in stat.taps], val
 
 
-def blind_recover(bits: np.ndarray, statistical_fallback: bool = True) -> RecoveryResult:
-    """The full Stage 4 chain: period -> alignment -> interleaver -> code.
+def _finalise(res: RecoveryResult) -> RecoveryResult:
+    """The exit invariant: `ok` must mean something checkable was recovered.
 
-    Returns status 'failed' with a reason rather than guessing. Uncoded data
-    must land here and not in a confident answer - that is risk #15, and it is
-    the test a judge runs first.
+    Every return path in blind_recover goes through here, deliberately. The
+    guards below all existed in one branch or another; what did not exist was
+    anywhere that they ALL had to hold, so a path that skipped one shipped a
+    confident answer. On 3 Sep that path was the statistical fallback.
+
+    `ok` requires at least one of:
+      - an interleaver was identified, or
+      - the generator polynomials came back, or
+      - the code has memory >= MIN_CODE_MEMORY.
+
+    Anything else is a collapse we found and cannot explain, which is
+    `low_confidence` - a real and useful answer, but not the same claim.
     """
-    bits = harden(bits)
-    if len(bits) < MIN_BITS:
-        return RecoveryResult("failed", 0.0,
-                              reason="only %d bits; need >= %d" % (len(bits), MIN_BITS))
+    if res.status != "ok":
+        return res
 
-    def _from_statistical(profile, note):
-        if not statistical_fallback:
-            return None
-        attempt = _statistical_code_attempt(bits)
-        if attempt is None:
-            return None
-        code, generators, taps, val = attempt
-        return RecoveryResult(
-            "ok", min(0.9, 0.55 + val.bias / 2.0),
-            period=code.span, offset=val.phase, interleaver=None,
-            code=code, generators_octal=generators, parity_taps=taps,
-            reason="%s; recovered statistically instead - syndrome bias %.3f "
-                   "at %.0f sigma over %d windows"
-                   % (note, val.bias, val.z_score, val.n_windows),
-            profile=profile, method="statistical", inferred_ber=val.implied_ber,
-            searched_to=profile.l_max_searched if profile else 0)
+    # THE COMPOSITE GUARD, AND WHY IT LIVES HERE NOW. A scrambled stream
+    # yields the code-XOR-scrambler composite, which annihilates the stream
+    # exactly and so cannot be rejected by any residual test - it is a valid
+    # linear description of what arrived, just not the transmitter's code. A
+    # rate-1/2 K=7 stream under a degree-8 scrambler reads back as K=15.
+    #
+    # This check used to sit inside the direct reading only. On 4 Sep a
+    # scrambled stream walked straight around it by coming back through the
+    # INTERLEAVER path instead - reported as `ok`, block(depth=1,width=32),
+    # "rate 1/2 K=15, G=(0o67611, 0o41513)". Depth 1 is the identity
+    # permutation, so that was the direct reading wearing a hat, and the guard
+    # it should have met was in the branch it did not take.
+    #
+    # A guard that lives in one branch is not a guarantee. This is the second
+    # time that sentence has been the finding, so the guard is now at the exit
+    # with the others.
+    memory = res.code.memory if res.code is not None else None
+    if memory is not None and memory + 1 > MAX_PRACTICAL_K:
+        res.status = "low_confidence"
+        res.confidence = min(res.confidence, 0.40)
+        res.reason = (
+            "K=%d is longer than any code in practical use - this is very "
+            "likely a code-XOR-scrambler composite rather than the "
+            "transmitter's code. Descrambling before recovery is an open "
+            "problem (see reports/burst_channel.md)." % (memory + 1)
+            + ("  (%s)" % res.reason if res.reason else ""))
+        return res
+
+    if res.interleaver is not None or res.generators_octal:
+        return res
+    if memory is not None and memory >= MIN_CODE_MEMORY:
+        return res
+
+    res.status = "low_confidence"
+    res.confidence = min(res.confidence, 0.35)
+    detail = "K=%d" % (memory + 1) if memory is not None else "no code structure"
+    res.reason = ("a collapse was found but nothing checkable came back - "
+                  "%s, no generators and no interleaver. That is a source "
+                  "artefact rather than a code, so it is not reported as a "
+                  "recovery." % detail
+                  + ("  (%s)" % res.reason if res.reason else ""))
+    return res
 
 
+def _attempt_candidate(bits: np.ndarray, first: int, step: int,
+                       prof: RankProfile, trust_step: bool = True):
+    """Try to explain ONE collapse period. None means this one explains nothing.
 
-    first, step, prof = detect_signature(bits)
+    Everything here was the body of blind_recover until the candidate walk
+    existed. The one behavioural change is `trust_step`: the step reading
+    identifies the family, and it is only trustworthy for the FIRST collapse.
+    Once we know an earlier collapse exists, the gap to the next one is
+    measured against a contaminating periodicity rather than this candidate's,
+    so block-like alignment is computed regardless of what step says.
+    """
     period, offset = first, 0
-    if first is None:
-        # A negative is a real answer, but only when it is bounded. Say what
-        # range was searched and whether the stream length is what stopped us,
-        # so "no code" can never be read as "no code at any period".
-        reason = "no rank collapse at any period from %d to %d" % (MIN_PERIOD,
-                                                                   prof.l_max_searched)
-        if prof.data_limited:
-            reason += ("; the search stopped there because %d bits supports no more, "
-                       "so a period above %d cannot be ruled out - supply >= %d bits "
-                       "to search to %d"
-                       % (len(bits), prof.l_max_searched,
-                          MAX_PERIOD * (MAX_PERIOD + ROW_MARGIN), MAX_PERIOD))
-        via_stat = _from_statistical(prof, reason)
-        if via_stat is not None:
-            return via_stat
-        return RecoveryResult("failed", 0.0, reason=reason, profile=prof,
-                              searched_to=prof.l_max_searched,
-                              data_limited=prof.data_limited)
 
     # No interleaver FIRST, before any family is tried. A raw rate-1/2 stream
     # has first=14 step=2, which the family discriminator would otherwise read
@@ -543,43 +698,56 @@ def blind_recover(bits: np.ndarray, statistical_fallback: bool = True) -> Recove
     # families: SHORTEST SPAN WINS, because the fundamental parity check is
     # the shortest one and everything longer is a composite of it.
     direct = None
-    code_direct = recover_code_structure(bits)
+    # Read the code at THIS candidate, not at the smallest collapse in the
+    # stream - otherwise every candidate after the first is handed the same
+    # (contaminated) span and the walk cannot help the direct path at all.
+    code_direct = recover_code_structure(bits, min_span=first)
     if code_direct.consistent and code_direct.span == first:
-        gens, taps = recover_generators(bits, code_direct)
+        # The direct reading is held to the SAME evidence the family
+        # hypotheses have always had to produce: a unique parity check that
+        # annihilates the whole stream. Skipping that here is what let three
+        # source artefacts through as `ok` - "rate 1/6 K=4" and "rate 1/16
+        # K=2" on nothing but repeating ASCII. Their null spaces at the
+        # claimed span have 4 and 7 dimensions; a code's has exactly one.
+        taps = parity_check_at_span(bits, code_direct.span)
+        if taps is not None and _residual_syndrome(bits, taps, code_direct.n) == 0.0:
+            gens = _unpack_generators(taps, code_direct)
 
-        # A scrambled stream yields the code-XOR-scrambler COMPOSITE, and that
-        # composite is a perfectly valid linear description of what arrived -
-        # it annihilates the stream exactly, so no residual test can reject it.
-        # It is simply not the transmitter's code. Measured: a rate-1/2 K=7
-        # stream under a degree-8 scrambler reads back as "rate 1/2 K=15,
-        # G=(0o67611, 0o41513)".
-        #
-        # There is no way to tell those apart from this stream alone. What we
-        # CAN do is refuse to state it as a bare fact. Real deployed
-        # convolutional codes have K <= 9; anything longer is far more likely
-        # to be a composite than a genuine constraint length, so it is
-        # downgraded and labelled rather than announced.
-        suspect = code_direct.memory is not None and code_direct.memory + 1 > 9
-        direct = RecoveryResult(
-            "ok" if not suspect else "low_confidence",
-            0.95 if not suspect else 0.40,
-            period=period, offset=0, interleaver=None,
-            code=code_direct, generators_octal=gens, parity_taps=taps,
-            reason=("no interleaver detected" if not suspect else
-                    "no interleaver detected, but K=%d is longer than any code in "
-                    "practical use - this is very likely a code-XOR-scrambler "
-                    "composite rather than the transmitter's code. Descrambling "
-                    "before recovery is an open problem (see reports/burst_channel.md)"
-                    % (code_direct.memory + 1)),
-            profile=prof, searched_to=prof.l_max_searched,
-            data_limited=prof.data_limited)
+            # A scrambled stream yields the code-XOR-scrambler COMPOSITE, and
+            # that composite is a perfectly valid linear description of what
+            # arrived - it annihilates the stream exactly, so no residual test
+            # can reject it. It is simply not the transmitter's code.
+            # Measured: a rate-1/2 K=7 stream under a degree-8 scrambler reads
+            # back as "rate 1/2 K=15, G=(0o67611, 0o41513)".
+            #
+            # There is no way to tell those apart from this stream alone. What
+            # we CAN do is refuse to state it as a bare fact. Real deployed
+            # convolutional codes have K <= 9; anything longer is far more
+            # likely to be a composite than a genuine constraint length, so it
+            # is downgraded and labelled rather than announced.
+            suspect = (code_direct.memory is not None
+                       and code_direct.memory + 1 > MAX_PRACTICAL_K)
+            direct = RecoveryResult(
+                "ok" if not suspect else "low_confidence",
+                0.95 if not suspect else 0.40,
+                period=period, offset=0, interleaver=None,
+                code=code_direct, generators_octal=gens,
+                parity_taps=[int(x) for x in taps] if gens else None,
+                reason=("no interleaver detected" if not suspect else
+                        "no interleaver detected, but K=%d is longer than any code in "
+                        "practical use - this is very likely a code-XOR-scrambler "
+                        "composite rather than the transmitter's code. Descrambling "
+                        "before recovery is an open problem (see reports/burst_channel.md)"
+                        % (code_direct.memory + 1)),
+                profile=prof, searched_to=prof.l_max_searched,
+                data_limited=prof.data_limited)
 
     # Align to the block boundary before trying block-like families. The
     # collapse survives any start offset but is largest at the true boundary,
     # so argmax over offsets recovers an alignment we were never given.
     # Convolutional has no block boundary, so this only applies when the
-    # profile says block-like.
-    if step == first:
+    # profile says block-like - or when step cannot be trusted to say.
+    if step == first or not trust_step:
         best_off, best_def = 0, -1
         for off in range(first):
             M = reshape_rows(bits, first, off, max_rows=first + ROW_MARGIN)
@@ -603,29 +771,112 @@ def blind_recover(bits: np.ndarray, statistical_fallback: bool = True) -> Recove
             return direct
 
     if not hyps:
-        if direct is not None:
-            return direct
-        # A collapse was found but nothing explains it. On a noisy raw coded
-        # stream this is the common case: errors erase the deficiency at the
-        # true span, the estimate slides upward, and no factorisation of the
-        # wrong period restores anything. The statistical search does not care
-        # about any of that, so give it the stream before giving up.
-        via_stat = _from_statistical(
-            prof, "exact test found a collapse at L=%d but no factorisation "
-                  "restored a code" % period)
-        if via_stat is not None:
-            return via_stat
-        return RecoveryResult("low_confidence", 0.35, period=period, offset=offset,
-                              reason="period found but no factorisation restored a code",
-                              profile=prof, searched_to=prof.l_max_searched)
+        return direct       # None when this candidate explained nothing
 
     best = hyps[0]
     de = INTERLEAVERS[best.family].deinterleave(bits[offset:], **best.params)
     code = recover_code_structure(de)
     gens, taps = recover_generators(de, code)
     confidence = 0.95 if (gens and len(hyps) == 1) else 0.70
-    return RecoveryResult("ok", confidence, period=period, offset=offset, interleaver=best,
-                          hypotheses=hyps, code=code, generators_octal=gens,
-                          parity_taps=taps, profile=prof,
+    return RecoveryResult("ok", confidence, period=period, offset=offset,
+                          interleaver=best, hypotheses=hyps, code=code,
+                          generators_octal=gens, parity_taps=taps, profile=prof,
                           searched_to=prof.l_max_searched,
                           data_limited=prof.data_limited)
+
+
+def blind_recover(bits: np.ndarray, statistical_fallback: bool = True) -> RecoveryResult:
+    """The full Stage 4 chain: period -> alignment -> interleaver -> code.
+
+    Walks the collapse periods in ascending order and returns the first one
+    that actually explains the stream. The smallest collapse is not always the
+    interleaver's - see iter_signatures - and taking it unconditionally was
+    how a repeating ASCII payload turned into a confident "rate 1/16 K=2".
+
+    Returns status 'failed' with a reason rather than guessing. Uncoded data
+    must land here and not in a confident answer - that is risk #15, and it is
+    the test a judge runs first. Uncoded data produces NO candidates at all, so
+    the walk costs nothing on exactly the input that must stay cheap (risk #5).
+    """
+    bits = harden(bits)
+    if len(bits) < MIN_BITS:
+        return RecoveryResult("failed", 0.0,
+                              reason="only %d bits; need >= %d" % (len(bits), MIN_BITS))
+
+    def _from_statistical(profile, note):
+        if not statistical_fallback:
+            return None
+        attempt = _statistical_code_attempt(bits)
+        if attempt is None:
+            return None
+        code, generators, taps, val = attempt
+        return RecoveryResult(
+            "ok", min(0.9, 0.55 + val.bias / 2.0),
+            period=code.span, offset=val.phase, interleaver=None,
+            code=code, generators_octal=generators, parity_taps=taps,
+            reason="%s; recovered statistically instead - syndrome bias %.3f "
+                   "at %.0f sigma over %d windows"
+                   % (note, val.bias, val.z_score, val.n_windows),
+            profile=profile, method="statistical", inferred_ber=val.implied_ber,
+            searched_to=profile.l_max_searched if profile else 0)
+
+    deadline = time.monotonic() + CANDIDATE_BUDGET_S
+    prof = None
+    first = None
+    provisional = None
+    n_tried = 0
+
+    for cand, step, prof in iter_signatures(bits):
+        if cand is None:
+            break                       # nothing collapsed anywhere
+        if first is None:
+            first = cand
+        res = _attempt_candidate(bits, cand, step, prof, trust_step=(n_tried == 0))
+        n_tried += 1
+        if res is not None:
+            if res.status == "ok":
+                return _finalise(res)
+            # A downgraded reading (a suspected scrambler composite) is worth
+            # keeping, but it is not a reason to stop looking for a candidate
+            # that explains the stream outright.
+            if provisional is None:
+                provisional = res
+        if time.monotonic() > deadline:
+            break
+
+    if first is None:
+        # A negative is a real answer, but only when it is bounded. Say what
+        # range was searched and whether the stream length is what stopped us,
+        # so "no code" can never be read as "no code at any period".
+        reason = "no rank collapse at any period from %d to %d" % (MIN_PERIOD,
+                                                                   prof.l_max_searched)
+        if prof.data_limited:
+            reason += ("; the search stopped there because %d bits supports no more, "
+                       "so a period above %d cannot be ruled out - supply >= %d bits "
+                       "to search to %d"
+                       % (len(bits), prof.l_max_searched,
+                          MAX_PERIOD * (MAX_PERIOD + ROW_MARGIN), MAX_PERIOD))
+        via_stat = _from_statistical(prof, reason)
+        if via_stat is not None:
+            return _finalise(via_stat)
+        return RecoveryResult("failed", 0.0, reason=reason, profile=prof,
+                              searched_to=prof.l_max_searched,
+                              data_limited=prof.data_limited)
+
+    if provisional is not None:
+        return _finalise(provisional)
+
+    # Collapses were found but nothing explained any of them. On a noisy raw
+    # coded stream this is the common case: errors erase the deficiency at the
+    # true span, the estimate slides upward, and no factorisation of the wrong
+    # period restores anything. The statistical search does not care about any
+    # of that, so give it the stream before giving up.
+    via_stat = _from_statistical(
+        prof, "exact test found %d collapse period%s from L=%d but no "
+              "factorisation restored a code"
+              % (n_tried, "" if n_tried == 1 else "s", first))
+    if via_stat is not None:
+        return _finalise(via_stat)
+    return RecoveryResult("low_confidence", 0.35, period=first, offset=0,
+                          reason="period found but no factorisation restored a code",
+                          profile=prof, searched_to=prof.l_max_searched)
