@@ -84,7 +84,10 @@ def run_one(wav: Path) -> dict:
     # the statistical fallback is kept OUT of the screening pass - see
     # pipeline/s4_recover/rotations.py for the measurement that motivates it.
     rotations = getattr(s3, "llrs_by_rotation", None) or [s3.llrs]
-    choice = recover_over_rotations(rotations)
+    choice = recover_over_rotations(
+        rotations,
+        estimated_output_ber=row["s3_est_ber"],
+        estimated_ber_valid=bool(row["s3_est_ber_valid"]))
 
     if choice is None:
         row["status"] = "declined"
@@ -145,7 +148,6 @@ def main() -> None:
                                       sum(r["interleaver_ok"] and r["generators_ok"]
                                           for r in sub), len(sub)))
 
-    # Does S3's own quality number predict whether S4 will succeed?
     # Does S3's own quality number predict whether S4 will succeed? Compare
     # the two populations rather than testing against zero - the estimate is
     # never exactly 0.0, it is 1e-87, and an earlier version of this summary
@@ -161,10 +163,16 @@ def main() -> None:
         print("  recovered (%2d): est_BER max %.3e" % (len(rec), max(rec)))
         print("  failed    (%2d): est_BER min %.3e" % (len(bad), min(bad)))
         if max(rec) < min(bad):
-            print("  CLEANLY SEPARABLE: every recovery <= %.1e, every failure >= %.1e."
-                  % (max(rec), min(bad)))
-            print("  S3 can tell the orchestrator whether S4 can succeed, for free,")
-            print("  BEFORE paying for the search. EVM cannot - it overlaps badly.")
+            print("  Separable ON THIS CORPUS: every recovery <= %.1e, every"
+                  % max(rec))
+            print("  failure >= %.1e. EVM does NOT separate them." % min(bad))
+            print("  CAVEAT, and it is not small: this corpus sets cfo=0,")
+            print("  phase=0, timing=0. Re-measured through a channel WITH")
+            print("  those impairments the populations OVERLAP (recovered up to")
+            print("  1.19e-5, failed from 1.08e-5). So this is a useful")
+            print("  heuristic, NOT an oracle - which is why the pre-flight in")
+            print("  rotations.py gates only the expensive pass and can never")
+            print("  suppress a recovery. See PREFLIGHT_BER_LIMIT.")
         else:
             print("  NOT separable on this corpus - the populations overlap.")
 

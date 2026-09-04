@@ -144,21 +144,53 @@ list. **EVM does not separate them at all** — BPSK at 4 dB has 33 % EVM and
 recovers; 16-QAM at 13 dB has 11.7 % EVM and fails. The right number is the
 estimated BER, not the constellation quality.
 
-Two things follow:
+### …but it is a heuristic, not an oracle, and I checked before relying on it
 
-- **A free pre-flight check for the orchestrator.** S3 computes this number
-  already. The pipeline can decide *before* paying up to 32 s for the S4 search
-  whether the search can possibly succeed, and say so on the stage card:
-  *"this capture demodulates at 3 × 10⁻⁴; recovery needs better than about
-  10⁻⁵"* is an answer a human can act on. A silent decline is not.
-- **A third independent confirmation of the cliff.** The zoo's bits-only sweep
-  puts it at 2 × 10⁻⁵ injected BER, `end_to_end.md` put it at the first bit
-  error, and now the receiver's own estimate brackets it between 1.5 × 10⁻⁶ and
-  7.5 × 10⁻⁵. Three measurements, three different routes, one conclusion.
+The separation above is on a corpus with **`cfo = 0`, `phase = 0`,
+`timing_offset = 0`**. Before building anything on it I re-measured on 28 files
+through a channel that has all three (`cfo 1e-4`, `phase 0.7 rad`, `timing 0.3`
+symbols). **The populations overlap:**
 
-Stated honestly: this is 36 files on one channel model with no CFO, phase or
-timing impairment. It is a strong correlation on this corpus, not a proven law,
-and it should be re-checked when S2 lands and when a real capture exists.
+| | files | recovered, max | failed, min | separable? |
+|---|---|---|---|---|
+| no impairments (zoo RF) | 36 | 1.52 × 10⁻⁶ | 7.48 × 10⁻⁵ | yes |
+| **with impairments** | 28 | **1.19 × 10⁻⁵** | **1.08 × 10⁻⁵** | **no** |
+
+Two BPSK files at 4 dB, sibling seeds, estimated 1.254 × 10⁻⁵ and
+1.191 × 10⁻⁵ — a 5 % difference — and one recovered while the other did not.
+**Any hard threshold in that region is a coin toss.** Had the gate been built
+on the clean-corpus number alone, it would have suppressed a real recovery.
+
+Across all 64 files:
+
+| threshold | recoveries **suppressed** | hopeless files skipped |
+|---|---|---|
+| 1 × 10⁻⁵ | **1** | 14 |
+| 2 × 10⁻⁵ | 0 | 12 |
+| **3 × 10⁻⁵** | **0** | **12** |
+| 1 × 10⁻⁴ | 0 | 9 |
+
+`PREFLIGHT_BER_LIMIT = 3e-5` — the widest margin that still skips everything
+2 × 10⁻⁵ does.
+
+**The design matters more than the number.** Suppressing a real recovery loses
+a demo; 25 wasted seconds does not. So the gate never decides whether to
+*attempt* recovery — the cheap screening pass always runs, and across all 137
+files measured to date every recovery came from that cheap pass while the
+statistical fallback rescued nothing. It only decides whether the **expensive**
+pass is worth its budget. A recovery cannot be suppressed by this threshold
+being wrong, and `test_preflight_never_suppresses_a_recovery` pins that.
+
+It is still a third independent bracket on the cliff — bits-only says
+2 × 10⁻⁵ injected, `end_to_end.md` says the first bit error, the receiver's own
+estimate says somewhere around 10⁻⁵. Three routes, one conclusion.
+
+**Anvith — this is the request:** keep `estimated_output_ber` and
+`estimated_output_ber_valid` as first-class keys in the S3 stage result, not
+diagnostics. S4 reads them. And the `_valid` flag genuinely matters: when it is
+false the estimate reads optimistically, which errs toward attempting, which is
+the safe direction — so the gate ignores the number entirely unless the flag is
+true.
 
 **Anvith — nothing here needs fixing in S3.** It locked 6/6 on every file at
 every SNR, and its self-reported quality metric predicts my stage's outcome
@@ -193,13 +225,16 @@ the case the statistical method was actually built for — under a 25 s wall
 clock for the whole expensive pass. The capability is bounded, not removed:
 "it has never fired" is not "it can never fire".
 
-| | before | after |
-|---|---|---|
-| worst single file | 72.1 s | **32.3 s** |
-| whole 36-file corpus | 746 s | **258 s** |
-| median file | — | 2.0 s |
-| recovery | 26/36 | **26/36** |
-| confidently wrong | 0 | **0** |
+| | before | screening | + S3 pre-flight |
+|---|---|---|---|
+| worst single file | 72.1 s | 32.3 s | **27.6 s** |
+| whole 36-file corpus | 746 s | 258 s | **112 s** |
+| median file | — | 2.0 s | **2.3 s** |
+| recovery | 26/36 | 26/36 | **26/36** |
+| confidently wrong | 0 | 0 | **0** |
+
+**6.7× on the corpus and 2.6× on the worst single file, with the recovery count
+untouched.**
 
 That is the difference between fitting the 6 September core-lock budget and
 not. It is offered to Naidhruv as a callable entry point so the orchestrator

@@ -16,8 +16,9 @@ file, with every status identical either way:
     8-PSK  8 dB  8 rotations   70.3 s -> 1.4 s
     QPSK  20 dB  4 rotations   18.1 s -> 1.2 s
 
-and across the whole 36-file RF corpus, worst file 72.1 s -> 32.3 s, total
-746 s -> 258 s, recovery unchanged at 26/36 with zero wrong answers.
+and across the whole 36-file RF corpus, with the S3 pre-flight as well,
+worst file 72.1 s -> 27.6 s, total 746 s -> 112 s, recovery unchanged at 26/36
+with zero wrong answers.
 
 That is the difference between fitting the 6 September 90-second core-lock
 budget and not fitting it.
@@ -136,3 +137,63 @@ def test_the_fallback_can_be_switched_off_entirely():
 
 def test_empty_input_is_not_a_crash():
     assert recover_over_rotations([]) is None
+
+
+# --------------------------------------------------------------------------
+# the S3 pre-flight - a heuristic that must never be able to cost a recovery
+# --------------------------------------------------------------------------
+
+def test_preflight_stays_silent_inside_the_operating_range():
+    """The number that decides the threshold. On a channel WITH cfo, phase and
+    timing impairments, a BPSK file at 4 dB recovered with an estimated output
+    BER of 1.19e-5 while its sibling seed at 1.254e-5 did not. Any limit at or
+    below ~1.2e-5 would have suppressed a real recovery."""
+    from pipeline.s4_recover.rotations import PREFLIGHT_BER_LIMIT, preflight_reason
+
+    assert PREFLIGHT_BER_LIMIT > 1.19e-5, \
+        "the limit is below a measured recovery and would suppress it"
+    assert preflight_reason(1.19e-5, valid=True) is None
+    assert preflight_reason(1.52e-6, valid=True) is None
+
+
+def test_preflight_speaks_only_when_the_estimate_is_far_out_and_valid():
+    from pipeline.s4_recover.rotations import preflight_reason
+
+    assert preflight_reason(3.1e-4, valid=True)
+    assert preflight_reason(4.7e-2, valid=True)
+    # S3 marks the estimate invalid when it has not locked, and it reads
+    # OPTIMISTICALLY then - so an invalid estimate must never suppress work.
+    assert preflight_reason(4.7e-2, valid=False) is None
+    assert preflight_reason(None, valid=True) is None
+    assert preflight_reason(-1.0, valid=True) is None
+
+
+def test_preflight_never_suppresses_a_recovery(rotations):
+    """The safety property, stated as a test rather than as a comment.
+
+    Even handed an absurd estimated BER, the cheap screening pass still runs -
+    so a file that CAN be recovered still is. The pre-flight only decides
+    whether the expensive statistical pass is worth its 25 seconds.
+    """
+    with_gate = recover_over_rotations(rotations["cands"],
+                                       estimated_output_ber=0.5,
+                                       estimated_ber_valid=True)
+    without = recover_over_rotations(rotations["cands"])
+
+    assert with_gate is not None, "the pre-flight suppressed a real recovery"
+    assert without is not None
+    assert with_gate.index == without.index
+    assert with_gate.result.generators_octal == without.result.generators_octal
+
+
+def test_preflight_skips_the_expensive_pass_on_a_hopeless_file():
+    """Where the time is saved: nothing recovers, and S3 already said so."""
+    rng = np.random.default_rng(21)
+    noise = [as_llr(rng.integers(0, 2, 80_000, dtype=np.uint8)) for _ in range(4)]
+
+    t0 = time.time()
+    assert recover_over_rotations(noise, estimated_output_ber=3e-3,
+                                  estimated_ber_valid=True) is None
+    gated = time.time() - t0
+
+    assert gated < 12.0, "expected the deep search to be skipped, took %.0f s" % gated
