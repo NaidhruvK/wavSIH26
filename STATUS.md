@@ -37,6 +37,17 @@ at zoo/corpus/rf/ instead.**
 **Next:** S0 ingest (WAV/IQ read) so downstream stages can consume the
 corpus as files, not just in-memory arrays.
 
+**Landed 4 Sep, part 3.** `pipeline/s0_ingest.py`, merged to `main`.
+
+- Reads 2-channel WAV (I,Q) — validated against zoo/corpus/rf/ (own corpus,
+  round-trips correctly, fs matches truth JSON).
+- Raw IQ ingest (int8/int16/float32) with a ranked-hypothesis format sniffer
+  — scores on boundedness + non-extreme-value clustering to discriminate
+  byte width.
+- 4/4 unit tests passing (tests/unit/test_s0_ingest.py).
+
+**Next:** S1 (PSD, SNR estimate, burst detection).
+
 ---
 
 ## Anvith — S3 receiver chain
