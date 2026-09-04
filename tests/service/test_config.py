@@ -1,0 +1,59 @@
+"""Tests for service/config.py.
+
+Verifies configuration defaults, environment overrides, and directory creation.
+Compatible with both unittest and pytest.
+"""
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+from service.config import AppConfig, config
+
+
+class TestConfig(unittest.TestCase):
+    def test_default_config_values(self):
+        self.assertTrue(str(config.upload_dir).endswith("uploads"))
+        self.assertTrue(str(config.artifact_dir).endswith("reports/artifacts"))
+        self.assertTrue(str(config.db_path).endswith("raaya.db"))
+        self.assertEqual(config.max_upload_size_bytes, 2 * 1024 * 1024 * 1024)
+        self.assertEqual(config.max_workers, 4)
+        self.assertEqual(config.stage_timeout_seconds, 15.0)
+        self.assertEqual(config.total_timeout_seconds, 90.0)
+
+    def test_ensure_directories(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            custom_config = AppConfig(
+                repo_root=tmp_path,
+                upload_dir=tmp_path / "custom_uploads",
+                artifact_dir=tmp_path / "custom_artifacts",
+                db_path=tmp_path / "custom_db" / "test.db",
+            )
+            self.assertFalse(custom_config.upload_dir.exists())
+            self.assertFalse(custom_config.artifact_dir.exists())
+            self.assertFalse(custom_config.db_path.parent.exists())
+
+            custom_config.ensure_directories()
+
+            self.assertTrue(custom_config.upload_dir.is_dir())
+            self.assertTrue(custom_config.artifact_dir.is_dir())
+            self.assertTrue(custom_config.db_path.parent.is_dir())
+
+    def test_environment_override(self):
+        old_env = os.environ.get("RAAYA_STAGE_TIMEOUT")
+        try:
+            os.environ["RAAYA_STAGE_TIMEOUT"] = "25.5"
+            cfg = AppConfig(stage_timeout_seconds=float(os.environ["RAAYA_STAGE_TIMEOUT"]))
+            self.assertEqual(cfg.stage_timeout_seconds, 25.5)
+        finally:
+            if old_env is not None:
+                os.environ["RAAYA_STAGE_TIMEOUT"] = old_env
+            else:
+                os.environ.pop("RAAYA_STAGE_TIMEOUT", None)
+
+
+if __name__ == "__main__":
+    unittest.main()
