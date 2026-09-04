@@ -1,0 +1,109 @@
+file,true_mod,snr_db,arm,chosen_mod,mod_correct,status,confidence,est_ber,est_ber_valid,measured_ber,decodes,confidently_wrong,old_rule_ok,lock_failures,chain_runs,secs,reason
+16qam_10dB_2020,16qam,10,truth-params,16qam,True,ok,0.7844,0.00284837,True,0.003058,True,False,True,,1,0.238,
+16qam_10dB_2020,16qam,10,s2-top,16qam,True,low_confidence,0.7108,0.0079431,False,0.374536,False,False,True,carrier_aligned,1,0.242,"spectrum sits -11865 Hz off centre (0.24 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+16qam_10dB_2020,16qam,10,search,16qam,True,ok,0.7844,0.00284871,True,0.003058,True,False,True,,12,2.165,
+16qam_13dB_2021,16qam,13,truth-params,16qam,True,ok,0.9561,7.479e-05,True,0.0001,True,False,True,,1,0.323,
+16qam_13dB_2021,16qam,13,s2-top,16qam,True,low_confidence,0.9066,0.00061187,False,0.37495,False,False,True,carrier_aligned,1,0.291,"spectrum sits +12500 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+16qam_13dB_2021,16qam,13,search,16qam,True,ok,0.9561,7.479e-05,True,0.0001,True,False,True,,6,1.349,
+16qam_15dB_2022,16qam,15,truth-params,16qam,True,ok,0.974,7e-08,True,0.0,True,False,True,,1,0.294,
+16qam_15dB_2022,16qam,15,s2-top,16qam,True,low_confidence,0.9485,4.243e-05,False,0.375163,False,False,True,carrier_aligned,1,0.314,"spectrum sits +12939 Hz off centre (0.26 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+16qam_15dB_2022,16qam,15,search,16qam,True,ok,0.974,7e-08,True,0.0,True,False,True,,12,2.621,
+16qam_20dB_2023,16qam,20,truth-params,16qam,True,ok,0.9338,0.0,True,0.0,True,False,True,,1,0.279,
+16qam_20dB_2023,16qam,20,s2-top,16qam,True,low_confidence,0.9293,0.0,False,0.373998,False,False,True,carrier_aligned,1,0.316,"spectrum sits -12549 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+16qam_20dB_2023,16qam,20,search,16qam,True,ok,0.9338,0.0,True,0.0,True,False,True,,12,2.529,
+16qam_4dB_2018,16qam,4,truth-params,16qam,True,low_confidence,0.3291,0.04702887,False,0.08422,False,False,False,carrier_locked,1,0.294,carrier lock 0.33 below 0.55
+16qam_4dB_2018,16qam,4,s2-top,16qam,True,low_confidence,0.0138,0.05773991,False,0.427226,False,False,False,carrier_aligned|carrier_locked|output_usable,1,0.304,"spectrum sits +12256 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
+16qam_4dB_2018,16qam,4,search,8psk,False,low_confidence,0.0402,0.08602773,False,0.484674,False,False,False,carrier_locked|output_usable,12,3.695,"carrier lock 0.04 below 0.60; the receiver estimates its own output BER at 0.086, over the 0.05 a lock should produce - "
+16qam_8dB_2019,16qam,8,truth-params,16qam,True,ok,0.7193,0.01070867,True,0.012072,False,False,True,,1,0.323,
+16qam_8dB_2019,16qam,8,s2-top,16qam,True,low_confidence,0.6402,0.02233754,False,0.38334,False,False,True,carrier_aligned,1,0.323,"spectrum sits -12842 Hz off centre (0.26 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+16qam_8dB_2019,16qam,8,search,16qam,True,ok,0.7204,0.01222849,True,0.014927,False,False,True,,12,2.73,
+2fsk_10dB_2026,2fsk,10,truth-params,2fsk,True,ok,0.8611,0.0,True,0.0,True,False,True,,1,0.068,
+2fsk_10dB_2026,2fsk,10,s2-top,2fsk,True,low_confidence,0.8611,0.0,False,0.0,True,False,True,carrier_aligned,1,0.074,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_10dB_2026,2fsk,10,search,2fsk,True,ok,0.8611,0.0,True,0.0,True,False,True,,2,0.403,
+2fsk_13dB_2027,2fsk,13,truth-params,2fsk,True,ok,0.9016,0.0,True,0.0,True,False,True,,1,0.065,
+2fsk_13dB_2027,2fsk,13,s2-top,2fsk,True,low_confidence,0.9016,0.0,False,0.0,True,False,True,carrier_aligned,1,0.069,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_13dB_2027,2fsk,13,search,2fsk,True,ok,0.9016,0.0,True,0.0,True,False,True,,2,0.38,
+2fsk_15dB_2028,2fsk,15,truth-params,2fsk,True,ok,0.9213,0.0,True,0.0,True,False,True,,1,0.074,
+2fsk_15dB_2028,2fsk,15,s2-top,2fsk,True,low_confidence,0.9213,0.0,False,0.0,True,False,True,carrier_aligned,1,0.106,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_15dB_2028,2fsk,15,search,2fsk,True,ok,0.9213,0.0,True,0.0,True,False,True,,2,0.383,
+2fsk_20dB_2029,2fsk,20,truth-params,2fsk,True,ok,0.9558,0.0,True,0.0,True,False,True,,1,0.065,
+2fsk_20dB_2029,2fsk,20,s2-top,2fsk,True,low_confidence,0.9558,0.0,False,0.0,True,False,True,carrier_aligned,1,0.074,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_20dB_2029,2fsk,20,search,2fsk,True,ok,0.9558,0.0,True,0.0,True,False,True,,4,0.509,
+2fsk_4dB_2024,2fsk,4,truth-params,2fsk,True,ok,0.7273,0.00299025,True,0.003756,True,False,True,,1,0.065,
+2fsk_4dB_2024,2fsk,4,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.037,"no symbol-rate line at 48479 Hz (1.6x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_4dB_2024,2fsk,4,search,,False,failed,0.0,1.0,False,1.0,False,False,False,,0,0.163,"every candidate was refused by the cheap screen: no symbol-rate line at 48479 Hz (4.4x local median, needs 4.5x) - eithe"
+2fsk_8dB_2025,2fsk,8,truth-params,2fsk,True,ok,0.8254,2.4e-07,True,0.0,True,False,True,,1,0.068,
+2fsk_8dB_2025,2fsk,8,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.033,"no symbol-rate line at 11987 Hz (1.0x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_8dB_2025,2fsk,8,search,,False,failed,0.0,1.0,False,1.0,False,False,False,,0,0.162,"every candidate was refused by the cheap screen: no symbol-rate line at 11987 Hz (3.9x local median, needs 4.5x) - eithe"
+4fsk_10dB_2032,4fsk,10,truth-params,4fsk,True,ok,0.7978,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_10dB_2032,4fsk,10,s2-top,4fsk,True,low_confidence,0.6123,0.00027325,False,0.247254,False,False,True,carrier_aligned,1,0.046,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_10dB_2032,4fsk,10,search,4fsk,True,ok,0.7978,0.0,True,0.0,True,False,True,,2,0.184,
+4fsk_13dB_2033,4fsk,13,truth-params,4fsk,True,ok,0.8565,0.0,True,0.0,True,False,True,,1,0.047,
+4fsk_13dB_2033,4fsk,13,s2-top,4fsk,True,low_confidence,0.4801,0.0551752,False,0.255824,False,False,True,carrier_aligned|output_usable,1,0.049,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_13dB_2033,4fsk,13,search,4fsk,True,ok,0.8565,0.0,True,0.0,True,False,True,,4,0.298,
+4fsk_15dB_2034,4fsk,15,truth-params,4fsk,True,ok,0.8858,0.0,True,0.0,True,False,True,,1,0.052,
+4fsk_15dB_2034,4fsk,15,s2-top,4fsk,True,low_confidence,0.542,0.1035044,False,0.247645,False,False,True,carrier_aligned|output_usable,1,0.049,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_15dB_2034,4fsk,15,search,4fsk,True,ok,0.8858,0.0,True,0.0,True,False,True,,2,0.217,
+4fsk_20dB_2035,4fsk,20,truth-params,4fsk,True,ok,0.9355,0.0,True,0.0,True,False,True,,1,0.048,
+4fsk_20dB_2035,4fsk,20,s2-top,4fsk,True,low_confidence,0.5163,0.06779308,False,0.249172,False,False,True,carrier_aligned|output_usable,1,0.05,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_20dB_2035,4fsk,20,search,4fsk,True,ok,0.9355,0.0,True,0.0,True,False,True,,4,0.281,
+4fsk_4dB_2030,4fsk,4,truth-params,4fsk,True,ok,0.6046,0.00438201,True,0.005521,True,False,True,,1,0.062,
+4fsk_4dB_2030,4fsk,4,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.016,"no symbol-rate line at 65634 Hz (0.6x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_4dB_2030,4fsk,4,search,,False,failed,0.0,1.0,False,1.0,False,False,False,,0,0.07,"every candidate was refused by the cheap screen: no symbol-rate line at 65634 Hz (4.0x local median, needs 4.5x) - eithe"
+4fsk_8dB_2031,4fsk,8,truth-params,4fsk,True,ok,0.7453,8.6e-07,True,0.0,True,False,True,,1,0.044,
+4fsk_8dB_2031,4fsk,8,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.016,"no symbol-rate line at 47713 Hz (1.1x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_8dB_2031,4fsk,8,search,bpsk,False,low_confidence,0.2324,0.09745572,False,0.483758,False,False,False,carrier_locked|output_usable,4,2.606,"carrier lock 0.23 below 0.60; the receiver estimates its own output BER at 0.0975, over the 0.05 a lock should produce -"
+8psk_10dB_2014,8psk,10,truth-params,8psk,True,ok,0.6594,0.00031215,True,0.000301,True,False,True,,1,0.504,
+8psk_10dB_2014,8psk,10,s2-top,8psk,True,low_confidence,0.6291,0.00053827,False,0.483185,False,False,True,carrier_aligned,1,0.449,"spectrum sits -6055 Hz off centre (0.12 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+8psk_10dB_2014,8psk,10,search,8psk,True,ok,0.6594,0.00031134,True,0.000251,True,False,True,,12,3.627,
+8psk_13dB_2015,8psk,13,truth-params,8psk,True,ok,0.8023,1.6e-07,True,0.0,True,False,True,,1,0.483,
+8psk_13dB_2015,8psk,13,s2-top,8psk,True,low_confidence,0.7829,1.7e-06,False,0.483855,False,False,True,carrier_aligned,1,0.547,"spectrum sits -6592 Hz off centre (0.13 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+8psk_13dB_2015,8psk,13,search,8psk,True,ok,0.8023,1.6e-07,True,0.0,True,False,True,,12,3.721,
+8psk_15dB_2016,8psk,15,truth-params,8psk,True,ok,0.879,0.0,True,0.0,True,False,True,,1,0.437,
+8psk_15dB_2016,8psk,15,s2-top,8psk,True,low_confidence,0.8667,0.0,False,0.483665,False,False,True,carrier_aligned,1,0.452,"spectrum sits -6738 Hz off centre (0.13 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+8psk_15dB_2016,8psk,15,search,8psk,True,ok,0.879,0.0,True,0.0,True,False,True,,12,3.372,
+8psk_20dB_2017,8psk,20,truth-params,8psk,True,ok,0.9574,0.0,True,0.0,True,False,True,,1,0.47,
+8psk_20dB_2017,8psk,20,s2-top,8psk,True,low_confidence,0.9537,0.0,False,0.48397,False,False,True,carrier_aligned,1,0.492,"spectrum sits -5762 Hz off centre (0.12 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+8psk_20dB_2017,8psk,20,search,8psk,True,ok,0.9574,0.0,True,0.0,True,False,True,,12,3.619,
+8psk_4dB_2012,8psk,4,truth-params,8psk,True,low_confidence,0.1625,0.0294019,False,0.230387,False,False,False,carrier_locked,1,0.463,carrier lock 0.16 below 0.60
+8psk_4dB_2012,8psk,4,s2-top,8psk,True,low_confidence,0.0155,0.04240038,False,0.482343,False,False,False,carrier_aligned|carrier_locked,1,0.474,"spectrum sits +5078 Hz off centre (0.10 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carrie"
+8psk_4dB_2012,8psk,4,search,8psk,True,low_confidence,0.1625,0.0294019,False,0.230387,False,False,False,carrier_locked,12,3.635,carrier lock 0.16 below 0.60
+8psk_8dB_2013,8psk,8,truth-params,8psk,True,low_confidence,0.4882,0.00280605,False,0.002805,True,False,False,carrier_locked,1,0.502,carrier lock 0.49 below 0.60
+8psk_8dB_2013,8psk,8,s2-top,8psk,True,low_confidence,0.0302,0.02883428,False,0.482617,False,False,False,carrier_aligned|carrier_locked,1,0.474,"spectrum sits +3369 Hz off centre (0.07 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carrie"
+8psk_8dB_2013,8psk,8,search,8psk,True,low_confidence,0.4882,0.00280605,False,0.002805,True,False,False,carrier_locked,12,3.848,carrier lock 0.49 below 0.60
+bpsk_10dB_2002,bpsk,10,truth-params,bpsk,True,ok,0.9699,0.0,True,0.0,True,False,True,,1,1.103,
+bpsk_10dB_2002,bpsk,10,s2-top,bpsk,True,low_confidence,0.089,0.05353738,False,0.48512,False,False,False,carrier_aligned|carrier_locked|output_usable,1,1.171,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
+bpsk_10dB_2002,bpsk,10,search,bpsk,True,ok,0.9699,0.0,True,0.0,True,False,True,,6,5.19,
+bpsk_13dB_2003,bpsk,13,truth-params,bpsk,True,ok,0.9858,0.0,True,0.0,True,False,True,,1,1.141,
+bpsk_13dB_2003,bpsk,13,s2-top,bpsk,True,low_confidence,0.0971,0.02354746,False,0.485244,False,False,False,carrier_aligned|carrier_locked,1,1.095,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
+bpsk_13dB_2003,bpsk,13,search,bpsk,True,ok,0.9858,0.0,True,0.0,True,False,True,,6,5.406,
+bpsk_15dB_2004,bpsk,15,truth-params,bpsk,True,ok,0.991,0.0,True,0.0,True,False,True,,1,1.223,
+bpsk_15dB_2004,bpsk,15,s2-top,bpsk,True,low_confidence,0.0784,0.04589516,False,0.485871,False,False,False,carrier_aligned|carrier_locked,1,1.203,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
+bpsk_15dB_2004,bpsk,15,search,bpsk,True,ok,0.991,0.0,True,0.0,True,False,True,,6,5.201,
+bpsk_20dB_2005,bpsk,20,truth-params,bpsk,True,ok,0.9973,0.0,True,0.0,True,False,True,,1,1.161,
+bpsk_20dB_2005,bpsk,20,s2-top,bpsk,True,low_confidence,0.7403,0.00013549,False,0.483045,False,False,True,carrier_aligned,1,1.232,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+bpsk_20dB_2005,bpsk,20,search,bpsk,True,ok,0.9973,0.0,True,0.0,True,False,True,,6,5.571,
+bpsk_4dB_2000,bpsk,4,truth-params,bpsk,True,ok,0.8645,1.52e-06,True,0.0,True,False,True,,1,1.205,
+bpsk_4dB_2000,bpsk,4,s2-top,bpsk,True,low_confidence,0.1095,0.07362836,False,0.486094,False,False,False,carrier_aligned|carrier_locked|output_usable,1,1.071,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
+bpsk_4dB_2000,bpsk,4,search,bpsk,True,ok,0.8645,1.52e-06,True,0.0,True,False,True,,6,5.36,
+bpsk_8dB_2001,bpsk,8,truth-params,bpsk,True,ok,0.9502,0.0,True,0.0,True,False,True,,1,1.164,
+bpsk_8dB_2001,bpsk,8,s2-top,bpsk,True,low_confidence,0.1205,0.05920743,False,0.486581,False,False,False,carrier_aligned|carrier_locked|output_usable,1,1.11,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
+bpsk_8dB_2001,bpsk,8,search,bpsk,True,ok,0.9502,0.0,True,0.0,True,False,True,,6,5.284,
+qpsk_10dB_2008,qpsk,10,truth-params,qpsk,True,ok,0.9005,0.0,True,0.0,True,False,True,,1,0.603,
+qpsk_10dB_2008,qpsk,10,s2-top,qpsk,True,low_confidence,0.8612,0.0,False,0.485234,False,False,True,carrier_aligned,1,0.549,"spectrum sits -12207 Hz off centre (0.24 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+qpsk_10dB_2008,qpsk,10,search,qpsk,True,ok,0.9005,0.0,True,0.0,True,False,True,,12,5.343,
+qpsk_13dB_2009,qpsk,13,truth-params,qpsk,True,ok,0.9479,0.0,True,0.0,True,False,True,,1,0.666,
+qpsk_13dB_2009,qpsk,13,s2-top,qpsk,True,low_confidence,0.9275,0.0,False,0.484463,False,False,True,carrier_aligned,1,0.672,"spectrum sits -12354 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+qpsk_13dB_2009,qpsk,13,search,qpsk,True,ok,0.9479,0.0,True,0.0,True,False,True,,12,5.139,
+qpsk_15dB_2010,qpsk,15,truth-params,qpsk,True,ok,0.9674,0.0,True,0.0,True,False,True,,1,0.611,
+qpsk_15dB_2010,qpsk,15,s2-top,qpsk,True,low_confidence,0.9547,0.0,False,0.48502,False,False,True,carrier_aligned,1,0.611,"spectrum sits +12549 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+qpsk_15dB_2010,qpsk,15,search,qpsk,True,ok,0.9674,0.0,True,0.0,True,False,True,,6,2.639,
+qpsk_20dB_2011,qpsk,20,truth-params,qpsk,True,ok,0.989,0.0,True,0.0,True,False,True,,1,0.607,
+qpsk_20dB_2011,qpsk,20,s2-top,qpsk,True,low_confidence,0.9846,0.0,False,0.484636,False,False,True,carrier_aligned,1,0.593,"spectrum sits -12402 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+qpsk_20dB_2011,qpsk,20,search,qpsk,True,ok,0.989,0.0,True,0.0,True,False,True,,6,2.703,
+qpsk_4dB_2006,qpsk,4,truth-params,qpsk,True,ok,0.6365,0.00096521,True,0.001154,True,False,True,,1,0.588,
+qpsk_4dB_2006,qpsk,4,s2-top,qpsk,True,low_confidence,0.5424,0.00404943,False,0.483622,False,False,False,carrier_aligned|carrier_locked,1,0.624,"spectrum sits +12354 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
+qpsk_4dB_2006,qpsk,4,search,qpsk,True,ok,0.6365,0.00096521,True,0.001154,True,False,True,,6,2.672,
+qpsk_8dB_2007,qpsk,8,truth-params,qpsk,True,ok,0.8409,0.0,True,0.0,True,False,True,,1,0.619,
+qpsk_8dB_2007,qpsk,8,s2-top,qpsk,True,low_confidence,0.7867,1.23e-05,False,0.482814,False,False,True,carrier_aligned,1,0.608,"spectrum sits +12109 Hz off centre (0.24 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+qpsk_8dB_2007,qpsk,8,search,qpsk,True,ok,0.8411,0.0,True,0.0,True,False,True,,12,5.237,
