@@ -88,6 +88,41 @@ way, or move on to S2 (symbol rate, CFO, roll-off, classification) and
 leave both FSK SNR and occupied_bw as dated known gaps for the 5/6 Sep
 hardening pass.
 
+**Landed 4 Sep, part 5.** `pipeline/s1_detect.py` spectrogram, closing the
+31 Aug gap for real (`S1Result.spec_freqs/spec_times/spec_db` — the
+waterfall's data source). 4 new tests, 14 passed + 1 xfailed on the S1
+suite. **31 Aug is now genuinely complete**, not just "mostly."
+
+**Landed 4 Sep, part 6.** `pipeline/s2_estimate.py` — the 1 Sep column.
+Ported from `tests/fixtures/local_s2.py` (Nehal's stand-in) plus a new
+FSK-order estimator; **that fixture can now be deleted.**
+
+- `estimate_symbol_rate` / `estimate_symbol_rate_fsk` — squared-magnitude
+  spectrum / IF-derivative spectrum, ported unchanged in method. **24/24
+  exact (0.00% error) at ≥10 dB** across the whole RF corpus, all 6
+  modulations — well past the 18/20-at-<1% gate.
+- `estimate_cfo` — M-th power line search over M ∈ {2,4,8}, ranked by
+  score across all three M rather than just the winner, so S3 can fall
+  back to the second-best hint.
+- `estimate_fsk_order` — **new**, not in the fixture. IF-histogram peak
+  count (median-filtered, smoothed, `scipy.signal.find_peaks`), matched
+  to the nearest registered order. **11/12 correct on the FSK corpus**
+  (2fsk + 4fsk, 4–20 dB); the one miss is 4fsk at 4 dB, below every other
+  stated target floor in this project. Pinned by a test, not hidden.
+- `estimate()` returns ranked hypotheses on every field (`symbol_rate_hypotheses`,
+  `cfo_hypotheses`, `fsk_order_hypotheses`), per the contract's design —
+  S3/S4 aren't forced to trust the top guess.
+- 9 new tests (`tests/unit/test_s2_estimate.py`), all passing, including a
+  structural check that `estimate()` only ever takes `(iq, fs)` — no truth
+  path exists to leak through.
+- **Not done:** roll-off is Anvith's (S3 already does blind roll-off,
+  ±0.009 accurate) so it's correctly out of S2's scope. Modulation
+  classification (the cumulant/LightGBM classifier) is 2–3 Sep, next.
+
+**Next:** 2 Sep — twelve-feature cumulant extractor, deterministic
+baseline rule, and the labelled training corpus (2,000+ windows/class
+across the SNR grid).
+
 ---
 
 ## Anvith — S3 receiver chain
