@@ -1,0 +1,16 @@
+{
+  "n_source_bits": 160000,
+  "code": {
+    "family": "none"
+  },
+  "interleaver": null,
+  "scrambler": null,
+  "injected_ber": 0.0,
+  "n_flipped": 0,
+  "error_model": "none",
+  "start_offset": 0,
+  "pipeline_order": [
+    "random"
+  ],
+  "seed": 999
+}

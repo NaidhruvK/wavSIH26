@@ -1,0 +1,31 @@
+{
+  "n_source_bits": 80000,
+  "code": {
+    "family": "conv",
+    "rate": "1/2",
+    "K": 7,
+    "polys_octal": [
+      121,
+      91
+    ],
+    "poly_notation": "octal"
+  },
+  "interleaver": {
+    "family": "block",
+    "depth": 16,
+    "width": 6,
+    "period": 96
+  },
+  "scrambler": null,
+  "injected_ber": 0.005,
+  "n_flipped": 762,
+  "error_model": "independent",
+  "start_offset": 31,
+  "pipeline_order": [
+    "encode",
+    "interleave",
+    "scramble",
+    "inject"
+  ],
+  "seed": 1015
+}
