@@ -56,7 +56,26 @@ Ignore it.
 ## 3. Where the code lives
 
 - **Repo:** `https://github.com/NaidhruvK/wavSIH26.git`
-- **Local clone:** `C:\Users\aneha\OneDrive\Desktop\raaya` — work here
+- **Local clone:** `C:\dev\raaya` — work here.
+
+  **NEVER PUT THIS REPO UNDER ONEDRIVE.** It lived at
+  `C:\Users\aneha\OneDrive\Desktop\raaya` until 4 September and was moved for
+  cause. OneDrive syncs every test write, every `.pyc` and every regenerated
+  report, and it becomes the top process on the machine: measured at 83,600
+  CPU-seconds while the suite ran. The damage lands on the TEST SUITE, which
+  does thousands of small writes — the full suite went 18 minutes to 60, and
+  `test_conv_exact_on_twenty_streams`, which baselines at 218–296 s, took
+  **17,790 s** (4 h 57 m) in one run. Re-run in `C:\dev` it takes 279 s and
+  239 s on consecutive runs.
+
+  The 6 September core-lock gate is *"under 90 s, twice consecutively"*. That
+  cannot be measured on a synced folder, and a mid-write sync can also lock or
+  corrupt a file during a timed run.
+
+  Worth knowing what was NOT affected: the `reports/` studies are CPU-bound and
+  write little, so their per-file timings were the same in both locations
+  (zoo_rf worst 27.6 s vs 28.0 s; blind chain 16-QAM 75.1 s vs 74.4 s). No
+  published study number changed. Only suite timings were untrustworthy.
 - **`main` is current as of 4 Sep at `093f431`**, carrying S4, S5, S6, the
   three interleaver families, the burst-error study, the Dockerfile, Anvith's
   S3 receiver chain and his 4 Sep pinning/roll-off work.
@@ -66,6 +85,9 @@ Ignore it.
   across `tests/unit` + `tests/contract`. Not yet merged.
 - **Start your own branch** for new work — `nehal/<feature>`. Never commit to
   `main` directly, even though nothing currently stops you (see section 5).
+- **Two stale copies remain under OneDrive and should be deleted** once you
+  are satisfied with `C:\dev\raaya`: `OneDrive\Desktop\raaya` (the pre-move
+  clone, fully pushed — nothing unique in it) and the one below.
 - **`C:\Users\aneha\OneDrive\Desktop\SIH`** is the pre-repo working copy,
   fully superseded. It should be deleted — two copies is how they diverge, and
   the IDE has already been observed opening the stale one.
