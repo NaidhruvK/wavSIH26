@@ -48,6 +48,46 @@ corpus as files, not just in-memory arrays.
 
 **Next:** S1 (PSD, SNR estimate, burst detection).
 
+**Landed 4 Sep, part 4.** `pipeline/s1_detect.py`, SNR estimator fixed +
+tested. Not yet merged to `main` (still on `dhiraj/zoo-v0`).
+
+- Found and fixed a real bug in the SNR estimator I'd started: it compared
+  peak-PSD-bin to noise floor, which is a spectral-density ratio, not the
+  total-power ratio the zoo's truth `snr_db` actually is (`zoo/rf.py`'s
+  `_awgn`: `mean(|signal|**2) / mean(|noise|**2)` over the whole capture).
+  That mismatch was a flat **+7.2 dB bias across the board** — the two are
+  off by roughly the processing gain `fs/occupied_bw`, not noise. Fixed by
+  integrating PSD to total power and subtracting integrated noise floor
+  power instead of comparing single bins.
+- **Validated against truth, not just asserted:** bpsk/qpsk/8psk/16qam now
+  measure within 0.2–0.7 dB of truth across 4–20 dB (target was <1.5 dB at
+  ≥10 dB) — comfortably inside even the "Exceptional" bar in the plan's own
+  perf table. 2-FSK holds to the same bar through 15 dB.
+- **Known gap, stated and pinned by a test, not hidden:** 4-FSK SNR is
+  still wrong (off by 8–23 dB) and 2-FSK degrades at high SNR. Root cause
+  measured, not guessed: the zoo's FSK is unshaped CPFSK
+  (`modulation_index=1.0`, no RRC), and its spectral sidelobes never decay
+  to the true noise floor anywhere in the captured band — checked the 1st
+  through 50th percentile of the PSD, all within 2 dB of each other and
+  none within 4 dB of truth. No percentile choice fixes a floor that isn't
+  there to find. Needs a constant-modulus/moment-based estimator instead of
+  a spectral-floor one. `tests/unit/test_s1_detect.py::test_snr_known_gap_4fsk`
+  is `xfail(strict=True)` so this can't silently regress or silently get
+  "fixed" without the test forcing an update.
+- Also noticed, not yet touched: `estimate_occupied_bw`'s 99%-cumulative-
+  power method reports 89–99% of `fs` for every modulation including PSK,
+  which is clearly too wide (a QPSK RRC signal at these sps should occupy a
+  fraction of the band) — it isn't subtracting the noise-floor contribution
+  before integrating, the same class of bug the SNR estimator had. Not
+  fixed this pass; flagging so nobody quotes the current occupied_bw number.
+- 11 new tests (`tests/unit/test_s1_detect.py`), 10 passed + 1 xfailed.
+  Full suite still green (see commit).
+
+**Next:** merge to `main`, then either fix `estimate_occupied_bw` the same
+way, or move on to S2 (symbol rate, CFO, roll-off, classification) and
+leave both FSK SNR and occupied_bw as dated known gaps for the 5/6 Sep
+hardening pass.
+
 ---
 
 ## Anvith — S3 receiver chain
