@@ -258,13 +258,52 @@ wired into live S2, per-scheme coverage matrix.
   4fsk gap and one confirming S2 degrades gracefully (doesn't crash) if
   the model file is absent.
 
-**4 Sep column complete.** Next: 5 Sep — concatenated CCSDS chain
-(Nehal's, not mine) and driving S2 accuracy down the SNR range /
-producing envelope charts (mine — lower-priority given the FSK gap above
-is the more load-bearing open item). Realistically: worth deciding
-whether to chase the 4fsk decision-boundary fix now or defer it, since
-it's the one number in this whole session that's below its stated
-target and reproduces identically across three separate evaluations.
+**4 Sep column complete.**
+
+**Landed 4 Sep, part 10 — the 4fsk bug, actually fixed, and the earlier
+diagnosis corrected rather than quietly left wrong.** The "known gap"
+reported above was traced to the wrong root cause. Real one, found by
+testing the model against its own training rows: it scored **100% on
+the training data for the exact (scheme, SNR) cells it was failing on
+in holdout** — classic overfitting, not a missing or diluted feature.
+`if_hist_peak_count` was checked directly on the failing examples and
+was correctly 4.0 the whole time; the envelope-gate theory was
+plausible and wrong. Root cause: only 420 training windows per
+(scheme, SNR) cell, and some features cluster extremely tightly within
+a cell (`phase_diff_entropy` std as low as 0.013) — the unregularised
+tree fit a boundary tight enough that a differently-seeded holdout
+example landed outside it.
+
+**Fix: regularisation only, no feature or capacity changes** —
+`min_data_in_leaf=300`, `lambda_l2=5.0`,
+`bagging_fraction=feature_fraction=0.6` (`models/train.py`'s
+`LGB_PARAMS`, defined once and reused everywhere after the earlier
+stale-header lesson). Still `max_depth=5`, 200 trees — the plan's cap,
+untouched. **Macro-F1 at the one ≥10dB holdout point: 0.778 → 0.993**
+(exceeds even the "Exceptional" 95% tier). Overall holdout macro-F1:
+0.693 → 0.720. Live-corpus 4fsk coverage: 17% → 52%, now perfect at
+10–15dB. Confirmed deterministic across repeated training runs with
+bagging enabled (`num_threads=1, force_row_wise=True,
+deterministic=True`).
+
+**Not fully closed — a smaller, different residual, found only because
+the live corpus tests SNRs the holdout set never covered:** 4fsk at
+20dB is still wrong on 6/7 files. Qualitatively different from the
+original bug though — no longer a *confident* wrong answer (top pick
+0.4–0.8 vs. previously ~0.99), and 4fsk stays the #2 hypothesis at
+14–42% every time, so the ranked-hypothesis design still carries the
+right answer for S3/S4's rank test. Pinned by
+`test_classify_4fsk_residual_gap_at_20db` (asserts top-2, not top-1,
+since a 20dB coin-flip isn't worth pinning file-by-file).
+
+`reports/classifier_eval.md` and `reports/s2_coverage.md` both
+regenerated and corrected — the wrong original diagnosis is left
+visible in `classifier_eval.md` with a note explaining the correction,
+not deleted, since it's a real lesson about testing a model against
+its own training data before trusting a feature-level theory.
+
+Next: 5 Sep — concatenated CCSDS chain (Nehal's, not mine) and driving
+S2 accuracy down the SNR range / producing envelope charts (mine).
 
 ---
 

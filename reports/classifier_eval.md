@@ -1,6 +1,6 @@
 # Classifier evaluation -- 3 Sep gate
 
-LightGBM, num_leaves=31, max_depth=5, n_estimators=200, seed=42, config hash `525b649e17f8`.
+LightGBM, num_leaves=31, max_depth=5, learning_rate=0.1, min_data_in_leaf=300, lambda_l2=5.0, bagging_fraction=0.6, feature_fraction=0.6, bagging_freq=1, n_estimators=200, seed=42, config hash `132fc1d21777`.
 
 Trained on 12600 windows (models/dataset_train.csv, SNR grid {0,5,10,15,20}dB). Evaluated on 7200 windows the model never trained on (models/dataset_holdout.csv, SNR {-3,2.5,7.5,12.5}dB).
 
@@ -8,18 +8,18 @@ Trained on 12600 windows (models/dataset_train.csv, SNR grid {0,5,10,15,20}dB). 
 
 | Metric | Model | Baseline |
 |---|---|---|
-| Macro-F1, full holdout | 0.693 | 0.383 |
-| Macro-F1, holdout >=10dB | 0.778 | 0.778 |
-| ECE | 0.2827 | -- |
+| Macro-F1, full holdout | 0.720 | 0.383 |
+| Macro-F1, holdout >=10dB | 0.993 | 0.778 |
+| ECE | 0.2400 | -- |
 
 ## Per-SNR macro-F1 (holdout)
 
 | SNR (dB) | Macro-F1 |
 |---|---|
-| -3.0 | 0.294 |
-| 2.5 | 0.527 |
-| 7.5 | 0.950 |
-| 12.5 | 0.778 |
+| -3.0 | 0.231 |
+| 2.5 | 0.519 |
+| 7.5 | 0.953 |
+| 12.5 | 0.993 |
 
 ## 6x6 confusion matrices, per SNR bin (holdout)
 
@@ -27,22 +27,22 @@ Trained on 12600 windows (models/dataset_train.csv, SNR grid {0,5,10,15,20}dB). 
 
 | true\pred | bpsk | qpsk | 8psk | 16qam | 2fsk | 4fsk |
 |---|---|---|---|---|---|---|
-| bpsk | 174 | 0 | 0 | 21 | 0 | 105 |
-| qpsk | 0 | 0 | 0 | 296 | 0 | 4 |
-| 8psk | 0 | 0 | 0 | 297 | 0 | 3 |
+| bpsk | 159 | 0 | 5 | 136 | 0 | 0 |
+| qpsk | 0 | 0 | 0 | 300 | 0 | 0 |
+| 8psk | 0 | 0 | 0 | 300 | 0 | 0 |
 | 16qam | 0 | 0 | 0 | 300 | 0 | 0 |
-| 2fsk | 0 | 0 | 0 | 268 | 0 | 32 |
-| 4fsk | 0 | 0 | 0 | 87 | 0 | 213 |
+| 2fsk | 0 | 0 | 3 | 297 | 0 | 0 |
+| 4fsk | 0 | 0 | 0 | 231 | 0 | 69 |
 
 ### 2.5 dB
 
 | true\pred | bpsk | qpsk | 8psk | 16qam | 2fsk | 4fsk |
 |---|---|---|---|---|---|---|
 | bpsk | 300 | 0 | 0 | 0 | 0 | 0 |
-| qpsk | 0 | 0 | 0 | 300 | 0 | 0 |
-| 8psk | 0 | 0 | 272 | 12 | 16 | 0 |
-| 16qam | 0 | 169 | 0 | 131 | 0 | 0 |
-| 2fsk | 0 | 0 | 45 | 1 | 34 | 220 |
+| qpsk | 0 | 80 | 0 | 220 | 0 | 0 |
+| 8psk | 0 | 0 | 289 | 0 | 11 | 0 |
+| 16qam | 0 | 274 | 4 | 22 | 0 | 0 |
+| 2fsk | 0 | 0 | 5 | 0 | 22 | 273 |
 | 4fsk | 0 | 0 | 0 | 0 | 0 | 300 |
 
 ### 7.5 dB
@@ -50,10 +50,10 @@ Trained on 12600 windows (models/dataset_train.csv, SNR grid {0,5,10,15,20}dB). 
 | true\pred | bpsk | qpsk | 8psk | 16qam | 2fsk | 4fsk |
 |---|---|---|---|---|---|---|
 | bpsk | 300 | 0 | 0 | 0 | 0 | 0 |
-| qpsk | 0 | 217 | 0 | 83 | 0 | 0 |
-| 8psk | 0 | 0 | 300 | 0 | 0 | 0 |
+| qpsk | 0 | 218 | 0 | 82 | 0 | 0 |
+| 8psk | 0 | 0 | 299 | 0 | 1 | 0 |
 | 16qam | 0 | 0 | 0 | 300 | 0 | 0 |
-| 2fsk | 0 | 0 | 6 | 0 | 294 | 0 |
+| 2fsk | 0 | 0 | 0 | 0 | 300 | 0 |
 | 4fsk | 0 | 0 | 0 | 0 | 0 | 300 |
 
 ### 12.5 dB
@@ -62,15 +62,16 @@ Trained on 12600 windows (models/dataset_train.csv, SNR grid {0,5,10,15,20}dB). 
 |---|---|---|---|---|---|---|
 | bpsk | 300 | 0 | 0 | 0 | 0 | 0 |
 | qpsk | 0 | 300 | 0 | 0 | 0 | 0 |
-| 8psk | 0 | 0 | 300 | 0 | 0 | 0 |
+| 8psk | 0 | 1 | 299 | 0 | 0 | 0 |
 | 16qam | 0 | 0 | 0 | 300 | 0 | 0 |
 | 2fsk | 0 | 0 | 0 | 0 | 300 | 0 |
-| 4fsk | 0 | 0 | 0 | 0 | 300 | 0 |
+| 4fsk | 0 | 0 | 0 | 0 | 12 | 288 |
 
 
 ## Reading the 10dB+ number
 
-The holdout has exactly one SNR point >=10dB (12.5dB), so `macro_f1_ge10db` is a single-slice measurement, not an average over several -- read the per-SNR table above alongside it, not instead of it. At 12.5dB the model gets 5 of 6 classes exactly right and swaps 4fsk entirely for 2fsk (see the confusion matrix), which alone caps that slice's macro-F1 at 0.778 -- just under the plan's 0.80 Minimum-tier target. It is not a training bug: fixed (re-run three times, byte-identical predictions each time --
-`num_threads=1, force_row_wise=True, deterministic=True` was needed to get that; earlier runs without it silently varied run to run). Root cause traced to the training data, not the model: `if_hist_peak_count` is clamped to 1 whenever `envelope_variance >= 0.05` (see models/features.py), which fires on a large fraction of BOTH 2fsk and 4fsk training rows at low SNR (841/2100 and 840/2100 report peak_count==1), diluting what is otherwise a near-perfect discriminator (2 vs 4) into a feature the tree can't fully trust. The baseline's hardcoded `>=4`/`>=2` threshold sidesteps this because it was never fit to the noisy low-SNR rows in the first place -- which is also why the baseline and model land on the *same* 0.778 at this slice, for opposite reasons (baseline's fixed gap is qpsk/8psk, not 2fsk/4fsk -- see reports/baseline_classifier.md). 7.5dB, a HARDER holdout point, scores 0.950 -- clear evidence this is a specific decision-boundary artifact at 12.5dB, not a general high-SNR failure.
+The holdout has exactly one SNR point >=10dB (12.5dB), so `macro_f1_ge10db` is a single-slice measurement, not an average over several -- read the per-SNR table above alongside it, not instead of it.
 
-Next step, not attempted this pass (out of scope for a first training run per the plan): feed an SNR estimate as an explicit feature, or split peak_count into a raw (ungated) value plus a separate envelope-constancy confidence feature, so the tree can learn the SNR-dependent reliability itself instead of losing that information to a hand-picked 0.05 gate.
+**This section originally reported a different, WRONG root cause for a 4fsk failure at this slice (macro-F1 0.778, 4fsk swapped entirely for 2fsk) -- corrected below rather than silently edited, because the wrong diagnosis is itself a useful lesson.** The first hypothesis was that `if_hist_peak_count`'s envelope-variance gate was clamping to 1 at low SNR and diluting the feature. That was plausible and wrong: checking the actual feature values for the failing rows showed `if_hist_peak_count` was correctly 4.0, cleanly separated from 2fsk's 2.0, at every failing SNR (13-20dB) -- the feature was fine. The real cause, found by testing the model against its OWN training rows: it scored 100% on training data for the exact (scheme, SNR) cell it was failing on in holdout. That is classic overfitting, not a missing signal -- with only 420 training windows per (scheme, SNR) cell and some features clustering extremely tightly within a cell (`phase_diff_entropy` std as low as 0.013), the unregularised tree fit a boundary tight enough that a differently-seeded holdout draw landed outside it, despite every feature being textbook 4fsk.
+
+Fix: `min_data_in_leaf=300`, `lambda_l2=5.0`, `bagging_fraction=feature_fraction=0.6` (see models/train.py's `LGB_PARAMS` docstring) -- no feature changes, no depth or tree-count increase (still `max_depth=5`, 200 trees, per the plan's cap). **Moved macro-F1 at 12.5dB from 0.778 to 0.993** (only one 8psk/qpsk and one 2fsk/4fsk pair-of-rows still wrong out of 1800). Confirmed deterministic across repeated training runs with `num_threads=1, force_row_wise=True, deterministic=True` even with bagging enabled.

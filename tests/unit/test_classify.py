@@ -72,21 +72,38 @@ def test_classify_hypotheses_sum_close_to_one():
     assert 0.0 <= out["hypotheses"][0][1] <= 1.0
 
 
-def test_classify_fsk_known_gap():
-    """Measured, documented in reports/s2_coverage.md: 4fsk is correct at
-    exactly 10dB and wrong above it (13-20dB) on live S2 -- the same
-    decision-boundary artifact reports/classifier_eval.md traces for the
-    holdout set. Pinned here so it can't silently regress (or silently
-    get fixed) without this test forcing an update."""
+def test_classify_4fsk_fixed_at_10_to_15db():
+    """Regression guard for the overfitting fix in models/train.py's
+    LGB_PARAMS: 4fsk at 10-15dB used to be wrong everywhere except
+    exactly 10dB (the original, since-corrected diagnosis in
+    reports/classifier_eval.md). Now solid 10-15dB after regularisation
+    -- if this starts failing, the fix regressed."""
     _require_model()
-    f = _corpus_file("4fsk_15dB_*.wav")
-    truth = json.loads(f.with_suffix(".json").read_text())
+    for snr in ["10dB", "13dB", "15dB"]:
+        f = _corpus_file(f"4fsk_{snr}_*.wav")
+        r = ingest(f)
+        result = estimate(r.iq, r.fs)
+        assert result.modulation_hypotheses[0][0] == "4fsk", f"{f.name} regressed"
+
+
+def test_classify_4fsk_residual_gap_at_20db():
+    """Measured, documented in reports/s2_coverage.md: even after the
+    overfitting fix, 4fsk at 20dB is still wrong on most files (a
+    DIFFERENT, smaller residual than the original 10-20dB failure --
+    this slice was never covered by the holdout evaluation). Unlike the
+    original bug, this is no longer a *confident* wrong answer: 4fsk
+    stays a top-2 hypothesis, which is what this test actually pins --
+    not the top-1 miss itself, since that's closer to a coin flip and
+    not worth pinning file-by-file."""
+    _require_model()
+    f = _corpus_file("4fsk_20dB_*.wav")
     r = ingest(f)
     result = estimate(r.iq, r.fs)
-    assert result.modulation_hypotheses[0][0] != "4fsk", (
-        "if this now passes, the known gap is fixed -- update "
-        "reports/s2_coverage.md and reports/classifier_eval.md rather "
-        "than just deleting this assertion"
+    top2 = {c for c, _p in result.modulation_hypotheses[:2]}
+    assert "4fsk" in top2, (
+        "4fsk dropped out of the top-2 entirely at 20dB -- that's worse "
+        "than the documented residual gap, investigate rather than just "
+        "updating this assertion"
     )
 
 
