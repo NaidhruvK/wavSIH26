@@ -173,6 +173,51 @@ meaningless). Target: macro-F1 ≥80% at ≥10dB. Also: take over the eval
 harness from Naidhruv, which doesn't exist yet — blocked until his
 `contracts/`/`service/` land or I build a minimal stand-in myself.
 
+**Landed 4 Sep, part 8.** `models/train.py` + `models/build_holdout.py` —
+the 3 Sep column: first LightGBM run, held-out-SNR evaluation, confusion
+matrices. Full report: `reports/classifier_eval.md`.
+
+- `models/build_holdout.py` — 7,200 windows at SNR {-3, 2.5, 7.5, 12.5}dB,
+  asserted at import time to share zero values with the training grid
+  {0,5,10,15,20} — the plan's stated failure mode (validating on the
+  training grid) is structurally impossible here, not just avoided by
+  discipline.
+- **Real bug found and fixed: LightGBM wasn't deterministic run-to-run**
+  despite a fixed seed. Same config, same data, different predictions on
+  repeated `lgb.train()` calls — caught by actually re-training twice and
+  diffing predictions, not by trusting `seed=`. Needs `num_threads=1` +
+  `force_row_wise=True` alongside `deterministic=True`; confirmed
+  byte-identical predictions across 3 repeated runs after the fix. Pinned
+  by `tests/unit/test_train.py::test_train_is_deterministic`.
+- **Result: macro-F1 = 0.778 at the one holdout SNR ≥10dB (12.5dB)** —
+  just under the plan's 0.80 Minimum-tier target, and NOT a general
+  high-SNR failure: 7.5dB (a harder, lower-SNR holdout point) scores
+  **0.950**. Root cause traced, not guessed (full writeup in the
+  report's "Reading the 10dB+ number" section): the model swaps 4fsk
+  for 2fsk entirely at 12.5dB, because `if_hist_peak_count`'s
+  envelope-variance gate (added Monday, this session) clamps to 1 for
+  ~40% of both FSK classes' *training* rows at low SNR, diluting what
+  is otherwise a clean 2-vs-4 discriminator. The baseline dodges this
+  same slice by coincidence — it lands on the identical 0.778 at 12.5dB,
+  but for the opposite reason (its gap is qpsk/8psk, not 2fsk/4fsk).
+  **Model still clearly beats baseline overall: 0.693 vs 0.383 macro-F1
+  across the full holdout.**
+- Suggested next step, not attempted (out of scope for a first run):
+  feed SNR as an explicit feature, or split peak_count into a raw value
+  plus a separate confidence flag instead of collapsing both into one
+  gated number.
+- 5 new tests (`tests/unit/test_train.py`), all passing.
+
+**Still blocked:** the eval harness handover. `eval/` doesn't exist —
+Naidhruv's `contracts/`/`service/`/`registry/` (real, not the strawman)
+are prerequisites for a *pipeline* eval harness, and still show
+"(not started here)" in his section below. What's built today
+(`models/train.py`'s own report) covers the *classifier's* evaluation
+need for the 3 Sep gate, but not the broader per-scheme coverage matrix
+the full eval harness is supposed to produce across all seven stages.
+Flagging again for standup — this is now the second stream (S2/S3
+already noted it) waiting on the same missing piece.
+
 ---
 
 ## Anvith — S3 receiver chain
