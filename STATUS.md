@@ -6,14 +6,36 @@ One section each. Edit only under your own heading.
 
 ## Dheeraj — zoo · S0–S2 · classifier
 
-_(not started here)_
+**Landed 4 Sep.** `zoo/` bits-only mode, merged to `main`.
 
-**What Nehal needs from you, and by when:** see `docs/zoo-bits-only-contract.md`.
-Short version: the bits-only mode, with per-file truth JSON and a configurable
-*seeded* injected BER. I have been running against a local stand-in
-(`tests/fixtures/local_zoo.py`) all evening; the moment yours lands I delete
-mine and re-run the gate against the real corpus. Two sources of ground truth
-must not coexist.
+- `zoo/bits_only.py` — conv-encode → block-interleave → scramble → inject,
+  per docs/zoo-bits-only-contract.md. Seeded, reproducible.
+- `zoo/build_corpus.py` — generates 73 files: 6 depth×width factorisations
+  (including two same-period pairs, 8×12 and 16×6), 6-point BER sweep,
+  scramble on/off, plus one uncoded-random file for the false-positive case.
+- Truth JSON per file matches the contract schema exactly (poly_notation,
+  error_model, pipeline_order all explicit).
+
+**Nehal: tests/fixtures/local_zoo.py can now be deleted — point tests at
+zoo/corpus/bits_only/ instead.**
+
+**Next:** S0/S1/S2 real pipeline stages + RF/IQ zoo mode (still fixture-only
+via Anvith's rf_channel.py). Starting today.
+
+**Landed 4 Sep, part 2.** `zoo/` RF/IQ mode, merged to `main`.
+
+- `zoo/rf.py` — bits → modulated waveform → channel → WAV, reusing S3's own
+  bitmap/filters/schemes so signals match what S3 has already been validated
+  against.
+- `zoo/build_rf_corpus.py` — 36 WAV files: 6 modulations (bpsk, qpsk, 8psk,
+  16qam, 2fsk, 4fsk) × 6 SNR points (4–20 dB). 2-channel WAV + truth JSON
+  per file.
+
+**Anvith: tests/fixtures/rf_channel.py can now be deleted — point S3 tests
+at zoo/corpus/rf/ instead.**
+
+**Next:** S0 ingest (WAV/IQ read) so downstream stages can consume the
+corpus as files, not just in-memory arrays.
 
 ---
 
