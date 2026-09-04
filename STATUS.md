@@ -887,6 +887,110 @@ good as its inputs, and uniform random is the easy case. The gate says "uncoded
 random data must NOT produce a false code detection" and we were passing it while
 claiming codes in all-ones.
 
+---
+
+**4 Sep, later still: Dheeraj's zoo landed and I ran every gate against it.**
+Full write-up in `reports/zoo_gate.md`. Nothing below reads
+`tests/fixtures/local_zoo.py`.
+
+**First, is the zoo itself right?** Contract compliance I can read off the JSON,
+but a corpus that merely labels itself is not ground truth. So for every clean
+file I de-interleaved at the STATED offset with the STATED depth x width and
+multiplied by the parity check of the STATED generators: **residual 0.000000 on
+every one.** The data matches its own labels independently of anything my code
+believes. Lengths 159 845-160 000 (contract: >=150 000), all fields present,
+both same-period factorisations (8x12 and 16x6) there, uncoded file present,
+start offsets deliberately off-boundary. **Dheeraj - this is a clean delivery.**
+
+**Bits-only, 73 files.** Clean unscrambled: period 6/6, depth x width 6/6,
+generators 6/6. BER 0.001-0.02: 0/30. Scrambled: 0/36, all declined or
+downgraded. Uncoded random: declined. **Confidently wrong answers: 0.**
+
+6 of 73 recover, and that is the published envelope meeting a corpus built
+deliberately outside it - 36 files scrambled, 30 noisy, both documented open
+problems. **But it means the 4 Sep gate ("at least 40% of the corpus decodes")
+is unreachable against a corpus composed this way**, not because recovery is
+weak but because 92% of the files are outside the declared envelope. Someone
+has to decide whether the corpus gets weighted toward the envelope or the gate
+gets stated against the in-envelope subset. That is a standup decision, not
+something to reinterpret quietly on the day.
+
+**RF corpus, 36 WAVs, 6 modulations x 6 SNRs.** Dheeraj's modulator -> Anvith's
+S3 -> my S4, three different authors, which is the first time this chain has
+been measured without my own fixture on the transmit side:
+
+| | bpsk | 2fsk | 4fsk | qpsk | 8psk | 16qam |
+|---|---|---|---|---|---|---|
+| full recovery | **6/6** | 5/6 | 5/6 | 5/6 | 3/6 | 2/6 |
+
+**26 of 36, all six modulations, zero confidently wrong.** 6/6 at 15 and 20 dB,
+5/6 at 13, 4/6 at 10 and 8, 1/6 at 4 dB. Two honesty notes: it is PARAMETER
+recovery, not exact-bit decode, so do not quote it against the scorecard's
+"end-to-end exact-bit" row; and the corpus sets cfo=0, phase=0, timing=0, so
+these files are EASIER than my own fixture.
+
+**Where the cliff actually is - measured, with the zoo's own generator.** The
+corpus BER grid is 0.0 then 0.001, so every file is either perfect or hopeless
+and the grid cannot see our own edge:
+
+| injected BER | period | depth x width | generators |
+|---|---|---|---|
+| 0 | 3/3 | 3/3 | 3/3 |
+| **2e-5** | 3/3 | **0/3** | **0/3** |
+| 2e-3 | 3/3 | 0/3 | 0/3 |
+| 5e-3 | 0/3 | 0/3 | 0/3 |
+
+Two limits three orders of magnitude apart. Period detection survives to ~2e-3,
+**which confirms the 0.30 % ceiling in `ber_ceiling.md` against real data**.
+Factorisation and generators die at the FIRST bit error - about three flipped
+bits in 160 000.
+
+**Dheeraj, the one request:** BER points at 2e-5, 5e-5, 1e-4, 2e-4, 5e-4. The
+entire operating envelope lives between your 0.0 and your 0.001 and no corpus
+file lands in it.
+
+**S3 ALREADY KNOWS WHETHER S4 WILL SUCCEED, and this is Anvith's number.**
+Sorting all 36 RF files by S3's own `estimated_output_ber` separates the
+outcomes completely - every recovery <= 1.5e-6, every failure >= 7.5e-5, a
+fifty-fold gap with nothing in between. **EVM does not separate them at all**
+(BPSK at 33 % EVM recovers; 16-QAM at 11.7 % fails). So the orchestrator can
+decide, for free and BEFORE paying up to 32 s for the S4 search, whether the
+search can succeed - and the stage card can say "this capture demodulates at
+3e-4, recovery needs better than about 1e-5" instead of declining silently.
+**Anvith: nothing to fix, S3 locked 6/6 on every file. Please keep
+`estimated_output_ber` as a first-class output rather than a diagnostic.**
+
+**The rotation search was burning 70 s to learn nothing.** 8-PSK files were
+taking 63-72 s against a 90 s WHOLE-analysis budget. The cost was not recovery:
+S3 offers one LLR array per unresolvable phase rotation (2 for BPSK, 4 QPSK,
+8 for 8-PSK) and `blind_recover` ran on each WITH the statistical fallback,
+which spends 8 s proving a negative - on rotations that are wrong by
+construction. Every status was identical without it, on all 36 files.
+`pipeline/s4_recover/rotations.py` now screens cheaply and pays only when
+screening found nothing, under a 25 s bound:
+
+| | before | after |
+|---|---|---|
+| worst single file | 72.1 s | **32.3 s** |
+| whole corpus | 746 s | **258 s** |
+| recovery | 26/36 | **26/36** |
+
+**Naidhruv:** that is a callable entry point, `recover_over_rotations()`, so the
+orchestrator does not have to rediscover either the shortest-span rule or the
+screening rule. It returns which rotation won and whether the budget ran out.
+
+**I did NOT delete `tests/fixtures/local_zoo.py`, against my own instruction.**
+Doing it today would delete coverage rather than duplication: `zoo/bits_only.py`
+has no `payload_text` (every 3-4 Sep finding depends on structured payloads), no
+`mean_burst` (bursts move the ceiling ~16x), and only block interleavers (so the
+1 Sep diagonal gate cannot run against it). The rule behind the instruction -
+two sources of truth must not coexist - is met a better way: the GATES now run
+on the real corpus, `local_zoo` is demoted to a parametric generator for cases
+the corpus cannot express, and the two were checked against each other and
+agree. Delete it the day those three knobs exist in `zoo/`.
+
+**423 passed, 4 skipped.**
+
 **Blocked on:** nothing.
 
 ---

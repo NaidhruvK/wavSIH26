@@ -249,10 +249,15 @@ a status) and `test_early_exit_agrees_with_the_full_sweep_on_what_matters`.
   `test_s3_s4_s5_chain.py` drives modulate -> channel -> S3 -> S4 -> S5 ->
   source bits and asserts exactness, which is what actually settles the LLR
   sign convention. Nothing has touched S0-S2 or the service.
-- **Everything is measured against `tests/fixtures/local_zoo.py`,** a temporary
-  stand-in for Dheeraj's zoo. **Delete it the moment the real zoo lands** and
-  re-run the gates against the real corpus. Two sources of ground truth must
-  not coexist.
+- **The gates now run against Dheeraj's real zoo** (`reports/zoo_gate.md`,
+  4 Sep). The corpus was verified structurally rather than trusted: every clean
+  file, de-interleaved at its stated offset with its stated parameters, is
+  annihilated exactly by the parity check of its stated generators.
+  `tests/fixtures/local_zoo.py` is **deliberately NOT deleted** - see the note
+  in section 6 - because `zoo/bits_only.py` has no `payload_text`, no
+  `mean_burst` and only block interleavers, so removing it would delete
+  coverage rather than duplication. It is demoted from ground truth to a
+  parametric generator; the gates are the corpus's job now.
 - **An interleaved stream carrying a SHORT REPEATING payload is refused, not
   recovered**, and the reason is measured rather than assumed. Two things
   defeat it. Its own periodicity collapses before the interleaver's (an
@@ -367,6 +372,24 @@ not help the direct path until `min_span` existed. The discriminator that
 finally worked is structural rather than a threshold: **a real code has a
 ONE-dimensional null space at its own span**, and the ASCII artefacts have 4, 7
 and 19. `parity_check_at_span` returns None for anything else.
+
+**SCREEN ROTATIONS CHEAPLY BEFORE PAYING FOR ANY OF THEM.** S3 emits one LLR
+array per unresolvable phase rotation - 2 for BPSK, 4 for QPSK, 8 for 8-PSK -
+and all but one are wrong BY CONSTRUCTION. Running `blind_recover` on each with
+the statistical fallback enabled spends 8 s proving a negative per rotation,
+which is the most expensive path on the least promising inputs: 8-PSK files
+were taking 70 s against a 90 s WHOLE-analysis budget. Screening with the
+fallback off and re-running only when screening found nothing took the worst
+file from 72.1 s to 32.3 s and the corpus from 746 s to 258 s **with every
+status unchanged on all 36 files**. Use
+`pipeline/s4_recover/rotations.recover_over_rotations()`; do not hand-roll the
+loop again.
+
+**S3'S `estimated_output_ber` PREDICTS WHETHER S4 CAN SUCCEED.** Measured over
+the 36-file RF corpus: every recovery had <= 1.5e-6, every failure >= 7.5e-5, a
+fifty-fold gap with nothing between. EVM does NOT separate them. Check it before
+paying for the search, and say so on the stage card rather than declining
+silently. 36 files on one channel model - a strong correlation, not a law.
 
 **A RATE-1/n CODE IS FULL RANK AT NON-MULTIPLES OF n, AND THAT IS A TEST.**
 Stated in this module's docstring since 29 August - "deficiency = L/2 - 6 at
