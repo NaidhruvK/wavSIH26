@@ -60,12 +60,12 @@ def make_window(scheme: str, snr_db: float, seed: int, rng: np.random.Generator
 
 
 def build(n_per_class_per_snr: int = 420, seed_base: int = SEED_BASE,
-          out_csv: Path = OUT_CSV) -> Path:
+          out_csv: Path = OUT_CSV, snrs_db: list | None = None) -> Path:
     t0 = time.time()
     rows = []
     seed = seed_base
     for scheme in SCHEMES:
-        for snr_db in TRAIN_SNRS_DB:
+        for snr_db in (snrs_db if snrs_db is not None else TRAIN_SNRS_DB):
             rng = np.random.default_rng(seed)
             for _ in range(n_per_class_per_snr):
                 seed += 1
