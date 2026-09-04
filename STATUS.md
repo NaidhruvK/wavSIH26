@@ -787,11 +787,28 @@ breaks.
 payload was read in inverted polarity, because blind, we cannot tell 0 deg from
 180 without a sync marker. That marker is 7 Sep framing work.
 
-**Next (5 Sep):** concatenated CCSDS chain. Before it, the RS runtime: RS
-`blind_recover` searches 255 alignments x 3 profiles, RS-decoding 24 blocks each,
-and the caller requires *every* block to decode - so it can abandon an alignment
-on the first failure instead of after 24. That is ~12 min of the suite and it
-does not fit the 90 s budget either. Not started.
+**Also 4 Sep: the RS runtime, which was blocking the 6 Sep gate. Fixed.**
+`blind_recover` searched 255 alignments x 3 profiles, RS-decoding 24 blocks each,
+but it accepts an alignment only at decoded fraction 1.0 - so one failed block
+already settles it and the other 23 decodes only make the answer more precisely
+negative. A wrong alignment fails on block one essentially always.
+
+| | before | after |
+|---|---|---|
+| `blind_recover`, worst case (random data) | ~113 s | **1.8 s** |
+| `blind_recover`, true RS stream | - | **3.7 s** |
+| the RS false-positive test | 112.9 s | **5.2 s** |
+| RS exact on 20 streams | 209.9 s | **52.3 s** |
+
+Behaviour-preserving: the accepting path never takes the early exit, so the
+errata rate that ranks profiles is still measured over every block, and a test
+asserts both paths agree on frac == 1.0 for every alignment. Pinned with a wall
+clock rather than a status, the way Anvith pinned his S3 tap cap.
+
+**Next (5 Sep):** concatenated CCSDS chain - RS outer, interleaver,
+convolutional inner, scrambler, recovered in sequence. Blocked on nothing; the
+scrambled-stream composite is guarded and labelled rather than announced, and
+1 Sep established that scrambling does not hide the code from rank collapse.
 
 **Blocked on:** nothing.
 

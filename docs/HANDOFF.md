@@ -187,20 +187,27 @@ symptom; all three are fixed and all three are in section 6.
 
 **Test suite:** 336 unit + 53 contract, 23 min for both.
 
-**That runtime is a problem and it is new.** RS `blind_recover` searches up
-to 255 byte alignments x 3 profiles, RS-decoding 24 blocks each, and that
-alone is ~12 min of the suite. It needs a cheap pre-filter on alignment
-before the 6 Sep clean-rebuild gate, or it will not fit the 90 s
-per-analysis budget either. Logged, not fixed.
+**That runtime was a problem and it is FIXED (4 Sep).** RS `blind_recover`
+searched up to 255 byte alignments x 3 profiles, RS-decoding 24 blocks each,
+which was ~12 min of the suite and would not have fitted the 90 s
+per-analysis budget either.
 
-**The fix is identified and small.** `blind_recover` rejects any alignment
-whose decoded fraction is below 1.0, so `_try_profile` can abandon an
-alignment on its FIRST failing block instead of grinding through all 24. A
-wrong alignment fails on block one essentially always, so that is close to a
-24x cut on the dominant cost. `_try_profile`'s docstring argues for measuring
-the full fraction, and it is right about RANKING across profiles — but the
-caller only ever compares against 1.0, so early exit is behaviour-preserving
-for the one consumer. Do this before 6 Sep.
+`blind_recover` accepts an alignment only at decoded fraction 1.0, so
+`_try_profile` now abandons an alignment on its FIRST failing block instead
+of grinding through all 24 — a wrong alignment fails on block one essentially
+always. Behaviour-preserving for the one caller, and the accepting path never
+takes the exit, so the errata rate that ranks profiles is still measured over
+every block.
+
+| | before | after |
+|---|---|---|
+| `blind_recover`, true RS stream | — | **3.7 s** |
+| `blind_recover`, random data (worst case) | ~113 s | **1.8 s** |
+| `test_random_data_is_not_claimed_as_reed_solomon` | 112.9 s | **5.2 s** |
+| `test_rs_exact_on_twenty_streams` | 209.9 s | **52.3 s** |
+
+Pinned by `test_blind_recover_declines_random_data_quickly` (a wall clock, not
+a status) and `test_early_exit_agrees_with_the_full_sweep_on_what_matters`.
 
 ## 5. What is NOT done
 
