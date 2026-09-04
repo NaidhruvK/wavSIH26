@@ -48,6 +48,7 @@ __all__ = [
     "recover_code_structure",
     "recover_generators",
     "parity_check_at_span",
+    "code_signature_holds",
     "blind_recover",
     "taps_to_poly",
     "max_searchable_period",
@@ -139,9 +140,15 @@ class RecoveryResult:
             return "no code structure detected - " + self.reason
         parts = ["period=%d" % self.period, "offset=%d" % self.offset]
         if self.interleaver:
+            # Param-agnostic on purpose. This read p["depth"] and p["width"],
+            # which every family EXCEPT convolutional has - so a convolutional
+            # hypothesis raised KeyError here, in the one method whose
+            # docstring promises it never raises. Found 4 Sep by an adversarial
+            # input, not by a test, because no test had ever printed one.
             p = self.interleaver.params
-            parts.append("interleaver=%s(depth=%d,width=%d)"
-                         % (self.interleaver.family, p["depth"], p["width"]))
+            parts.append("interleaver=%s(%s)"
+                         % (self.interleaver.family,
+                            ",".join("%s=%s" % kv for kv in sorted(p.items()))))
         else:
             parts.append("interleaver=none")
         if self.code and self.code.n:
@@ -430,6 +437,38 @@ def parity_check_at_span(bits: np.ndarray, span: int | None, offset: int = 0):
     return np.asarray(ns[0], dtype=np.uint8)
 
 
+def code_signature_holds(bits: np.ndarray, n: int | None, span: int | None) -> bool:
+    """Does this stream carry a rate-1/n code, or is it just degenerate?
+
+    A rate-1/n convolutional code constrains its stream ONLY at row lengths
+    that are multiples of n. Everything else is full rank. This module's own
+    docstring has said so since 29 August -
+
+        raw coded   deficiency = L/2 - 6 at even L >= 14, zero at odd L
+
+    - and nothing ever checked it. A degenerate or merely patterned stream is
+    deficient EVERYWHERE, at odd lengths as much as even, and it sails through
+    a residual test because a stream of constant or near-constant bits is
+    annihilated by almost any check. Measured 4 Sep, all claimed `ok`:
+
+        all ones            deficient at L = 3, 5, 7, 9 ...
+        alternating 0101    deficient at L = 3, 5, 7, 9 ...
+        period-8 pattern    deficient at L = 7, 9, 11, 13 ...
+        a real K=7 code     NOTHING at any odd L
+
+    Only lengths BELOW the span are checked, and that bound is not cosmetic.
+    A structured SOURCE also adds deficiency at odd lengths, but it does so at
+    and above its own period, which is far longer than the code's span - a
+    2-character payload puts its first odd collapse at L=31 against a span of
+    14. Checking the whole profile would reject exactly the streams the
+    candidate walk was built to recover. Below the span, only the code speaks.
+    """
+    if not n or n < 2 or not span or span <= n:
+        return True                     # nothing to check against
+    prof = rank_profile(bits, 2, span - 1)
+    return all(d == 0 for L, d in prof.deficiency.items() if L % n)
+
+
 def _residual_syndrome(stream: np.ndarray, taps, stride: int) -> float:
     """Fraction of stride-aligned windows the check FAILS to annihilate.
 
@@ -532,6 +571,17 @@ def recover_interleaver(bits: np.ndarray, first: int, step: int, offset: int = 0
             code = recover_code_structure(de)
             if not (code.n and code.memory is not None and code.consistent):
                 continue
+            # The memory floor and the structural signature, which this path
+            # never had. `_finalise` treats "an interleaver was identified" as
+            # sufficient evidence, so a hypothesis validated against a memory-0
+            # "code" walked straight through the exit guard. All-ones
+            # de-interleaves to all-ones, reads as n=2 span=2 memory=0, is
+            # annihilated by any even-weight check, and was reported as
+            # `ok, block(...)` at 0.70.
+            if code.memory < MIN_CODE_MEMORY:
+                continue
+            if not code_signature_holds(de, code.n, code.span):
+                continue
 
             # Consistency alone is not enough to RANK. Once the check became
             # one-sided to admit structured payloads, several wrong
@@ -562,6 +612,16 @@ def recover_interleaver(bits: np.ndarray, first: int, step: int, offset: int = 0
 STAT_FALLBACK_MAX_SPAN = 24    # bounded: this path only runs when exact failed
 STAT_FALLBACK_BUDGET_S = 8.0   # wall clock, per risk #5
 
+# The statistical method's own measured ceiling is 3.0% BER
+# (reports/ber_ceiling.md). An "recovery" implying an error rate far outside
+# that is not describing a code seen through noise, it is describing something
+# else - and on 4 Sep that something else was a BIASED SOURCE. A stream of
+# i.i.d. bits with P(1)=0.7 makes EVERY parity check biased, so the syndrome
+# test fires on the source's own skew and reports it back as the channel:
+# "rate 1/1 K=4, inferred BER 0.3015", which is 1 - 0.7 to three decimals.
+# The bound is 3x the measured ceiling, so it cannot touch a real recovery.
+STAT_FALLBACK_MAX_IMPLIED_BER = 0.10
+
 
 def _statistical_code_attempt(bits: np.ndarray, max_span: int = STAT_FALLBACK_MAX_SPAN):
     """Try the statistical parity-check search when the exact test found nothing.
@@ -585,6 +645,18 @@ def _statistical_code_attempt(bits: np.ndarray, max_span: int = STAT_FALLBACK_MA
     val = stat.validation
     n, span = val.stride, val.span
     if n <= 0 or span % n:
+        return None
+
+    # A rate-1/1 "code" carries no redundancy, so there is no parity to have
+    # recovered and nothing the claim could mean. The stride search starts at
+    # 1 because scanning at stride 1 is how the phase is found, but 1 is not
+    # an answer.
+    if n < 2:
+        return None
+
+    # Outside the method's own operating range, the bias being measured is not
+    # a code seen through noise. See the constant above.
+    if val.implied_ber is not None and val.implied_ber > STAT_FALLBACK_MAX_IMPLIED_BER:
         return None
 
     memory = span // n - 1
@@ -710,7 +782,9 @@ def _attempt_candidate(bits: np.ndarray, first: int, step: int,
         # K=2" on nothing but repeating ASCII. Their null spaces at the
         # claimed span have 4 and 7 dimensions; a code's has exactly one.
         taps = parity_check_at_span(bits, code_direct.span)
-        if taps is not None and _residual_syndrome(bits, taps, code_direct.n) == 0.0:
+        if (taps is not None
+                and _residual_syndrome(bits, taps, code_direct.n) == 0.0
+                and code_signature_holds(bits, code_direct.n, code_direct.span)):
             gens = _unpack_generators(taps, code_direct)
 
             # A scrambled stream yields the code-XOR-scrambler COMPOSITE, and

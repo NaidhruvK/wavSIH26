@@ -739,9 +739,29 @@ Whole chain per file, median 24 s, max 50 s - inside the 90 s budget.
 **Blind in, message out, through the real receiver - for the first time.**
 Yesterday's file said the readable-text demo "has never run through the real
 receiver". It has now: real modulator, real channel, blind S3, blind S4, Viterbi,
-text. Nothing about the file was supplied - not the modulation, symbol rate,
-interleaver, code, generators, or polarity. **This is the sentence to use in the
-demo, and it is now true of a received signal rather than a zoo file.**
+readable text.
+
+**I first wrote that as "nothing about the file was supplied". That was an
+overclaim and I am correcting it here.** The study calls
+`MODULATIONS["qpsk"].receive(iq, {"fs": ..., "symbol_rate": ...})`, so the
+modulation family and the symbol rate ARE supplied. Both are S2's job and S2
+does not exist yet. What is genuinely blind: RRC roll-off, carrier phase and
+CFO, symbol timing, the rotation ambiguity, the interleaver family, period and
+depth x width, the block alignment, the code rate, the constraint length, both
+generator polynomials, and the payload polarity.
+
+**The honest sentence for the demo is "everything from the matched filter
+onward is blind"** - not "nothing was supplied". When Dheeraj's S2 lands, this
+study must stop taking `fs` and `symbol_rate` from the ChannelSpec and take
+them from S2, and every number here must be re-measured.
+
+**And nothing here is evidence about REAL signals.** `rf_channel.py` is a
+channel we wrote: RRC, AWGN, one constant CFO, one fixed timing offset. No
+multipath, no interference, no AGC transient, no phase noise, no fading. No
+off-air capture has ever been through this pipeline. That is risk #8, and the
+plan's answer is the 21 Sep - 20 Oct window (RTL-SDR, SatNOGS, gr-satellites as
+an independent oracle). Anyone presenting this must not let "real receiver" be
+heard as "real signal".
 
 **Four paths could report `ok` on a structured source. All four are closed**, and
 the guards now meet at one exit (`_finalise`) instead of living in whichever
@@ -809,6 +829,63 @@ clock rather than a status, the way Anvith pinned his S3 tap cap.
 convolutional inner, scrambler, recovered in sequence. Blocked on nothing; the
 scrambled-stream composite is guarded and labelled rather than announced, and
 1 Sep established that scrambling does not hide the code from rank collapse.
+
+**4 Sep, later: I ran the 8 Sep adversarial gate early, and it was failing.**
+
+The existing false-positive tests all used UNIFORM random data, which is the one
+input a rank test finds easy. Nobody had tested DEGENERATE or merely PATTERNED
+streams. Twelve adversarial inputs, none of them convolutionally coded - six came
+back `status=ok`:
+
+| input | claimed, at 0.63-0.70 confidence |
+|---|---|
+| all ones | `block(depth=...)` |
+| alternating 0101 | `G=(0o1, 0o1)` plus an interleaver |
+| period-8 pattern | `block(depth=...)` |
+| uncoded ASCII, short repeat | a convolutional interleaver |
+| uncoded ASCII, interleaved | `block(depth=...)` |
+| biased 70/30 coin | `rate 1/1 K=4, inferred BER 0.3015` |
+
+**None of these was a regression** - I checked by running the identical battery
+against a worktree at yesterday's commit, and all six predate 3 September. They
+have been there the whole time.
+
+The last row is the one worth reading twice: 0.3015 is 1 - 0.7 to three
+decimals. The syndrome test was measuring the SOURCE's own bias and reporting it
+back as the channel's error rate. A biased i.i.d. stream makes every parity
+check biased.
+
+Three structural guards close all six, and **the audit now passes 12 of 12 with
+zero `ok`**:
+
+- `code_signature_holds()` - a rate-1/n code constrains its stream ONLY at
+  multiples of n and is full rank everywhere else. This module's docstring has
+  said exactly that since 29 August and nothing ever checked it. Degenerate
+  streams are deficient at odd lengths too. Only lengths BELOW the span are
+  checked, and that bound is load-bearing: a structured source adds odd-length
+  deficiency at and above its own period, so checking the whole profile would
+  reject the very streams the candidate walk exists to recover.
+- `MIN_CODE_MEMORY` on the INTERLEAVER path, which never had it. `_finalise`
+  treats "an interleaver was identified" as sufficient evidence, so a hypothesis
+  backed by a memory-0 "code" walked through the exit guard untouched.
+- `n >= 2` and an implied-BER bound on the statistical path. A rate-1/1 code has
+  no redundancy to have recovered, and an implied error rate outside the
+  method's own measured 3 % ceiling is not a code seen through noise.
+
+**Also found by the same run: `summary()` raised KeyError** on a convolutional
+hypothesis - it formatted `p["depth"]` and `p["width"]`, which every family has
+except convolutional. That is the one method whose docstring promises it never
+raises, and it is called from the UI on every result including the failures it
+exists to explain. No test caught it because no test had ever printed one.
+
+All of it is now `tests/unit/test_adversarial_s4.py`, 29 tests, ~98 s. **416
+passed, 4 skipped** across unit + contract, and the end-to-end study is unchanged
+at 30/36 and 15/18 - the guards cost nothing on the working path.
+
+**Naidhruv / everyone - the general lesson:** a false-positive test is only as
+good as its inputs, and uniform random is the easy case. The gate says "uncoded
+random data must NOT produce a false code detection" and we were passing it while
+claiming codes in all-ones.
 
 **Blocked on:** nothing.
 

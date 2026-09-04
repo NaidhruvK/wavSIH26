@@ -71,8 +71,44 @@ plied. RAAYA SIH26147 -- this message went through a modulator, a noisy
 channel and a blind receiver. Nothing about the interleaver or the code...
 ```
 
-Nothing about that file was supplied: not the modulation, not the symbol rate,
-not the interleaver, not the code, not the generators, not the polarity.
+### Exactly what was blind, and what was not
+
+An earlier draft of this section said "nothing about that file was supplied".
+**That was an overclaim and it is corrected here.** `run_one` calls
+`MODULATIONS["qpsk"].receive(iq, {"fs": ..., "symbol_rate": ...})`, so:
+
+| Supplied to the receiver | Recovered blind |
+|---|---|
+| the modulation family (`qpsk`, chosen by name) | RRC roll-off beta |
+| the sample rate | carrier phase and CFO |
+| the symbol rate | symbol timing offset |
+| | the phase-rotation ambiguity |
+| | interleaver family, period and depth x width |
+| | the block alignment |
+| | code rate, constraint length, both generator polynomials |
+| | payload polarity |
+
+The two supplied values are S2's job, and **S2 does not exist yet** - Dheeraj
+has no commits. The classifier that picks the modulation and the symbol-rate
+estimator that feeds `sps` are both his 1-2 Sep column. So the correct claim
+today is: *everything from the matched filter onward is blind.* When S2 lands,
+this study should stop passing `fs` and `symbol_rate` from the ChannelSpec and
+take them from S2's output instead, and these numbers must be re-measured.
+Until that happens, quoting this as a fully blind chain is wrong.
+
+### And what this is NOT
+
+**No off-air signal has ever been through this pipeline.** `rf_channel.py` is a
+synthetic channel: RRC pulse shaping, AWGN, a constant CFO, a fixed fractional
+timing offset. Real captures bring multipath, interference, AGC transients,
+phase noise, non-constant CFO drift and burst fading, none of which is modelled
+here. That is risk #8 in the register - over-fitting to our own zoo - and the
+plan's answer is the 21 Sep - 20 Oct window: RTL-SDR captures, SatNOGS audio
+through the .wav path, and gr-satellites as an independent oracle.
+
+Nothing in this report should be read as evidence about real signals. It is
+evidence that the algorithm chain is correct against a channel we wrote
+ourselves, which is a necessary step and not the same claim.
 
 ## Correcting yesterday
 
@@ -162,8 +198,12 @@ sits at raw BER exactly 0.00000; the step to 5e-5 takes recovery from 3/3 to
 statistical fallback cannot help because it recovers the code, not the
 interleaver's factorisation.
 
-**For the demo this is the number that governs**: the chain needs an SNR high
-enough for a bit-perfect demodulation, not merely a good one. On this channel,
-QPSK, that is 8 dB. Anyone quoting the 5% burst-error ceiling from
+**For the demo this is the number that governs, and it is the single biggest
+risk to a real-data demonstration**: the chain needs an SNR high enough for a
+bit-perfect demodulation, not merely a good one. On this channel, QPSK, that is
+8 dB. A real capture that demodulates at 1e-5 raw BER - which most would call
+an excellent link - recovers **nothing**. Risk #1 in the register is worded as
+"S4 works on injected errors, fails on real LLRs"; the measured shape of that
+risk is not a gentle degradation but a cliff at the first bit error. Anyone quoting the 5% burst-error ceiling from
 `burst_channel.md` must say in the same breath that it is the ceiling for
 recovering the CODE from an already-de-interleaved stream, not for this chain.

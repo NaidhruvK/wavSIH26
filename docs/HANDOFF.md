@@ -180,6 +180,13 @@ Median 24 s per file end to end, max 50 s. **The readable-text demo now works
 on a received signal, not only on a zoo file** — that sentence was false until
 4 Sep and the report said so plainly.
 
+**Say "everything from the matched filter onward is blind", NOT "nothing was
+supplied".** The study hands S3 the modulation family and the symbol rate,
+because both are S2's job and S2 does not exist. And `rf_channel.py` is a
+channel we wrote — AWGN, one constant CFO, one fixed timing offset, no
+multipath or fading. **No off-air signal has ever been through this pipeline**
+(risk #8). Full breakdown of blind-vs-supplied in `reports/end_to_end.md`.
+
 The 3 Sep report blamed the 0/18 on `detect_signature` taking the smallest
 collapse. **That diagnosis was wrong** — it returns the true period 96 on every
 rotation of every file in that arm. Three defects were stacked behind one
@@ -360,6 +367,27 @@ not help the direct path until `min_span` existed. The discriminator that
 finally worked is structural rather than a threshold: **a real code has a
 ONE-dimensional null space at its own span**, and the ASCII artefacts have 4, 7
 and 19. `parity_check_at_span` returns None for anything else.
+
+**A RATE-1/n CODE IS FULL RANK AT NON-MULTIPLES OF n, AND THAT IS A TEST.**
+Stated in this module's docstring since 29 August - "deficiency = L/2 - 6 at
+even L >= 14, zero at odd L" - and never enforced until 4 Sep, when an
+adversarial battery found six streams claiming `ok` with no code in them at
+all: all-ones, alternating 0101, a period-8 pattern, uncoded ASCII repeated
+short, the same interleaved, and a 70/30 biased coin. A degenerate stream is
+deficient EVERYWHERE and is annihilated by almost any check, so the residual
+test is vacuous on it. `code_signature_holds()` checks only lengths BELOW the
+span, and that bound is load-bearing: a structured source adds odd-length
+deficiency at and above its own period (a 2-character payload first collapses
+at L=31 against a span of 14), so checking the whole profile would reject
+exactly the streams the candidate walk exists to recover. See
+`tests/unit/test_adversarial_s4.py`.
+
+**A FALSE-POSITIVE TEST IS ONLY AS GOOD AS ITS INPUTS.** Every such test in
+this repo used UNIFORM random data, which is the case a rank test handles
+easily and correctly. The six false positives above were all DEGENERATE or
+PATTERNED, they all predate 3 September, and they survived a week of
+false-positive testing because nobody fed the module the easy-looking inputs
+that are actually hard. When adding a guard, add the adversarial input too.
 
 **A CLAIM MUST BE CHECKABLE, AND K IS BOUNDED ON BOTH SIDES.** `ok` requires an
 interleaver, or generators, or memory >= 2. `MIN_CODE_MEMORY = 2` is the lower
