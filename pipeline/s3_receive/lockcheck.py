@@ -55,6 +55,11 @@ INDEPENDENT checks against DIFFERENT evidence, and any one of them can veto:
                       claiming success while reporting a fifth of its output
                       wrong is contradicting itself, and two files did exactly
                       that before this was written down.
+    alphabet_used     linear only: does the cloud use the whole alphabet
+                      this hypothesis claims? The only one that can catch a
+                      constellation which CONTAINS the transmitted one -
+                      QPSK read as 16-QAM locks perfectly and decodes to
+                      noise.
     tone_alias        FSK only: the frequency twin of the rotation ambiguity.
                       An offset of one tone spacing maps the tone bank onto
                       itself and slips every symbol label by one.
@@ -83,9 +88,10 @@ from scipy.signal import medfilt
 
 __all__ = ["Check", "LockReport", "symbol_rate_line", "carrier_offset",
            "signal_presence", "carrier_alignment", "output_usable",
-           "tone_alias", "loop_check",
+           "alphabet_used", "tone_alias", "loop_check",
            "PASS", "FAIL", "UNKNOWN", "LINE_ABSENT_LIMIT",
-           "LINE_PRESENT_LIMIT", "CARRIER_OFFSET_LIMIT", "OUTPUT_BER_LIMIT"]
+           "LINE_PRESENT_LIMIT", "CARRIER_OFFSET_LIMIT", "OUTPUT_BER_LIMIT",
+           "ALPHABET_ENTROPY_LIMIT"]
 
 PASS, FAIL, UNKNOWN = "pass", "fail", "unknown"
 
@@ -167,6 +173,46 @@ MEASURED on the 36-file corpus. Files that decode estimate at most 0.0122
 0.19 and 0.36. 0.05 is 4x above the first group and 3.8x below the second, and
 it is also above the 3% raw rate Nehal measured as the ceiling for statistical
 code recovery - so it can never veto a stream S4 could have used.
+"""
+
+ALPHABET_ENTROPY_LIMIT = 0.90
+"""How evenly the received cloud must use the alphabet the hypothesis claims,
+as a normalised entropy over hard decisions. 1.0 is uniform over all M points.
+
+THE CASE THIS EXISTS FOR. QPSK's four points are a SUBSET of 16-QAM's sixteen
+and of 8-PSK's eight. Run a QPSK capture through the 16-QAM plug-in and nothing
+is wrong with the reception: every symbol lands exactly on a legal constellation
+point, so the decision-directed noise variance comes out tiny, the LLRs come out
+enormous, and the receiver reports
+
+    status ok   confidence 0.984   estimated_output_ber 1.8e-21
+    ACTUAL BER 0.482
+
+Every other check in this module asks whether the receiver locked to the
+constellation it was TOLD to assume. None of them can ask whether that was the
+right constellation, because a four-point cloud is a perfectly good 16-QAM
+reception in which twelve points happen never to be used. This check asks
+exactly that: a real 16-QAM stream uses all sixteen.
+
+MEASURED, four linear schemes x four hypotheses x 4-25 dB:
+
+    correct hypothesis                     >= 0.992  (min over 28 runs)
+    wrong hypothesis that still said `ok`  <= 0.670  (qpsk seen as 8-PSK)
+
+0.90 sits 1.10x under the worst correct reading and 1.34x over the worst wrong
+one. The statistic is bounded in [0, 1] and the mechanism is structural rather
+than statistical - an unused constellation point is unused - which is why the
+margin does not move with SNR the way an amplitude measure would.
+
+IT VETOES, IT NEVER CONFIRMS, and the 4 dB column is why. Noise scatters
+symbols across every point, so a wrong hypothesis at 4 dB reads 0.95-0.99 and
+this check goes blind. Those files are refused by the carrier and output checks
+instead - which is the whole design: independent evidence, and the one that
+cannot see says nothing.
+
+It also does not fire in the other direction. 16-QAM seen through the QPSK
+plug-in reads 1.000, because four points really are being used evenly; that
+hypothesis is refused by `carrier_locked` instead.
 """
 
 _LINE_NFFT = 1 << 18
@@ -486,6 +532,58 @@ def output_usable(estimated_ber: float,
         "lock should produce - it is describing a demodulation it cannot claim"
         % (estimated_ber, limit),
         value=float(estimated_ber), limit=limit)
+
+
+def alphabet_used(symbols: np.ndarray, constellation: np.ndarray,
+                  limit: float = ALPHABET_ENTROPY_LIMIT,
+                  min_symbols: int = 500) -> Check:
+    """Does the received cloud use the whole alphabet this hypothesis claims?
+
+    The only check here that can catch a hypothesis whose constellation
+    CONTAINS the transmitted one - see `ALPHABET_ENTROPY_LIMIT` for the
+    QPSK-read-as-16-QAM case that reports an estimated bit error rate of
+    1.8e-21 against an actual 0.48.
+
+    (The word this paragraph keeps reaching for is banned in this package
+    by `test_no_label_lookup_anywhere_in_the_stage`, which greps for it
+    case-insensitively. The grep is crude on purpose - a blindness gate
+    that needs interpretation is not a gate - so the prose bends, not the
+    test.)
+
+    Rotation-invariant, because every rotation a linear scheme is ambiguous
+    under maps its constellation onto itself; which of the S rotations reached
+    does not change which points were used.
+    """
+    y = np.asarray(symbols, dtype=np.complex128).ravel()
+    pts = np.asarray(constellation, dtype=np.complex128).ravel()
+    if y.size < min_symbols or pts.size < 2:
+        return Check("alphabet_used", UNKNOWN,
+                     "too few symbols to say how the alphabet was used")
+
+    y = y / (np.sqrt(np.mean(np.abs(y) ** 2)) or 1.0)
+    pts = pts / (np.sqrt(np.mean(np.abs(pts) ** 2)) or 1.0)
+    idx = np.argmin(np.abs(y[:, None] - pts[None, :]), axis=1)
+    p = np.bincount(idx, minlength=pts.size).astype(np.float64)
+    total = p.sum()
+    if total <= 0:
+        return Check("alphabet_used", UNKNOWN, "no symbols were assigned")
+    p = p / total
+    nz = p[p > 0]
+    entropy = float(-np.sum(nz * np.log(nz)) / np.log(pts.size))
+    used = int(np.count_nonzero(p > 0.2 / pts.size))
+
+    if entropy >= limit:
+        return Check("alphabet_used", PASS,
+                     "all %d constellation points carry traffic (evenness "
+                     "%.3f)" % (pts.size, entropy),
+                     value=entropy, limit=limit)
+    return Check(
+        "alphabet_used", FAIL,
+        "only %d of %d constellation points carry traffic (evenness %.3f, "
+        "needs %.2f) - this looks like a smaller alphabet seen through a "
+        "larger one, which demodulates cleanly and decodes to noise"
+        % (used, pts.size, entropy, limit),
+        value=entropy, limit=limit)
 
 
 def tone_alias(cfo_hz: float, tone_spacing_hz: float,

@@ -272,6 +272,13 @@ def _write_markdown(rows) -> None:
         "estimated output error rate says the output is junk. Found by "
         "`8psk_8dB_2013`, where the 2-FSK plug-in returned `ok` at a mean tone "
         "margin of 0.319 while estimating its own output BER at 0.19.",
+        "- **`alphabet_used`** (linear) - does the received cloud use the "
+        "whole constellation this hypothesis claims? The only check that can "
+        "refuse a constellation which CONTAINS the true one. QPSK's four "
+        "points are four of 16-QAM's sixteen, so a QPSK capture read as 16-QAM "
+        "locks perfectly and reports an estimated BER of 1.8e-21 against an "
+        "actual 0.482. Measured: correct hypothesis >= 0.992 evenness, "
+        "wrong-but-`ok` <= 0.670, across four schemes and 4-25 dB.",
         "- **`tone_alias`** (FSK) - the frequency twin of the rotation "
         "ambiguity. An offset of one tone spacing maps the tone bank onto "
         "itself and slips every symbol label by one: identical tones, "

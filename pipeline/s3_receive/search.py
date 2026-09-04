@@ -196,21 +196,39 @@ def params_from_s2(s2_result: Any, fs: float | None = None) -> dict[str, Any]:
     }
 
 
-def _ranked(entries: Iterable, value_index: int = 0,
-            score_index: int = -1) -> list[tuple[float, float]]:
+def _ranked(entries: Iterable, numeric: bool = True,
+            value_index: int = 0,
+            score_index: int = -1) -> list[tuple[Any, float]]:
     """(value, score) pairs out of S2's ranked tuples, longest form first.
 
     `symbol_rate_hypotheses` is [(rate, score)] and `cfo_hypotheses` is
     [(cfo, m, score)]. Reading position -1 for the score and 0 for the value
     covers both without this module having to know which is which - and
     survives S2 adding a field, which it has done once already.
+
+    `numeric=False` is for `modulation_hypotheses`, which is
+    [(class_name, probability)] - the VALUE is a string. This function used to
+    coerce every value with `float()`, so the first classifier ranking handed
+    to `receive_best` raised `ValueError: could not convert string to float:
+    'qpsk'`. Nothing in this repo produced that field yet when the code was
+    written, and it would have fired the morning Dheeraj's classifier merged.
+    A value is a value; only the score is a number.
     """
-    out: list[tuple[float, float]] = []
+    out: list[tuple[Any, float]] = []
     for e in entries or ():
         if isinstance(e, (tuple, list)) and len(e) >= 2:
-            out.append((float(e[value_index]), float(e[score_index])))
-        elif isinstance(e, (int, float)):
-            out.append((float(e), 0.0))
+            value, score = e[value_index], e[score_index]
+        elif isinstance(e, (int, float, str)):
+            value, score = e, 0.0
+        else:
+            continue
+        try:
+            score = float(score)
+            if numeric:
+                value = float(value)
+        except (TypeError, ValueError):
+            continue
+        out.append((value, score))
     return out
 
 
@@ -245,13 +263,24 @@ def _build_candidates(base: dict[str, Any],
     if not any(abs(c) < 1e-9 for c, _ in cfos):
         cfos = cfos + [(0.0, 0.0)]
 
-    mod_prior = dict(_ranked(base.get("modulation_hypotheses")) or ())
+    mod_prior = dict(_ranked(base.get("modulation_hypotheses"), numeric=False)
+                     or ())
+    # A modulation the classifier did not rank must sort BELOW every one it
+    # did, not above them. The default used to be 1.0, so a classifier saying
+    # "qpsk 0.91, 8psk 0.06, 16qam 0.03" put the three it never mentioned at
+    # the FRONT of the queue - and with `stop_on_clean_lock` on, the first of
+    # those to lock would have won. Unranked still means tried, because the
+    # classifier is allowed to be wrong and 4 Sep's cross-check is exactly
+    # "corrupt the top hypothesis and the pipeline still decodes"; it only
+    # means tried last.
+    unranked_prior = (min(mod_prior.values()) * 0.5) if mod_prior else 1.0
+
     rate_scores = _normalise([s for _, s in rates])
     cfo_scores = _normalise([s for _, s in cfos])
 
     out: list[Candidate] = []
     for name in modulations:
-        mp = float(mod_prior.get(name, 1.0)) if mod_prior else 1.0
+        mp = float(mod_prior.get(name, unranked_prior)) if mod_prior else 1.0
         for (rate, _), rs in zip(rates, rate_scores):
             if not np.isfinite(rate) or rate <= 0:
                 continue

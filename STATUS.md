@@ -214,6 +214,7 @@ returns `pass` looks like corroboration and is worse than no check at all.
 | `signal_present` | cyclostationary line at the claimed symbol rate | pure noise came back `low_confidence`, not `failed` |
 | `carrier_aligned` | spectrum still centred after the CFO hypothesis | the 19 files above |
 | `output_usable` | the receiver's **own** estimated output BER | `8psk_8dB_2013`: 2-FSK returned `ok` while estimating its own output 19 % wrong |
+| `alphabet_used` | does the cloud use the whole constellation claimed? | the subset trap, below |
 | `tone_alias` | FSK offset that is a whole tone spacing | `4fsk_13dB_2033`, below |
 | `timing_converged` | Gardner — was measured, reported, and not counted | — |
 | `carrier_locked` | the S-th power metric, kept | — |
@@ -255,6 +256,31 @@ recorded in `hypotheses` with the reason it was created. The rejection stays in
 the record. Quietly patching the input would have left this bug upstream with
 nothing pointing at it, and the only reason it was found is that the number was
 visible.
+
+**The subset trap — found while checking my own work against Dheeraj's
+classifier, and the nastiest of the lot.** QPSK's four points *are* four of
+16-QAM's sixteen, and three of 8-PSK's eight. Run a QPSK capture through the
+16-QAM plug-in and nothing about the reception is wrong: every symbol lands
+exactly on a legal constellation point, so the decision-directed noise variance
+comes out tiny and the LLRs come out enormous.
+
+    qpsk signal, 16-QAM plug-in    status ok   confidence 0.984
+                                   estimated_output_ber 1.8e-21
+                                   ACTUAL BER 0.482
+
+Every check listed above asks whether the receiver locked to the constellation
+it was *told* to assume. None of them could ask whether that was the right
+constellation — a four-point cloud is a perfectly good 16-QAM reception in
+which twelve points happen never to be used. `alphabet_used` asks exactly that,
+and a real 16-QAM stream uses all sixteen. Measured across four schemes × four
+hypotheses × 4–25 dB: **correct hypothesis ≥ 0.992 evenness, wrong-but-`ok`
+≤ 0.670.** It vetoes and never confirms — at 4 dB noise scatters symbols onto
+every point and the check goes blind, which is precisely when the carrier and
+output checks are doing the work.
+
+**Nehal — this one matters to your pre-flight specifically.** On a
+mis-classified file `estimated_output_ber` was not merely uninformative, it was
+1.8e-21 with `valid: true`. It is now `false`.
 
 **Two more things the corpus taught, both now closed:**
 
@@ -345,10 +371,29 @@ two scripts that looked like a coin flip should be re-read.
   vote the day the corpus grows a channel that needs an equaliser.
 - **Choosing the modulation is still not S3's job.** With no ranking from S2
   the search runs every survivor and picks on reported quality — that works
-  here and it is not a classifier. When Dheeraj's lands, pass it as
-  `modulations=` and the search takes the first clean lock instead, which is
-  both faster and better founded. 31 of 36 currently correct; the five misses
-  are all files where nothing locks.
+  here and it is not a classifier. 31 of 36 currently correct; the five misses
+  are all files where nothing locks at all.
+
+**Dheeraj — I tested against your classifier branch before it merges, and
+found two bugs on my side.** `modulation_hypotheses` is
+`[(class_name, probability)]`, and my reader coerced every value with
+`float()`, so the first ranking you handed over would have raised
+`ValueError: could not convert string to float: 'qpsk'`. Second, a modulation
+your classifier did not rank defaulted to a prior of 1.0 — *above* a
+0.91-probability match — so the three schemes you never mentioned would have
+been tried first. Both fixed and pinned against the exact shape
+`S2Result` declares on `dhiraj/zoo-v0`. With the ranking wired in:
+
+| what S2 says | result | chain runs |
+|---|---|---|
+| correct top guess | `ok` → qpsk | **1** |
+| **corrupted** top guess (16qam at 0.80 on a QPSK file) | `ok` → qpsk | 3 |
+| no ranking at all | `ok` → qpsk | 6 |
+
+That middle row is the 4 Sep cross-check — *corrupt S2's top hypothesis and the
+pipeline still decodes via the second* — holding from S3's side. It only holds
+because of `alphabet_used`: before it, 16-QAM returned `ok` on that file and
+the search stopped there.
 
 ---
 

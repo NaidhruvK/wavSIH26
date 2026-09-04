@@ -8,9 +8,9 @@ Bit error rates are against the bits the zoo actually transmitted, regenerated f
 
 | arm | what S3 was told | decodes | mod correct | **confidently wrong** | *would have been, old rule* | median s |
 |---|---|---|---|---|---|---|
-| `truth-params` | the true symbol rate, no carrier offset | **33/36** | 36/36 | **0** | *0* | 0.38 |
-| `s2-top` | S2's top hypothesis on every field | **4/36** | 36/36 | **0** | *19* | 0.39 |
-| `search` | S2's *ranked* hypotheses, searched | **29/36** | 31/36 | **0** | *0* | 2.69 |
+| `truth-params` | the true symbol rate, no carrier offset | **33/36** | 36/36 | **0** | *0* | 0.27 |
+| `s2-top` | S2's top hypothesis on every field | **4/36** | 36/36 | **0** | *19* | 0.27 |
+| `search` | S2's *ranked* hypotheses, searched | **29/36** | 31/36 | **0** | *0* | 2.28 |
 
 ## The last column, and why it is the point
 
@@ -29,6 +29,7 @@ Independent checks against different evidence, any one of which can veto a claim
 - **`signal_present`** - a cyclostationary line at the claimed symbol rate. Spectral, so it survives every carrier and timing error there is. Separates 'nothing is here' from 'I did not lock', which is what makes pure noise a `failed` with a reason rather than a shrug.
 - **`carrier_aligned`** - the spectrum is still centred after the carrier-offset hypothesis has been applied. This is the one that catches the failure above, and its measurement doubles as the correction the retry loop tries next.
 - **`output_usable`** - the receiver may not claim `ok` while its own estimated output error rate says the output is junk. Found by `8psk_8dB_2013`, where the 2-FSK plug-in returned `ok` at a mean tone margin of 0.319 while estimating its own output BER at 0.19.
+- **`alphabet_used`** (linear) - does the received cloud use the whole constellation this hypothesis claims? The only check that can refuse a constellation which CONTAINS the true one. QPSK's four points are four of 16-QAM's sixteen, so a QPSK capture read as 16-QAM locks perfectly and reports an estimated BER of 1.8e-21 against an actual 0.482. Measured: correct hypothesis >= 0.992 evenness, wrong-but-`ok` <= 0.670, across four schemes and 4-25 dB.
 - **`tone_alias`** (FSK) - the frequency twin of the rotation ambiguity. An offset of one tone spacing maps the tone bank onto itself and slips every symbol label by one: identical tones, identical margins, every other check passing, and a bit error rate of 0.248 on `4fsk_13dB_2033`. Refused rather than guessed.
 - **`timing_converged`** - a verdict the Gardner loop was already computing, reported, and then not counted.
 
@@ -57,46 +58,46 @@ The gate is written for the whole pipeline (≥40% of the corpus to exact bits, 
 
 | file | true | chosen | status | est BER | valid | measured BER | runs | s | why not |
 |---|---|---|---|---|---|---|---|---|---|
-| 16qam_4dB_2018 | 16qam | 8psk | `low_confidence` | 8.60e-02 | no | 0.48467 ⚠ | 12 | 3.69 | carrier lock 0.04 below 0.60; the receiver estimates its own output BER at 0.086, over the 0.05 a lock should produce -  |
-| 16qam_8dB_2019 | 16qam | 16qam | `ok` | 1.22e-02 | yes | 0.01493 ⚠ | 12 | 2.73 |  |
-| 16qam_10dB_2020 | 16qam | 16qam | `ok` | 2.85e-03 | yes | 0.00306 | 12 | 2.17 |  |
-| 16qam_13dB_2021 | 16qam | 16qam | `ok` | 7.48e-05 | yes | 0.00010 | 6 | 1.35 |  |
-| 16qam_15dB_2022 | 16qam | 16qam | `ok` | 7.00e-08 | yes | 0.00000 | 12 | 2.62 |  |
-| 16qam_20dB_2023 | 16qam | 16qam | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 2.53 |  |
-| 2fsk_4dB_2024 | 2fsk | - | `failed` | 1.00e+00 | no | 1.00000 ⚠ | 0 | 0.16 | every candidate was refused by the cheap screen: no symbol-rate line at 48479 Hz (4.4x local median, needs 4.5x) - eithe |
-| 2fsk_8dB_2025 | 2fsk | - | `failed` | 1.00e+00 | no | 1.00000 ⚠ | 0 | 0.16 | every candidate was refused by the cheap screen: no symbol-rate line at 11987 Hz (3.9x local median, needs 4.5x) - eithe |
-| 2fsk_10dB_2026 | 2fsk | 2fsk | `ok` | 0.00e+00 | yes | 0.00000 | 2 | 0.40 |  |
-| 2fsk_13dB_2027 | 2fsk | 2fsk | `ok` | 0.00e+00 | yes | 0.00000 | 2 | 0.38 |  |
-| 2fsk_15dB_2028 | 2fsk | 2fsk | `ok` | 0.00e+00 | yes | 0.00000 | 2 | 0.38 |  |
-| 2fsk_20dB_2029 | 2fsk | 2fsk | `ok` | 0.00e+00 | yes | 0.00000 | 4 | 0.51 |  |
-| 4fsk_4dB_2030 | 4fsk | - | `failed` | 1.00e+00 | no | 1.00000 ⚠ | 0 | 0.07 | every candidate was refused by the cheap screen: no symbol-rate line at 65634 Hz (4.0x local median, needs 4.5x) - eithe |
-| 4fsk_8dB_2031 | 4fsk | bpsk | `low_confidence` | 9.75e-02 | no | 0.48376 ⚠ | 4 | 2.61 | carrier lock 0.23 below 0.60; the receiver estimates its own output BER at 0.0975, over the 0.05 a lock should produce - |
-| 4fsk_10dB_2032 | 4fsk | 4fsk | `ok` | 0.00e+00 | yes | 0.00000 | 2 | 0.18 |  |
-| 4fsk_13dB_2033 | 4fsk | 4fsk | `ok` | 0.00e+00 | yes | 0.00000 | 4 | 0.30 |  |
-| 4fsk_15dB_2034 | 4fsk | 4fsk | `ok` | 0.00e+00 | yes | 0.00000 | 2 | 0.22 |  |
-| 4fsk_20dB_2035 | 4fsk | 4fsk | `ok` | 0.00e+00 | yes | 0.00000 | 4 | 0.28 |  |
-| 8psk_4dB_2012 | 8psk | 8psk | `low_confidence` | 2.94e-02 | no | 0.23039 ⚠ | 12 | 3.63 | carrier lock 0.16 below 0.60 |
-| 8psk_8dB_2013 | 8psk | 8psk | `low_confidence` | 2.81e-03 | no | 0.00281 | 12 | 3.85 | carrier lock 0.49 below 0.60 |
-| 8psk_10dB_2014 | 8psk | 8psk | `ok` | 3.11e-04 | yes | 0.00025 | 12 | 3.63 |  |
-| 8psk_13dB_2015 | 8psk | 8psk | `ok` | 1.60e-07 | yes | 0.00000 | 12 | 3.72 |  |
-| 8psk_15dB_2016 | 8psk | 8psk | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 3.37 |  |
-| 8psk_20dB_2017 | 8psk | 8psk | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 3.62 |  |
-| bpsk_4dB_2000 | bpsk | bpsk | `ok` | 1.52e-06 | yes | 0.00000 | 6 | 5.36 |  |
-| bpsk_8dB_2001 | bpsk | bpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 5.28 |  |
-| bpsk_10dB_2002 | bpsk | bpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 5.19 |  |
-| bpsk_13dB_2003 | bpsk | bpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 5.41 |  |
-| bpsk_15dB_2004 | bpsk | bpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 5.20 |  |
-| bpsk_20dB_2005 | bpsk | bpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 5.57 |  |
-| qpsk_4dB_2006 | qpsk | qpsk | `ok` | 9.65e-04 | yes | 0.00115 | 6 | 2.67 |  |
-| qpsk_8dB_2007 | qpsk | qpsk | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 5.24 |  |
-| qpsk_10dB_2008 | qpsk | qpsk | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 5.34 |  |
-| qpsk_13dB_2009 | qpsk | qpsk | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 5.14 |  |
-| qpsk_15dB_2010 | qpsk | qpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 2.64 |  |
-| qpsk_20dB_2011 | qpsk | qpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 2.70 |  |
+| 16qam_4dB_2018 | 16qam | 8psk | `low_confidence` | 8.60e-02 | no | 0.48467 ⚠ | 12 | 2.63 | carrier lock 0.04 below 0.60; the receiver estimates its own output BER at 0.086, over the 0.05 a lock should produce -  |
+| 16qam_8dB_2019 | 16qam | 16qam | `ok` | 1.22e-02 | yes | 0.01493 ⚠ | 12 | 1.81 |  |
+| 16qam_10dB_2020 | 16qam | 16qam | `ok` | 2.85e-03 | yes | 0.00306 | 12 | 1.82 |  |
+| 16qam_13dB_2021 | 16qam | 16qam | `ok` | 7.48e-05 | yes | 0.00010 | 6 | 0.93 |  |
+| 16qam_15dB_2022 | 16qam | 16qam | `ok` | 7.00e-08 | yes | 0.00000 | 12 | 1.81 |  |
+| 16qam_20dB_2023 | 16qam | 16qam | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 1.84 |  |
+| 2fsk_4dB_2024 | 2fsk | - | `failed` | 1.00e+00 | no | 1.00000 ⚠ | 0 | 0.13 | every candidate was refused by the cheap screen: no symbol-rate line at 48479 Hz (4.4x local median, needs 4.5x) - eithe |
+| 2fsk_8dB_2025 | 2fsk | - | `failed` | 1.00e+00 | no | 1.00000 ⚠ | 0 | 0.13 | every candidate was refused by the cheap screen: no symbol-rate line at 11987 Hz (3.9x local median, needs 4.5x) - eithe |
+| 2fsk_10dB_2026 | 2fsk | 2fsk | `ok` | 0.00e+00 | yes | 0.00000 | 2 | 0.31 |  |
+| 2fsk_13dB_2027 | 2fsk | 2fsk | `ok` | 0.00e+00 | yes | 0.00000 | 2 | 0.30 |  |
+| 2fsk_15dB_2028 | 2fsk | 2fsk | `ok` | 0.00e+00 | yes | 0.00000 | 2 | 0.29 |  |
+| 2fsk_20dB_2029 | 2fsk | 2fsk | `ok` | 0.00e+00 | yes | 0.00000 | 4 | 0.42 |  |
+| 4fsk_4dB_2030 | 4fsk | - | `failed` | 1.00e+00 | no | 1.00000 ⚠ | 0 | 0.05 | every candidate was refused by the cheap screen: no symbol-rate line at 65634 Hz (4.0x local median, needs 4.5x) - eithe |
+| 4fsk_8dB_2031 | 4fsk | bpsk | `low_confidence` | 9.75e-02 | no | 0.48376 ⚠ | 4 | 1.74 | carrier lock 0.23 below 0.60; the receiver estimates its own output BER at 0.0975, over the 0.05 a lock should produce - |
+| 4fsk_10dB_2032 | 4fsk | 4fsk | `ok` | 0.00e+00 | yes | 0.00000 | 2 | 0.13 |  |
+| 4fsk_13dB_2033 | 4fsk | 4fsk | `ok` | 0.00e+00 | yes | 0.00000 | 4 | 0.21 |  |
+| 4fsk_15dB_2034 | 4fsk | 4fsk | `ok` | 0.00e+00 | yes | 0.00000 | 2 | 0.13 |  |
+| 4fsk_20dB_2035 | 4fsk | 4fsk | `ok` | 0.00e+00 | yes | 0.00000 | 4 | 0.20 |  |
+| 8psk_4dB_2012 | 8psk | 8psk | `low_confidence` | 2.94e-02 | no | 0.23039 ⚠ | 12 | 3.06 | carrier lock 0.16 below 0.60 |
+| 8psk_8dB_2013 | 8psk | 8psk | `low_confidence` | 2.81e-03 | no | 0.00281 | 12 | 2.97 | carrier lock 0.49 below 0.60 |
+| 8psk_10dB_2014 | 8psk | 8psk | `ok` | 3.11e-04 | yes | 0.00025 | 12 | 2.45 |  |
+| 8psk_13dB_2015 | 8psk | 8psk | `ok` | 1.60e-07 | yes | 0.00000 | 12 | 2.53 |  |
+| 8psk_15dB_2016 | 8psk | 8psk | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 2.65 |  |
+| 8psk_20dB_2017 | 8psk | 8psk | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 2.94 |  |
+| bpsk_4dB_2000 | bpsk | bpsk | `ok` | 1.52e-06 | yes | 0.00000 | 6 | 4.67 |  |
+| bpsk_8dB_2001 | bpsk | bpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 4.79 |  |
+| bpsk_10dB_2002 | bpsk | bpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 4.50 |  |
+| bpsk_13dB_2003 | bpsk | bpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 4.77 |  |
+| bpsk_15dB_2004 | bpsk | bpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 4.75 |  |
+| bpsk_20dB_2005 | bpsk | bpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 4.69 |  |
+| qpsk_4dB_2006 | qpsk | qpsk | `ok` | 9.65e-04 | yes | 0.00115 | 6 | 2.34 |  |
+| qpsk_8dB_2007 | qpsk | qpsk | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 4.34 |  |
+| qpsk_10dB_2008 | qpsk | qpsk | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 4.63 |  |
+| qpsk_13dB_2009 | qpsk | qpsk | `ok` | 0.00e+00 | yes | 0.00000 | 12 | 4.47 |  |
+| qpsk_15dB_2010 | qpsk | qpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 2.23 |  |
+| qpsk_20dB_2011 | qpsk | qpsk | `ok` | 0.00e+00 | yes | 0.00000 | 6 | 2.34 |  |
 
 ## Cost
 
-The search considers up to 12 full receiver runs and rejects the rest with one FFT each. Median 2.69 s per file, worst 5.57 s, against a 20 s budget and a 90 s whole-pipeline window. The screen is what makes that true: without it the same candidate list is 6 modulations x 3 rates x 5 offsets of full chain runs.
+The search considers up to 12 full receiver runs and rejects the rest with one FFT each. Median 2.28 s per file, worst 4.79 s, against a 20 s budget and a 90 s whole-pipeline window. The screen is what makes that true: without it the same candidate list is 6 modulations x 3 rates x 5 offsets of full chain runs.
 
 ## Known gaps, stated
 

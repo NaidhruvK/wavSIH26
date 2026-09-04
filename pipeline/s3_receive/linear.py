@@ -43,8 +43,9 @@ from .carrier import costas_loop, phase_rotation_candidates
 from .cumulants import cumulants
 from .equalise import cma_equalise, mma_equalise
 from .filters import estimate_rolloff, matched_filter
-from .lockcheck import (UNKNOWN, Check, LockReport, carrier_alignment,
-                        loop_check, output_usable, signal_presence)
+from .lockcheck import (UNKNOWN, Check, LockReport, alphabet_used,
+                        carrier_alignment, loop_check, output_usable,
+                        signal_presence)
 from .metrics import evm_percent, magnitude_dispersion
 from .result import Hypothesis, S3Result
 from .schemes import scheme
@@ -244,6 +245,11 @@ class LinearDemod:
         ber_est = estimated_ber(llrs)
         lock = carrier.lock
         report.add(output_usable(ber_est))
+        # Last, because it needs the demodulated symbols - and the only
+        # check that can refuse a constellation which CONTAINS the true
+        # one. Everything above asks whether the receiver locked; this
+        # asks whether it locked to the right alphabet.
+        report.add(alphabet_used(sym, self.scheme.points))
 
         hyps = [
             Hypothesis(

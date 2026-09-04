@@ -241,6 +241,113 @@ def test_a_whole_tone_spacing_of_offset_is_refused_not_guessed():
     assert tone_alias(1000.0, 0.0).verdict == UNKNOWN         # nothing to judge
 
 
+@pytest.mark.parametrize("truth,superset", [("qpsk", "16qam"), ("qpsk", "8psk"),
+                                            ("bpsk", "qpsk"), ("bpsk", "8psk")])
+def test_a_smaller_alphabet_seen_through_a_larger_one_is_refused(truth, superset):
+    """The subset trap, and the reason `alphabet_used` exists.
+
+    QPSK's four points ARE four of 16-QAM's sixteen. Nothing about the
+    reception is wrong - every symbol lands exactly on a legal point, so the
+    decision-directed noise variance comes out tiny and the LLRs come out
+    enormous. Measured: `status ok`, `confidence 0.984`,
+    `estimated_output_ber 1.8e-21`, actual BER **0.482**.
+
+    Every other check asks whether the receiver locked to the constellation it
+    was told to assume. This is the only one that can ask whether that was the
+    right constellation.
+    """
+    x = synth(truth, n_bits=120000, snr_db=18.0)[0]
+
+    right = MODULATIONS[truth].receive(x, {"fs": FS, "symbol_rate": RS})
+    assert right.status == "ok", right.reason
+
+    wrong = MODULATIONS[superset].receive(x, {"fs": FS, "symbol_rate": RS})
+    assert wrong.status != "ok", (
+        f"{superset} claims a clean lock on a {truth} signal, estimating "
+        f"{wrong.values['estimated_output_ber']:.2e} output BER")
+    assert wrong.values["estimated_output_ber_valid"] is False
+
+
+def test_alphabet_check_vetoes_but_never_confirms():
+    """It goes blind at low SNR - noise scatters symbols onto every point, so a
+    wrong hypothesis at 4 dB reads 0.95-0.99. That is exactly why it may only
+    veto: the files it cannot judge are refused by the carrier and output
+    checks instead, and a check that cannot see must not vote for."""
+    from pipeline.s3_receive.lockcheck import ALPHABET_ENTROPY_LIMIT, alphabet_used
+    from pipeline.s3_receive.schemes import scheme
+
+    rng = np.random.default_rng(4)
+    pts = scheme("16qam").points
+    even = pts[rng.integers(0, 16, 4000)]
+    assert alphabet_used(even, pts).verdict == PASS
+
+    # only the four corners, which is what a QPSK stream looks like here
+    corners = pts[np.argsort(-np.abs(pts))[:4]]
+    assert alphabet_used(corners[rng.integers(0, 4, 4000)], pts).verdict == FAIL
+
+    assert alphabet_used(even[:10], pts).verdict == UNKNOWN
+    assert 0.0 < ALPHABET_ENTROPY_LIMIT < 1.0
+
+
+# --- the interface S2's classifier will arrive through --------------------
+
+CLASSIFIER_SHAPE = [("qpsk", 0.91), ("8psk", 0.06), ("16qam", 0.03)]
+
+
+def test_search_reads_a_classifier_ranking_in_the_shape_s2_emits():
+    """`modulation_hypotheses` is `[(class_name, probability)]` - the VALUE is
+    a string, not a number.
+
+    `_ranked` coerced every value with `float()`, so the first ranking handed
+    over would have raised `ValueError: could not convert string to float:
+    'qpsk'`. Nothing in the repo produced that field when the code was written;
+    it would have fired the morning the classifier merged. Pinned against the
+    exact shape `pipeline/s2_estimate.S2Result` declares.
+    """
+    x = synth("qpsk", n_bits=120000, snr_db=18.0)[0]
+    res = receive_best(x, {"fs": FS, "symbol_rate": RS,
+                           "modulation_hypotheses": CLASSIFIER_SHAPE})
+    assert res.status == "ok", res.reason
+    assert res.values["modulation"] == "qpsk"
+    # the ranking is what makes it cheap: the top guess is right, so one run
+    assert res.values["search_chain_runs"] == 1
+
+
+def test_an_unranked_modulation_sorts_below_every_ranked_one():
+    """A classifier naming three schemes says nothing about the other three.
+    The default prior used to be 1.0, which put the three it never mentioned
+    AHEAD of a 0.91-probability match - and with the early exit on, the first
+    of those to lock would have won."""
+    from pipeline.s3_receive.search import _build_candidates
+
+    cands = _build_candidates(
+        {"fs": FS, "symbol_rate": RS, "modulation_hypotheses": CLASSIFIER_SHAPE},
+        list(MODULATIONS))
+    order = []
+    for c in cands:
+        if c.modulation not in order:
+            order.append(c.modulation)
+    ranked = [n for n, _ in CLASSIFIER_SHAPE]
+    assert order[:len(ranked)] == ranked, f"tried in the order {order}"
+
+
+def test_a_corrupted_top_hypothesis_still_decodes_via_the_next():
+    """The 4 Sep cross-check, from S3's side.
+
+    A classifier confidently naming the wrong scheme must not end the search.
+    It ends it only if the wrong scheme returns `ok`, which is precisely what
+    the subset trap used to allow: 16-QAM over a QPSK capture locked cleanly.
+    """
+    x = synth("qpsk", n_bits=120000, snr_db=18.0)[0]
+    res = receive_best(x, {"fs": FS, "symbol_rate": RS,
+                           "modulation_hypotheses": [("16qam", 0.80),
+                                                     ("8psk", 0.15),
+                                                     ("qpsk", 0.05)]})
+    assert res.status == "ok", res.reason
+    assert res.values["modulation"] == "qpsk", (
+        f"took the classifier's word and returned {res.values['modulation']}")
+
+
 def test_search_prefers_the_hypothesis_that_needs_less_correcting():
     """Occam, as a tie-break, and it is load-bearing.
 
@@ -422,15 +529,39 @@ def test_search_records_why_each_candidate_was_refused():
 
 def test_search_never_names_a_scheme():
     """The registry is the list. Adding a modulation must be a registration
-    line, not an edit here - `grep` run as code so it is checked every run."""
-    src = (Path(__file__).resolve().parents[2] / "pipeline" / "s3_receive"
-           / "search.py").read_text(encoding="utf-8")
-    code = "\n".join(line for line in src.splitlines()
-                     if not line.lstrip().startswith("#"))
-    code = code.split('"""')[0] + '"""'.join(code.split('"""')[2:])
-    for scheme in ("bpsk", "qpsk", "8psk", "16qam", "2fsk", "4fsk"):
-        assert f'"{scheme}"' not in code and f"'{scheme}'" not in code, \
-            f"search.py names {scheme} in code rather than iterating MODULATIONS"
+    line, not an edit here - checked as code so it holds every run.
+
+    The first version of this stripped docstrings by splitting on triple
+    quotes and rejoining, which removes the MODULE docstring and leaves every
+    function docstring in place. It passed until a docstring quoted the error
+    message `could not convert string to float: 'qpsk'`, and then failed on
+    prose while the code it was guarding was fine. Parsing is exact where
+    string surgery is a guess, so this walks the AST: every string constant
+    that is a docstring is dropped, and what remains is code.
+    """
+    import ast
+
+    path = (Path(__file__).resolve().parents[2] / "pipeline" / "s3_receive"
+            / "search.py")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                             ast.AsyncFunctionDef)):
+            body = getattr(node, "body", None)
+            if (body and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                docstrings.add(id(body[0].value))
+
+    literals = [n.value for n in ast.walk(tree)
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                and id(n) not in docstrings]
+
+    for name in MODULATIONS:
+        assert not any(name == lit for lit in literals), (
+            f"search.py has {name!r} as a string literal in code rather than "
+            "iterating MODULATIONS")
 
 
 # --- against the real corpus ----------------------------------------------
