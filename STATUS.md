@@ -991,6 +991,99 @@ agree. Delete it the day those three knobs exist in `zoo/`.
 
 **423 passed, 4 skipped.**
 
+---
+
+**4 Sep, end of day: the chain is blind end to end, and S2 has a bug that costs
+us the recovery.** Full write-up in `reports/blind_chain.md`.
+
+**The overclaim I made yesterday is retired by measurement.** Every study of
+mine passed `fs` and `symbol_rate` to S3 from the truth sidecar, because S2 did
+not exist. It does now. The study reads ONLY the WAV, through S0; the truth JSON
+is opened once at the end to score, never to produce.
+
+| | S2 rate | true | err | runs | scheme | interleaver | generators |
+|---|---|---|---|---|---|---|---|
+| bpsk 20 dB | 50000 | 50000 | 0.000 % | 1 | bpsk | YES | YES |
+| qpsk 20 dB | 50000 | 50000 | 0.000 % | 2 | qpsk | YES | YES |
+| 8psk 20 dB | 50000 | 50000 | 0.000 % | 3 | 8psk | YES | YES |
+| 16qam 20 dB | 50000 | 50000 | 0.000 % | 4 | 16qam | YES | YES |
+| 2fsk 20 dB | 50000 | 50000 | 0.000 % | 5 | 2fsk | YES | YES |
+| 4fsk 20 dB | 50000 | 50000 | 0.000 % | 6 | 4fsk | YES | YES |
+
+**6 of 6, all six modulations, nothing supplied.** The modulation is found by
+iterating the registry and keeping whatever produces a rank collapse - the
+column's own wording - and **no wrong modulation ever produced a confident
+answer**. Anvith: that is the direct answer to your subset trap from my side.
+S4 rejected every incorrect constellation on its own, 0 false positives.
+
+**DHERAJ - TWO THINGS, ONE PERFECT AND ONE BROKEN.**
+
+Your symbol rate is exact to three decimals on all six files. Nothing to fix.
+
+Your CFO estimate is wrong on every file, and it costs us the recovery. True CFO
+on this corpus is **0 Hz**. S2 reports:
+
+| scheme | S2 CFO | equals |
+|---|---|---|
+| bpsk | 25 000 Hz | symbol_rate / 2 |
+| qpsk | 12 500 Hz | symbol_rate / 4 |
+| 8psk | 6 250 Hz | symbol_rate / 8 |
+| 16qam | 12 500 Hz | symbol_rate / 4 |
+
+That is the M-th-power branch ambiguity: the estimator resolves `M*cfo` modulo
+2*pi, so it recovers the offset only modulo `symbol_rate/M`, and with a true
+offset of zero it locks onto the modulation's own spectral line. **Zero is never
+offered at any rank** - every ranked hypothesis is an alias - so "decode via the
+second hypothesis" cannot rescue it.
+
+Applying it breaks recovery on **4 of 4** files that recover perfectly without
+it, and S3 still says `ok`:
+
+| file | with S2 CFO | without |
+|---|---|---|
+| bpsk | EVM 37.5 %, no recovery | EVM 5.2 %, recovered |
+| qpsk | EVM 6.1 %, **no recovery** | EVM 5.2 %, recovered |
+| 8psk | EVM 5.4 %, **no recovery** | EVM 5.1 %, recovered |
+| 16qam | EVM 6.5 %, **no recovery** | EVM 5.6 %, recovered |
+
+Read the middle three twice: **EVM looks fine and the recovery is dead.** Third
+time this week EVM has failed as a quality signal. The fix is small - offer the
+alias set `cfo + k*symbol_rate/M` as ranked hypotheses, or include zero and let
+a downstream test choose. Today it reports one alias at high confidence with no
+way back.
+
+**My side survives it** by treating CFO as a hypothesis rather than a fact: the
+null (no pre-correction, let S3's carrier loop work) is tried first, S2's
+estimate second.
+
+**THE 4 SEP VERIFY LINE, both ways.** *"Corrupt S2's top hypothesis; the
+pipeline still decodes via the second."* Naturally - S2's top CFO hypothesis IS
+wrong on every file and the chain still recovered 6/6, which is the line
+satisfied by a real upstream error rather than a synthetic one. And
+deliberately - replacing S2's winning symbol rate with 1.5x the truth,
+**4 of 6 still recovered** via a later hypothesis. The two that did not hit the
+120 s search budget at 130.5 s and 123.8 s; they ran out of time, they did not
+fail to recover.
+
+**NAIDHRUV / DHERAJ - THE COST FINDING, and it decides 6 Sep.** Clean-path blind
+times: bpsk 2.3 s, 4fsk 9.8 s, qpsk 20.1 s, 2fsk 46.7 s, 8psk 49.1 s, 16qam
+75.1 s. The cost tracks **registry position**, not difficulty - each miss pays a
+full S3 demodulation plus an S4 rotation search, and worst case with a corrupted
+hypothesis is 24 chain runs. The core-lock gate is 90 s for the WHOLE
+seven-stage analysis, and S2-S4 alone is already 75 s on 16-QAM.
+
+**So the classifier is not a nice-to-have, it is what makes the fallback
+affordable.** Dheeraj's LightGBM model and Anvith's ranked `search.py` prune the
+modulation dimension from six to one or two - the difference between 75 s and
+about 12 s. The exhaustive loop stays as the fallback for when the classifier is
+unsure, and it is now measured so we know what it costs when it fires.
+
+**Heads-up on a merge break:** `anvith/s3-robustness` deletes
+`tests/fixtures/rf_channel.py`, which `reports/end_to_end_study.py` (mine)
+imports. It will break the moment that branch lands. His `tests/fixtures/
+corpus.py` has `synth()` as the replacement; I will port it when the branch
+merges rather than guess at it now.
+
 **Blocked on:** nothing.
 
 ---
