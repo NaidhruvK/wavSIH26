@@ -218,6 +218,54 @@ the full eval harness is supposed to produce across all seven stages.
 Flagging again for standup — this is now the second stream (S2/S3
 already noted it) waiting on the same missing piece.
 
+**Landed 4 Sep, part 9.** The 4 Sep column: expanded corpus, classifier
+wired into live S2, per-scheme coverage matrix.
+
+- `zoo/build_rf_corpus.py` — 36 → **252 files** (6 schemes × 6 SNRs × 7
+  reps), toward the 250-file target. **Purely additive: the original 36
+  files are byte-identical** (hash-verified before and after — the first
+  rep keeps the original seed formula on purpose) so nothing that globs
+  or references the existing corpus by name breaks.
+- `models/classify.py` — serves `models/classifier.txt` in-process,
+  model loaded once. Bridges S2's native captures (arbitrary fs/sps) to
+  the classifier's training regime (4096 samples, fixed 8sps) by
+  resampling using **S2's own estimated symbol rate, not truth** —
+  `resample_window()`. Returns ranked top-3 hypotheses + a
+  `low_confidence` flag (<0.70) that folds the deterministic baseline's
+  guess in when the model isn't sure, per the ML spec's failure-handling
+  design.
+- `pipeline/s2_estimate.py::estimate()` — new `modulation_hypotheses` /
+  `modulation_low_confidence` fields, `classify=True` param. Import is
+  lazy (inside the call) because `models.features` imports from this
+  same module — a real circular-import risk, not a style choice.
+  Degrades to empty hypotheses rather than crashing S2 if
+  `models/classifier.txt` doesn't exist in a checkout (`FileNotFoundError`
+  caught explicitly).
+- `reports/s2_coverage_study.py` → `reports/s2_coverage.{csv,md}` — the
+  per-scheme coverage matrix, run through live `estimate()` across all
+  252 corpus files (not a held-out set — this is coverage on real
+  captures, complementary to `classifier_eval.md`'s held-out numbers).
+  **bpsk 100%, 16qam 100%, 8psk 95%, qpsk 79%** (the qpsk/8psk case the
+  baseline structurally cannot solve — the model gets it right on live
+  captures, including at 4-8dB where the holdout set didn't test it).
+  **2fsk 67%, 4fsk 17%** — both driven by known, already-diagnosed gaps:
+  2fsk is perfect ≥10dB / zero below it (the envelope-variance gate);
+  4fsk is perfect at *exactly* 10dB and wrong at 13-20dB, the same
+  decision-boundary artifact `classifier_eval.md` traced on the holdout
+  set — now confirmed on full-length live captures too, with the same
+  SNR pattern, which rules out the resampling bridge as the cause.
+- 8 new tests (`tests/unit/test_classify.py`), including one pinning the
+  4fsk gap and one confirming S2 degrades gracefully (doesn't crash) if
+  the model file is absent.
+
+**4 Sep column complete.** Next: 5 Sep — concatenated CCSDS chain
+(Nehal's, not mine) and driving S2 accuracy down the SNR range /
+producing envelope charts (mine — lower-priority given the FSK gap above
+is the more load-bearing open item). Realistically: worth deciding
+whether to chase the 4fsk decision-boundary fix now or defer it, since
+it's the one number in this whole session that's below its stated
+target and reproduces identically across three separate evaluations.
+
 ---
 
 ## Anvith — S3 receiver chain

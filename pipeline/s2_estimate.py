@@ -52,6 +52,8 @@ class S2Result:
     fsk_order_hint: int | None = None
     fsk_order_hypotheses: list = field(default_factory=list)     # [(order, score), ...] ranked
     constant_envelope: bool | None = None
+    modulation_hypotheses: list = field(default_factory=list)    # [(class_name, prob), ...] ranked
+    modulation_low_confidence: bool | None = None
     reason: str | None = None
 
     def as_params(self) -> dict:
@@ -209,12 +211,23 @@ def estimate_fsk_order(x: np.ndarray, fs: float, candidates: tuple[int, ...] = (
     return order, score, hyps
 
 
-def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None) -> S2Result:
+def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None,
+             classify: bool = True) -> S2Result:
     """Top-level S2 entry point.
 
     constant_envelope=None picks the estimator by measuring the envelope
-    variation, which is itself blind -- the real classifier (2 Sep) makes
-    the same call from its own output; this is the fallback until then.
+    variation, which is itself blind -- the trained classifier (3 Sep)
+    makes the same call internally too; this is what runs before the
+    classifier has anything to say (e.g. while deciding which resample
+    ratio to hand it).
+
+    classify=True runs the trained modulation classifier in-process
+    (models.classify, loaded once at its own import, not retrained here)
+    on S2's own symbol-rate estimate -- never on truth. Imported lazily,
+    inside the call, because models.features imports estimate_symbol_rate
+    from this module: importing models.classify at module level here
+    would be circular. classify=False skips it (used by tests that don't
+    care about classification and don't want the model-load cost).
     """
     if iq is None or len(iq) < 16:
         return S2Result(status="failed", fs=fs, symbol_rate_hz=None,
@@ -236,10 +249,23 @@ def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None) -
         if constant_envelope:
             fsk_order, fsk_order_score, fsk_order_hyps = estimate_fsk_order(iq, fs)
 
+        mod_hyps: list = []
+        mod_low_conf = None
+        if classify:
+            try:
+                from models.classify import classify as _classify
+                result = _classify(iq, fs, rate)
+                mod_hyps = result["hypotheses"]
+                mod_low_conf = result["low_confidence"]
+            except FileNotFoundError:
+                pass   # model not trained in this checkout yet -- degrade, don't crash S2
+
         return S2Result(status="ok", fs=fs, symbol_rate_hz=rate,
                          symbol_rate_hypotheses=rate_hyps, cfo_hz=cfo,
                          cfo_hypotheses=cfo_hyps, fsk_order_hint=fsk_order,
                          fsk_order_hypotheses=fsk_order_hyps,
-                         constant_envelope=constant_envelope)
+                         constant_envelope=constant_envelope,
+                         modulation_hypotheses=mod_hyps,
+                         modulation_low_confidence=mod_low_conf)
     except Exception as e:
         return S2Result(status="failed", fs=fs, symbol_rate_hz=None, reason=str(e))

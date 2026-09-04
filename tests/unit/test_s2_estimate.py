@@ -64,11 +64,12 @@ def test_fsk_order_known_gap_at_low_snr():
 
 
 def test_estimate_never_reads_truth():
-    """Grep-style structural check: estimate() takes only iq and fs."""
+    """Grep-style structural check: estimate() takes only iq, fs and
+    behaviour toggles -- no truth parameter exists to leak through."""
     import inspect
     from pipeline.s2_estimate import estimate as est_fn
     params = list(inspect.signature(est_fn).parameters)
-    assert params == ["iq", "fs", "constant_envelope"]
+    assert params == ["iq", "fs", "constant_envelope", "classify"]
 
 
 def test_estimate_fails_cleanly_on_short_input():
