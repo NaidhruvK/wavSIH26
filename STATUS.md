@@ -88,6 +88,91 @@ way, or move on to S2 (symbol rate, CFO, roll-off, classification) and
 leave both FSK SNR and occupied_bw as dated known gaps for the 5/6 Sep
 hardening pass.
 
+**Landed 4 Sep, part 5.** `pipeline/s1_detect.py` spectrogram, closing the
+31 Aug gap for real (`S1Result.spec_freqs/spec_times/spec_db` — the
+waterfall's data source). 4 new tests, 14 passed + 1 xfailed on the S1
+suite. **31 Aug is now genuinely complete**, not just "mostly."
+
+**Landed 4 Sep, part 6.** `pipeline/s2_estimate.py` — the 1 Sep column.
+Ported from `tests/fixtures/local_s2.py` (Nehal's stand-in) plus a new
+FSK-order estimator; **that fixture can now be deleted.**
+
+- `estimate_symbol_rate` / `estimate_symbol_rate_fsk` — squared-magnitude
+  spectrum / IF-derivative spectrum, ported unchanged in method. **24/24
+  exact (0.00% error) at ≥10 dB** across the whole RF corpus, all 6
+  modulations — well past the 18/20-at-<1% gate.
+- `estimate_cfo` — M-th power line search over M ∈ {2,4,8}, ranked by
+  score across all three M rather than just the winner, so S3 can fall
+  back to the second-best hint.
+- `estimate_fsk_order` — **new**, not in the fixture. IF-histogram peak
+  count (median-filtered, smoothed, `scipy.signal.find_peaks`), matched
+  to the nearest registered order. **11/12 correct on the FSK corpus**
+  (2fsk + 4fsk, 4–20 dB); the one miss is 4fsk at 4 dB, below every other
+  stated target floor in this project. Pinned by a test, not hidden.
+- `estimate()` returns ranked hypotheses on every field (`symbol_rate_hypotheses`,
+  `cfo_hypotheses`, `fsk_order_hypotheses`), per the contract's design —
+  S3/S4 aren't forced to trust the top guess.
+- 9 new tests (`tests/unit/test_s2_estimate.py`), all passing, including a
+  structural check that `estimate()` only ever takes `(iq, fs)` — no truth
+  path exists to leak through.
+- **Not done:** roll-off is Anvith's (S3 already does blind roll-off,
+  ±0.009 accurate) so it's correctly out of S2's scope. Modulation
+  classification (the cumulant/LightGBM classifier) is 2–3 Sep, next.
+
+**Next:** 2 Sep — twelve-feature cumulant extractor, deterministic
+baseline rule, and the labelled training corpus (2,000+ windows/class
+across the SNR grid).
+
+**Landed 4 Sep, part 7.** `models/` — the 2 Sep column: feature
+extractor, deterministic baseline, labelled training set. New directory,
+new owner (mine, per the plan's ownership table).
+
+- `models/features.py` — 12 features per the spec: 7 cumulants (reuses
+  Anvith's `pipeline.s3_receive.cumulants`, not reimplemented), occupied-
+  BW/symbol-rate ratio (reuses S1+S2), IF-histogram kurtosis + peak count,
+  envelope variance, phase-difference entropy.
+- **Real bug found and fixed while building this:** fixed |C42| thresholds
+  from noiseless theory (bpsk=2.0, qpsk=8psk=1.0, 16qam=0.68) don't
+  survive real noise — measured qpsk |C42| at 10dB is 0.66, not 1.0,
+  because normalisation divides by total signal+noise power (a known
+  finite-sample SNR bias in 4th-order cumulant estimation). Recalibrated
+  thresholds to the 10dB *measured* medians instead of guessing, since
+  every gate in this project is anchored at ≥10dB.
+- **Second bug, same session:** the IF-histogram peak-count feature, built
+  and spot-checked against S2's full-length captures, produced 1-6
+  spurious peaks on shaped PSK/QAM once actually run at the classifier's
+  real scale (4096 samples, 8sps windows — much shorter than a full
+  capture). Root cause: tone-counting only means something for a
+  constant-envelope signal, and nothing was gating on that. Fixed by
+  checking `envelope_variance < 0.05` first (mirrors what
+  `pipeline.s2_estimate.estimate()` already does before calling
+  `estimate_fsk_order`) — now stable at exactly 1/1/1/1/2/4 across seeds
+  for bpsk/qpsk/8psk/16qam/2fsk/4fsk.
+- `models/build_dataset.py` — generates windows in-memory via
+  `zoo.rf.through_channel` (no per-window WAV files), 12,600 windows
+  (2,100/class) across SNR {0,5,10,15,20}dB in ~103s. Independent bits +
+  seed per window, not overlapping slices of a few long captures.
+- **Baseline macro-F1, reported and written down** (`reports/baseline_classifier.md`):
+  **0.520 overall**, but the honest number is per-SNR — **0.68-0.78 from
+  10dB up** (every target in this project is anchored there), collapsing
+  to 0.05-0.08 below 10dB. Both effects are measured and documented, not
+  hidden: the C42 SNR-bias above, and the envelope-variance gate losing
+  the FSK/linear split when noise pushes FSK's envelope variance above
+  0.05. 8psk gets exactly 0.0 F1 — expected, qpsk and 8psk are
+  theoretically identical under `|C42|` + peak-count alone; the baseline
+  always guesses "qpsk" for that shared leaf. That gap is what the
+  trained model (3 Sep) is *for*.
+- 14 new tests (`tests/unit/test_features.py`), all passing, including
+  one that pins the low-SNR gap itself (fails loudly if 0dB macro-F1
+  quietly improves without the docs being updated).
+
+**Next:** 3 Sep — first LightGBM training run on the 12 features, 6
+classes, evaluated on held-out SNRs {2.5, 7.5, 12.5} the model has never
+seen (not the training grid — that's the mistake that makes the number
+meaningless). Target: macro-F1 ≥80% at ≥10dB. Also: take over the eval
+harness from Naidhruv, which doesn't exist yet — blocked until his
+`contracts/`/`service/` land or I build a minimal stand-in myself.
+
 ---
 
 ## Anvith — S3 receiver chain

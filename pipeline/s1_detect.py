@@ -1,7 +1,7 @@
 """pipeline/s1_detect.py
 
 S1 -- signal detection: PSD, noise-floor/SNR estimate, occupied bandwidth,
-burst detection with hysteresis.
+spectrogram (the UI's waterfall source), burst detection with hysteresis.
 
 OWNERSHIP: Dheeraj.
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
+from scipy.signal import spectrogram as _spectrogram
 from scipy.signal import welch
 
 
@@ -23,6 +24,9 @@ class S1Result:
     bursts: list = field(default_factory=list)   # list of (start_idx, end_idx)
     psd_freqs: np.ndarray | None = None
     psd_db: np.ndarray | None = None
+    spec_freqs: np.ndarray | None = None
+    spec_times: np.ndarray | None = None
+    spec_db: np.ndarray | None = None   # shape (n_freqs, n_times), for the waterfall
     reason: str | None = None
 
 
@@ -35,6 +39,25 @@ def compute_psd(iq: np.ndarray, fs: float, nperseg: int = 1024
     psd = np.fft.fftshift(psd)
     psd_db = 10 * np.log10(psd + 1e-30)
     return freqs, psd_db
+
+
+def compute_spectrogram(iq: np.ndarray, fs: float, nperseg: int = 256,
+                         noverlap: int | None = None
+                         ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(freqs, times, spec_db) -- the waterfall's data source. Time-frequency
+    power over the capture, complex baseband so two-sided (negative and
+    positive frequencies both carry signal, unlike a real-valued input)."""
+    nperseg = min(nperseg, len(iq))
+    if noverlap is None:
+        noverlap = nperseg // 2
+    noverlap = min(noverlap, nperseg - 1) if nperseg > 1 else 0
+    freqs, times, spec = _spectrogram(iq, fs=fs, nperseg=nperseg,
+                                       noverlap=noverlap, return_onesided=False,
+                                       mode="psd")
+    freqs = np.fft.fftshift(freqs)
+    spec = np.fft.fftshift(spec, axes=0)
+    spec_db = 10 * np.log10(spec + 1e-30)
+    return freqs, times, spec_db
 
 
 def estimate_noise_floor(psd_db: np.ndarray, floor_percentile: float = 10.0
@@ -78,11 +101,27 @@ def estimate_snr(iq: np.ndarray, fs: float) -> tuple[float, float]:
 
 def estimate_occupied_bw(iq: np.ndarray, fs: float, power_fraction: float = 0.99
                           ) -> float:
-    """Bandwidth containing `power_fraction` of total power."""
+    """Bandwidth containing `power_fraction` of SIGNAL power (noise floor
+    subtracted first). The naive version (cumulative power without
+    subtracting the floor) reported 89-99% of fs for every modulation
+    including PSK, because AWGN spread across the whole capture always
+    contributes a near-constant background to the cumulative sum -- at
+    10dB SNR the noise alone is ~9% of total power spread over the full
+    band, which alone pushes a naive 99%-of-total-power threshold out to
+    nearly the full band regardless of how narrow the signal actually is.
+    Subtracting the estimated per-bin noise floor before integrating fixes
+    it: measured ~30-32% of fs for RRC-shaped PSK/QAM at beta=0.35,
+    sps=4 (theoretical (1+beta)/sps = 34%), vs 89%+ before."""
     freqs, psd_db = compute_psd(iq, fs)
     psd_lin = 10 ** (psd_db / 10.0)
-    cum = np.cumsum(psd_lin)
-    cum /= cum[-1]
+    floor_db = estimate_noise_floor(psd_db)
+    floor_lin = 10 ** (floor_db / 10.0)
+    excess = np.clip(psd_lin - floor_lin, 0.0, None)
+    cum = np.cumsum(excess)
+    total = cum[-1]
+    if total <= 0:
+        return 0.0
+    cum = cum / total
     lo_idx = int(np.searchsorted(cum, (1 - power_fraction) / 2))
     hi_idx = int(np.searchsorted(cum, 1 - (1 - power_fraction) / 2))
     lo_idx = max(0, min(lo_idx, len(freqs) - 1))
@@ -131,10 +170,13 @@ def detect(iq: np.ndarray, fs: float) -> S1Result:
         snr_db, noise_floor_db = estimate_snr(iq, fs)
         occ_bw = estimate_occupied_bw(iq, fs)
         bursts = detect_bursts(iq, fs)
+        spec_freqs, spec_times, spec_db = compute_spectrogram(iq, fs)
         return S1Result(status="ok", fs=fs, snr_db=snr_db,
                          noise_floor_db=noise_floor_db,
                          occupied_bw_hz=occ_bw, bursts=bursts,
-                         psd_freqs=freqs, psd_db=psd_db)
+                         psd_freqs=freqs, psd_db=psd_db,
+                         spec_freqs=spec_freqs, spec_times=spec_times,
+                         spec_db=spec_db)
     except Exception as e:
         return S1Result(status="failed", fs=fs, snr_db=None,
                          noise_floor_db=None, occupied_bw_hz=None,

@@ -8,7 +8,14 @@ import numpy as np
 import pytest
 
 from pipeline.s0_ingest import ingest
-from pipeline.s1_detect import compute_psd, detect, detect_bursts, estimate_snr
+from pipeline.s1_detect import (
+    compute_psd,
+    compute_spectrogram,
+    detect,
+    detect_bursts,
+    estimate_occupied_bw,
+    estimate_snr,
+)
 
 CORPUS = Path(__file__).resolve().parents[2] / "zoo" / "corpus" / "rf"
 
@@ -72,6 +79,60 @@ def test_compute_psd_shape_and_symmetry():
     assert freqs.shape == psd_db.shape
     assert np.all(np.diff(freqs) > 0), "fftshift should leave freqs monotonic"
     assert np.isfinite(psd_db).all()
+
+
+@pytest.mark.parametrize("prefix", ["bpsk", "qpsk", "8psk", "16qam"])
+def test_occupied_bw_is_a_reasonable_fraction_of_fs(prefix):
+    """Regression guard for the noise-floor-subtraction fix: the naive
+    cumulative-power method reported 89-99% of fs for every modulation
+    including PSK (clearly wrong for an RRC-shaped signal at sps=4,
+    beta=0.35, whose theoretical occupied fraction is ~34%). Bounded
+    loosely (15-55%) rather than pinned tight, since this is a 99%-power
+    threshold on a real (not brick-wall) filter, not an exact match to
+    the theoretical (1+beta)/sps figure."""
+    f = _corpus_files(prefix)[len(_corpus_files(prefix)) // 2]
+    r = ingest(f)
+    bw = estimate_occupied_bw(r.iq, r.fs)
+    frac = bw / r.fs
+    assert 0.15 < frac < 0.55, f"{f.name}: occupied_bw/fs={frac:.2f}, expected ~0.34"
+
+
+def test_compute_spectrogram_shape():
+    f = _corpus_files("qpsk")[0]
+    r = ingest(f)
+    freqs, times, spec_db = compute_spectrogram(r.iq, r.fs)
+    assert spec_db.shape == (freqs.size, times.size)
+    assert np.isfinite(spec_db).all()
+    assert np.all(np.diff(freqs) > 0)
+    assert np.all(np.diff(times) > 0)
+
+
+def test_compute_spectrogram_locates_signal_in_time():
+    """A short capture is one nonstop burst, so every time slice should show
+    power well above a pure-noise slice would -- this is a weak sanity check
+    (no on/off corpus exists yet to test burst localisation in time), just
+    confirming the array carries real structure, not a constant."""
+    f = _corpus_files("qpsk")[0]
+    r = ingest(f)
+    freqs, times, spec_db = compute_spectrogram(r.iq, r.fs)
+    assert spec_db.max() - np.median(spec_db) > 3.0
+
+
+def test_compute_spectrogram_short_input_does_not_crash():
+    rng = np.random.default_rng(1)
+    iq = rng.normal(size=50) + 1j * rng.normal(size=50)
+    freqs, times, spec_db = compute_spectrogram(iq, fs=200_000.0)
+    assert spec_db.size > 0
+
+
+def test_detect_ok_result_carries_spectrogram():
+    f = _corpus_files("qpsk")[0]
+    r = ingest(f)
+    result = detect(r.iq, r.fs)
+    assert result.spec_freqs is not None
+    assert result.spec_times is not None
+    assert result.spec_db is not None
+    assert result.spec_db.shape == (result.spec_freqs.size, result.spec_times.size)
 
 
 def test_detect_fails_cleanly_on_empty_input():
