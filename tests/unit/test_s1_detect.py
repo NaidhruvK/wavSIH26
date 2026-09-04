@@ -13,6 +13,7 @@ from pipeline.s1_detect import (
     compute_spectrogram,
     detect,
     detect_bursts,
+    estimate_occupied_bw,
     estimate_snr,
 )
 
@@ -78,6 +79,22 @@ def test_compute_psd_shape_and_symmetry():
     assert freqs.shape == psd_db.shape
     assert np.all(np.diff(freqs) > 0), "fftshift should leave freqs monotonic"
     assert np.isfinite(psd_db).all()
+
+
+@pytest.mark.parametrize("prefix", ["bpsk", "qpsk", "8psk", "16qam"])
+def test_occupied_bw_is_a_reasonable_fraction_of_fs(prefix):
+    """Regression guard for the noise-floor-subtraction fix: the naive
+    cumulative-power method reported 89-99% of fs for every modulation
+    including PSK (clearly wrong for an RRC-shaped signal at sps=4,
+    beta=0.35, whose theoretical occupied fraction is ~34%). Bounded
+    loosely (15-55%) rather than pinned tight, since this is a 99%-power
+    threshold on a real (not brick-wall) filter, not an exact match to
+    the theoretical (1+beta)/sps figure."""
+    f = _corpus_files(prefix)[len(_corpus_files(prefix)) // 2]
+    r = ingest(f)
+    bw = estimate_occupied_bw(r.iq, r.fs)
+    frac = bw / r.fs
+    assert 0.15 < frac < 0.55, f"{f.name}: occupied_bw/fs={frac:.2f}, expected ~0.34"
 
 
 def test_compute_spectrogram_shape():

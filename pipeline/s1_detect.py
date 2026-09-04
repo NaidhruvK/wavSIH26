@@ -101,11 +101,27 @@ def estimate_snr(iq: np.ndarray, fs: float) -> tuple[float, float]:
 
 def estimate_occupied_bw(iq: np.ndarray, fs: float, power_fraction: float = 0.99
                           ) -> float:
-    """Bandwidth containing `power_fraction` of total power."""
+    """Bandwidth containing `power_fraction` of SIGNAL power (noise floor
+    subtracted first). The naive version (cumulative power without
+    subtracting the floor) reported 89-99% of fs for every modulation
+    including PSK, because AWGN spread across the whole capture always
+    contributes a near-constant background to the cumulative sum -- at
+    10dB SNR the noise alone is ~9% of total power spread over the full
+    band, which alone pushes a naive 99%-of-total-power threshold out to
+    nearly the full band regardless of how narrow the signal actually is.
+    Subtracting the estimated per-bin noise floor before integrating fixes
+    it: measured ~30-32% of fs for RRC-shaped PSK/QAM at beta=0.35,
+    sps=4 (theoretical (1+beta)/sps = 34%), vs 89%+ before."""
     freqs, psd_db = compute_psd(iq, fs)
     psd_lin = 10 ** (psd_db / 10.0)
-    cum = np.cumsum(psd_lin)
-    cum /= cum[-1]
+    floor_db = estimate_noise_floor(psd_db)
+    floor_lin = 10 ** (floor_db / 10.0)
+    excess = np.clip(psd_lin - floor_lin, 0.0, None)
+    cum = np.cumsum(excess)
+    total = cum[-1]
+    if total <= 0:
+        return 0.0
+    cum = cum / total
     lo_idx = int(np.searchsorted(cum, (1 - power_fraction) / 2))
     hi_idx = int(np.searchsorted(cum, 1 - (1 - power_fraction) / 2))
     lo_idx = max(0, min(lo_idx, len(freqs) - 1))
