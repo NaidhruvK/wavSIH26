@@ -356,6 +356,55 @@ fine via `git show`; only checked-out copies broke). This would hit
 me. Added `.gitattributes` marking `models/classifier.txt` and the
 dataset CSVs `-text` so it can't recur for anyone.
 
+### 5 Sep — driving S2 accuracy down the SNR range / envelope charts
+
+Root-caused (not just re-measured) the still-open gap flagged in
+`s2_coverage.md`: 2fsk/4fsk sit at 0% live-classification accuracy at
+4-8dB, while every other bin is solid. New report,
+`reports/s2_envelope_study.py` (writes `s2_envelope.{csv,md,png}`),
+plots the mechanism directly: both envelope-constancy gates in this
+codebase (`models.features.envelope_variance < 0.05`, and
+`pipeline.s2_estimate`'s own `std/mean < 0.25`) are noise-dominated at
+low SNR, and **FSK's noisiest in-scheme case (4dB) is numerically
+closer to "constant-envelope" than clean 20dB PSK/QAM is**, by both
+metrics. That's a hard crossover, not a tuning gap: no single fixed
+threshold on either statistic can get both ends of the SNR range right,
+proven with the actual corpus numbers in the report, not asserted.
+
+Tried fixing it anyway: removed the `models.features` gate (peak_count
+was being clamped to 1 for FSK below 10dB, discarding the one feature
+that matters most for it), on the theory the classifier could learn the
+cutoff contextually since `envelope_variance` already reaches it as its
+own feature. Ungated, real corpus windows at 8dB *do* stay separable
+(peak_count medians ~2/~5/~1 for 2fsk/4fsk/PSK-QAM) and the retrained
+holdout macro-F1 barely moved. But the full targeted test suite caught
+what that aggregate hid: `test_if_hist_peak_count_matches_scheme`
+started failing at 15dB (spurious peaks on qpsk/8psk/16qam — exactly
+what the original gate's docstring had already warned about),
+`test_baseline_macro_f1_on_training_set` dropped below its regression
+floor, and a previously-solid 4fsk-at-15dB classification flipped to
+2fsk. **Reverted.** Same root cause as the `s2_estimate` threshold:
+proven by measurement, not assumed, to be a genuine crossover this one
+scalar feature cannot resolve — not a threshold anyone picked badly.
+
+An SNR-adaptive threshold was the next idea and was rejected too:
+`pipeline.s1_detect.estimate_snr` is itself off by 8-23dB specifically
+for 4fsk (its own known, documented gap), so adaptively thresholding
+the exact class most affected on a broken SNR estimate trades one gap
+for a worse one. Left as a known, quantified, low-SNR-only gap,
+consistent with every gate in this project being anchored at ≥10dB —
+the tripwire's own bar. `models/features.py`'s docstring documents the
+attempt and the measured reason it didn't survive testing, same
+transparency as the 4fsk overfitting misdiagnosis correction in
+`classifier_eval.md`: a disproven hypothesis kept visible, not silently
+dropped. `models/dataset_train.csv`, `dataset_holdout.csv`,
+`classifier.txt`, `reports/classifier_eval.md` and `s2_coverage.md` were
+all regenerated during the experiment and regenerated back — confirmed
+byte-identical to what's already committed, so nothing here touches the
+live classifier.
+
+Nehal's concatenated CCSDS chain (5 Sep, not mine) not investigated.
+
 ---
 
 ## Anvith — S3 receiver chain
