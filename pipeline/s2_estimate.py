@@ -48,10 +48,13 @@ class S2Result:
     symbol_rate_hz: float | None
     symbol_rate_hypotheses: list = field(default_factory=list)   # [(rate_hz, score), ...] ranked
     cfo_hz: float | None = None
-    cfo_hypotheses: list = field(default_factory=list)           # [(cfo_hz, order_m, score), ...] ranked
+    cfo_hypotheses: list = field(default_factory=list)           # [(cfo_hz, order_m, score), ...] ranked, one per M
+    cfo_alias_hypotheses: list = field(default_factory=list)     # [(cfo_hz, order_m, score), ...] EVERY alias per M, 0Hz guaranteed present
     fsk_order_hint: int | None = None
     fsk_order_hypotheses: list = field(default_factory=list)     # [(order, score), ...] ranked
     constant_envelope: bool | None = None
+    modulation_hypotheses: list = field(default_factory=list)    # [(class_name, prob), ...] ranked
+    modulation_low_confidence: bool | None = None
     reason: str | None = None
 
     def as_params(self) -> dict:
@@ -138,7 +141,8 @@ def estimate_symbol_rate_fsk(x: np.ndarray, fs: float,
 
 
 def estimate_cfo(x: np.ndarray, fs: float, orders: tuple[int, ...] = (2, 4, 8)
-                  ) -> tuple[float, int, float, list[tuple[float, int, float]]]:
+                  ) -> tuple[float, int, float, list[tuple[float, int, float]],
+                             list[tuple[float, int, float]]]:
     """Carrier offset by M-th power line search, ranked over every M tried.
 
     Raising an M-PSK signal to the M-th power strips the data modulation
@@ -146,15 +150,38 @@ def estimate_cfo(x: np.ndarray, fs: float, orders: tuple[int, ...] = (2, 4, 8)
     the sharpest line is also a usable hint at the modulation order, which
     is why the full ranking is returned rather than just the winner -- S3
     can fall back to the second-best M if the top hint turns out wrong.
+
+    FIXED 4 Sep -- classic M-th power spectral-line trap, caught by a
+    teammate: this used to demean z (`z = z - np.mean(z)`) before the
+    FFT, which nulls out exactly the bin the estimator most needs --
+    the DC line is where the true tone sits when CFO genuinely is 0.
+    With DC removed, argmax locks onto the next-strongest line instead,
+    which for an M-th-power PSK spectrum is a symbol-rate-related
+    cyclostationary artifact, not the carrier -- so every clean
+    (zero-CFO) file reported a false CFO of Rs/M, confirmed on bpsk (Rs/2),
+    qpsk (Rs/4) and 8psk (Rs/8) captures in the corpus. EVM doesn't catch
+    this (a residual phase ramp doesn't move symbols off their decision
+    regions much), but Stage 4's algebraic recovery does, since it isn't
+    tolerant of any rotation at all. Fixed by not demeaning -- verified
+    the true peak then lands at k=0 with a HIGHER score than any false
+    alias, on every modulation tested, not just a plausible-looking one.
+
+    Also now returns the FULL alias set per M (every `m`-th root of the
+    detected line, not just the one closest to zero) rather than
+    silently collapsing to a single guess, and explicitly guarantees a
+    0 Hz candidate is present in that set even if no M's peak search
+    happens to land there -- so a residual edge case still leaves 0 Hz
+    available for S3/S4 to try, rather than depending entirely on the
+    peak search being right.
     """
     x = np.asarray(x, dtype=np.complex128)
     x = x / (np.sqrt(np.mean(np.abs(x) ** 2)) or 1.0)
     n = min(1 << 20, _next_pow2(x.size))
 
     hyps: list[tuple[float, int, float]] = []
+    all_aliases: list[tuple[float, int, float]] = []
     for m in orders:
         z = x**m
-        z = z - np.mean(z)
         spec = np.abs(np.fft.fft(z * np.hanning(z.size), n))
         k = int(np.argmax(spec))
         score = float(spec[k] / (np.median(spec) + 1e-30))
@@ -162,15 +189,22 @@ def estimate_cfo(x: np.ndarray, fs: float, orders: tuple[int, ...] = (2, 4, 8)
         f_m = kf / n
         if f_m > 0.5:
             f_m -= 1.0
-        # the line sits at m * cfo modulo 1, so fold to the smallest offset
+        # the line sits at m * cfo modulo 1, so fold to EVERY alias --
+        # all m of them are exposed, not just the one closest to zero
         cands = (f_m + np.arange(m)) / m
         cands = np.where(cands > 0.5 / m * m, cands - 1.0, cands)
+        for c in cands:
+            all_aliases.append((float(c) * fs, m, score))
         cfo = float(cands[int(np.argmin(np.abs(cands)))])
         hyps.append((cfo * fs, m, score))
 
+    if not any(abs(c) < 1.0 for c, _m, _s in all_aliases):
+        all_aliases.append((0.0, orders[0], 0.0))
+
     hyps.sort(key=lambda h: h[2], reverse=True)
+    all_aliases.sort(key=lambda h: h[2], reverse=True)
     best_cfo, best_m, best_score = hyps[0]
-    return best_cfo, best_m, best_score, hyps
+    return best_cfo, best_m, best_score, hyps, all_aliases
 
 
 def estimate_fsk_order(x: np.ndarray, fs: float, candidates: tuple[int, ...] = (2, 4),
@@ -209,12 +243,23 @@ def estimate_fsk_order(x: np.ndarray, fs: float, candidates: tuple[int, ...] = (
     return order, score, hyps
 
 
-def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None) -> S2Result:
+def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None,
+             classify: bool = True) -> S2Result:
     """Top-level S2 entry point.
 
     constant_envelope=None picks the estimator by measuring the envelope
-    variation, which is itself blind -- the real classifier (2 Sep) makes
-    the same call from its own output; this is the fallback until then.
+    variation, which is itself blind -- the trained classifier (3 Sep)
+    makes the same call internally too; this is what runs before the
+    classifier has anything to say (e.g. while deciding which resample
+    ratio to hand it).
+
+    classify=True runs the trained modulation classifier in-process
+    (models.classify, loaded once at its own import, not retrained here)
+    on S2's own symbol-rate estimate -- never on truth. Imported lazily,
+    inside the call, because models.features imports estimate_symbol_rate
+    from this module: importing models.classify at module level here
+    would be circular. classify=False skips it (used by tests that don't
+    care about classification and don't want the model-load cost).
     """
     if iq is None or len(iq) < 16:
         return S2Result(status="failed", fs=fs, symbol_rate_hz=None,
@@ -229,17 +274,31 @@ def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None) -
         else:
             rate, rate_score, rate_hyps = estimate_symbol_rate(iq, fs)
 
-        cfo, order_m, cfo_score, cfo_hyps = estimate_cfo(iq, fs)
+        cfo, order_m, cfo_score, cfo_hyps, cfo_alias_hyps = estimate_cfo(iq, fs)
 
         fsk_order = fsk_order_score = None
         fsk_order_hyps: list = []
         if constant_envelope:
             fsk_order, fsk_order_score, fsk_order_hyps = estimate_fsk_order(iq, fs)
 
+        mod_hyps: list = []
+        mod_low_conf = None
+        if classify:
+            try:
+                from models.classify import classify as _classify
+                result = _classify(iq, fs, rate)
+                mod_hyps = result["hypotheses"]
+                mod_low_conf = result["low_confidence"]
+            except FileNotFoundError:
+                pass   # model not trained in this checkout yet -- degrade, don't crash S2
+
         return S2Result(status="ok", fs=fs, symbol_rate_hz=rate,
                          symbol_rate_hypotheses=rate_hyps, cfo_hz=cfo,
-                         cfo_hypotheses=cfo_hyps, fsk_order_hint=fsk_order,
+                         cfo_hypotheses=cfo_hyps,
+                         cfo_alias_hypotheses=cfo_alias_hyps, fsk_order_hint=fsk_order,
                          fsk_order_hypotheses=fsk_order_hyps,
-                         constant_envelope=constant_envelope)
+                         constant_envelope=constant_envelope,
+                         modulation_hypotheses=mod_hyps,
+                         modulation_low_confidence=mod_low_conf)
     except Exception as e:
         return S2Result(status="failed", fs=fs, symbol_rate_hz=None, reason=str(e))
