@@ -77,6 +77,27 @@ MAX_SCRAMBLER_SHIFT = 2048         # self-difference search, in bits
 MIN_RS_BLOCKS = 4                  # fewer than this and "it decoded" means little
 RS_SCREEN_OFFSETS = 8              # byte alignments tried in the cheap screen
 
+# Row length for the cheap "is this a codeword?" screen in the scrambler
+# search. It must be deficient for EVERY code in the declared envelope and
+# full rank on unstructured data.
+#
+# This was 14 - the span of rate-1/2 K=7, the one code the chain was built
+# against - and it made the screen a false-negative generator for everything
+# else. Measured deficiency at a single row length:
+#
+#     stream          L=14   L=36   L=60   L=72
+#     rate 1/2 K=7       1     12     24     30
+#     rate 1/2 K=9       0     10     22     28    <- rejected at 14
+#     rate 1/2 K=3       5     16     28     34
+#     rate 1/3 K=7       0     18     34     42    <- rejected at 14
+#     uncoded random     0      0      0      0
+#
+# 60 works because it is a multiple of both candidate symbol sizes (2 and 3)
+# and comfortably above the largest span in the envelope - rate 1/3 at K=9 is
+# span 27. Deficiency is L/n - m there, so every declared code shows it and
+# unstructured data does not. Same cost: one rank computation per shift.
+SCREEN_ROW_LEN = 60
+
 
 @dataclass
 class CCSDSResult:
@@ -113,9 +134,13 @@ def find_scrambler_period_blind(bits: np.ndarray, stride: int = 2,
         if len(diff) < 8192:
             break
         # A cheap necessary condition before paying for a full recovery: the
-        # difference must be rank deficient at the code's own span.
-        M = reshape_rows(diff, 14, 0, max_rows=14 + ROW_MARGIN)
-        if M.size and 14 - rank_gf2(M) > 0:
+        # difference must be rank deficient. See SCREEN_ROW_LEN - this used to
+        # test row length 14, which is the span of rate-1/2 K=7 and NOTHING
+        # else, so the whole scrambler path silently failed for every other
+        # code in the declared envelope.
+        M = reshape_rows(diff, SCREEN_ROW_LEN, 0,
+                         max_rows=SCREEN_ROW_LEN + ROW_MARGIN)
+        if M.size and SCREEN_ROW_LEN - rank_gf2(M) > 0:
             res = blind_recover(diff, statistical_fallback=False)
             if res.status == "ok" and res.generators_octal:
                 return shift, res
