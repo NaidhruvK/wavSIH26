@@ -242,8 +242,21 @@ a status) and `test_early_exit_agrees_with_the_full_sweep_on_what_matters`.
 
 - **Framing is not implemented.** S6 has descrambling and payload
   extraction; there is no frame sync, no header/payload split, no ASM matching.
-- **No concatenated CCSDS chain yet** (5 Sep). RS and conv both exist and
-  are registered, but they have never been chained.
+- ~~No concatenated CCSDS chain yet~~ **DONE 5 Sep.** RS outer, block
+  interleaver, convolutional inner and a randomiser, peeled blind and decoded
+  to byte-exact payload in both the scrambled and unscrambled arms - about
+  55 s. `pipeline/s6_frame/ccsds.py`, `reports/ccsds_chain.md`.
+
+  Two findings from it that generalise beyond CCSDS. **An interleaver sitting
+  on a Reed-Solomon codeword is invisible to the rank test** - a permutation
+  preserves rank over GF(2), and RS constraints live at L=2040, far past
+  MAX_PERIOD. It is only visible in this repo's earlier studies because those
+  interleaved a CONVOLUTIONAL codeword, whose constraints are local. Find it
+  functionally, with the RS decoder as judge, never off the curve. And **the
+  scrambler chicken-and-egg is breakable**: `r[n] XOR r[n+P]` cancels an
+  additive scrambler at any shift P that is a multiple of its period and the
+  symbol size, leaving the XOR of two codewords, so P can be found with the
+  rank test alone and no parity check.
 - **RS beyond its correction limit declines rather than decoding**, which is
   correct: t = 16 symbols per 255-byte block, so ~0.5 % BER is the ceiling.
   Weak profiles (255,247) and (255,251) were REMOVED from the search after

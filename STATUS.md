@@ -1084,6 +1084,96 @@ imports. It will break the moment that branch lands. His `tests/fixtures/
 corpus.py` has `synth()` as the replacement; I will port it when the branch
 merges rather than guess at it now.
 
+---
+
+## 5 Sep - the concatenated CCSDS chain. Gate met, both arms.
+
+`reports/ccsds_chain.md`, `pipeline/s6_frame/ccsds.py`,
+`tests/unit/test_ccsds_chain.py`. Four coding layers, none supplied.
+
+| | unscrambled | scrambled |
+|---|---|---|
+| layers peeled | conv, viterbi, deint, RS | **scrambler, descramble**, conv, viterbi, deint, RS |
+| generators | (0o171, 0o133) OK | (0o171, 0o133) OK |
+| interleaver | block(8,12) OK | block(8,12) OK |
+| outer code | RS(255,223) OK | RS(255,223) OK |
+| printable | **100.0 %** | **100.0 %** |
+| payload vs transmit | **byte-exact** | **byte-exact** |
+| time | 54.2 s | 55.8 s |
+
+**502 passed, 4 skipped, 1 xfailed.**
+
+**TWO THINGS I HAD WRONG AND HAD TO OVERTURN TODAY.**
+
+**1. The interleaver is INVISIBLE to the rank test in the CCSDS ordering.** Every
+earlier study here interleaved the convolutional CODEWORD, whose constraints are
+local (span 14), so permuting them moves the collapse to the interleaver period -
+that is why S4 has read depth x width off the curve since 29 Aug. CCSDS
+interleaves the RS codeword instead, and **a permutation preserves rank over
+GF(2)**. RS puts its binary-image constraints at L=2040, far past MAX_PERIOD, so
+there is nothing at any searchable L to find.
+
+I did not reason that out. I measured a collapse at 96 on one file and reported
+"better than I predicted - the interleaver IS visible". **That was wrong.** Those
+deficiencies were the ASCII payload's own structure and they MOVED when I changed
+the message: message A gave 96/122/183/192, message B gave 112/147/168/192/196,
+and a RANDOM payload gives nothing at any length up to 81,600 bits. My first
+version of the candidate search ranked off that curve and could never have
+worked. Fourth time this week that reading a curve where only a functional test
+can decide produced a wrong answer. The interleaver is now found functionally
+with the RS decoder as sole judge.
+
+**2. The scrambler chicken-and-egg is broken.** `recover_scrambler` needs the
+code's parity check and the scrambler hides the code - open in HANDOFF since
+2 Sep. But an additive scrambler is periodic, so for a shift P that is a multiple
+of both its period and the symbol size, `r[n] XOR r[n+P] = c[n] XOR c[n+P]` - the
+scrambler cancels and the XOR of two codewords is a codeword. Search P with the
+RANK test on the self-difference, which needs no parity check, and the code from
+the difference unlocks the rest. That is why the scrambled arm peels four layers.
+
+**Cost, and the one number that is a problem.** Viterbi is 80 % of the 55 s and
+it is commpy being pure Python (163 kbit takes 167 s), so the chain caps input at
+48,000 coded bits. The interleaver grid nearly killed it: full RS blind_recover
+is ~2.2 s per candidate, so reaching 8x12 at grid index 190 would cost **421 s**.
+A cheap screen - one RS profile at 8 byte alignments, early exit on the first bad
+block - rejects a wrong candidate in **0.038 s**, taking the 465-pair grid to
+**16.9 s with exactly one hit, the true (8,12), and no false positives**.
+
+**DHERAJ - YOUR CFO FIX IS RIGHT, AND IT IS INCOMPLETE.** Your root cause is
+better than my report: the demean before the FFT nulled the DC bin, which is
+exactly where the line sits at zero CFO. Verified across the corpus at >=10 dB:
+
+| scheme | files | \|CFO err\| >= 100 Hz |
+|---|---|---|
+| bpsk, qpsk, 8psk, 16qam | 112 | **0** |
+| **2fsk** | 28 | **28** |
+| **4fsk** | 28 | **28** |
+
+Your "112/112 clean files" is exactly the four LINEAR schemes. **All 56 FSK files
+still report 25,000 Hz where the truth is 0** - the same rate/2 alias. It is not
+cosmetic: I measured recovery with and without the estimate applied, and
+
+    2fsk 20 dB / 13 dB   survives it (recovers either way)
+    4fsk 20 dB / 13 dB   RECOVERS without it, FAILS with it
+
+So the estimator is still blind for FSK and it costs us 4-FSK outright. My chain
+survives because it treats CFO as a hypothesis and tries the null first, but any
+orchestrator that trusts S2 loses 4-FSK.
+
+**And I owe you one.** When I saw `models/classifier.txt` show a checksum
+difference on checkout I called it "a phantom CRLF diff, not a content change"
+and moved on. You found it was real - autocrlf breaking LightGBM's line parser
+with "Model format error, expect a tree here". I saw the symptom and misjudged
+it. Your `.gitattributes` fix is the right one.
+
+**ASK: a concatenated profile in the corpus.** The zoo has conv-only and RS-only
+streams; CCSDS is the only layer of the declared envelope with no corpus file, so
+this runs against `local_zoo.make_ccsds_stream`. Also note my fixture is NOT
+bit-for-bit CCSDS 131.0-B - the blue book randomises BEFORE the convolutional
+encoder and interleaves SYMBOLS (bytes, depth I in 1..8), where I follow the
+Command Center's stated order and interleave bits. Fine for testing whether four
+layers peel; not a standards claim.
+
 **Blocked on:** nothing.
 
 ---
