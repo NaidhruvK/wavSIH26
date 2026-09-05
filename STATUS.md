@@ -305,6 +305,57 @@ its own training data before trusting a feature-level theory.
 Next: 5 Sep — concatenated CCSDS chain (Nehal's, not mine) and driving
 S2 accuracy down the SNR range / producing envelope charts (mine).
 
+**Out-of-band fix, reported by a teammate: `estimate_cfo` was reporting
+a false CFO of `Rs/M` on every clean file.** The classic M-th power
+spectral-line trap. Root cause: `z = z - np.mean(z)` before the FFT
+nulled the DC bin -- exactly where the true line sits when CFO is
+genuinely 0. With DC removed, `argmax` locked onto the next-strongest
+line instead, a symbol-rate-related cyclostationary artifact rather
+than the carrier. Confirmed on bpsk (false CFO = Rs/2), qpsk (Rs/4),
+8psk (Rs/8) — every file in the corpus has `cfo_norm=0.0` (see
+`zoo/rf.py`), so this was checkable directly against truth. **EVM
+doesn't catch this** (a residual phase ramp barely moves symbols off
+their decision regions), **but Stage 4's algebraic recovery does, since
+it has zero tolerance for any rotation** — which is exactly how the
+teammate found it: EVM looked fine, S4 recovery was completely broken.
+
+Fixed by not demeaning. Verified the true M now wins on SCORE, not just
+plausibility: on every modulation tested, the M matching the signal's
+own PSK order lands its peak at k=0 with a HIGHER score than any false
+alias — not a coincidental pick. **112/112 clean at ≥10dB across the
+full PSK/QAM corpus** (bpsk/qpsk/8psk/16qam × every rep × every SNR
+≥10dB), within 200Hz of true 0.
+
+Also, per the teammate's explicit request: `estimate_cfo` now returns a
+5th element, `cfo_alias_hypotheses` — every `m`-th root per order (not
+just the closest-to-zero pick `hyps` keeps for backward compat), with
+an explicit 0 Hz candidate guaranteed present even if no order's peak
+search happens to land there. `S2Result` gets a matching
+`cfo_alias_hypotheses` field. 6 new tests in
+`tests/unit/test_s2_estimate.py`, including one that checks the root
+cause (score, not just value) rather than just the symptom.
+
+**Found while fixing this: I ported the exact same bug from
+`tests/fixtures/local_s2.py`** (Nehal's 30 Aug stand-in) when I wrote
+the real module — it has the identical `z = z - np.mean(z)` line. That
+fixture is explicitly labelled "dies when pipeline/s2_estimate.py
+lands" and was supposed to be retired once my real module existed, but
+`tests/unit/test_s3_receive.py` still imports `estimate_blind` from it
+directly, not from `pipeline.s2_estimate`. **If the teammate who found
+this was testing through that path, the bug is still live there** —
+not touching `tests/fixtures/local_s2.py` myself (it's not mine), but
+flagging clearly, a fourth time now, that it needs to be deleted and
+repointed at the real module.
+
+**Also found and fixed, unrelated: `models/classifier.txt` was
+corrupted in my own local working tree** — `core.autocrlf=true` with no
+`.gitattributes` let git's LF→CRLF conversion mangle the LightGBM
+text-dump model on checkout (confirmed the committed blob itself was
+fine via `git show`; only checked-out copies broke). This would hit
+*any* teammate on Windows who clones or checks out this repo, not just
+me. Added `.gitattributes` marking `models/classifier.txt` and the
+dataset CSVs `-text` so it can't recur for anyone.
+
 ---
 
 ## Anvith — S3 receiver chain
