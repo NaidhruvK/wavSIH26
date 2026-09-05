@@ -53,6 +53,55 @@ def _classical_psk_error(y: complex, order: int) -> float:
     return float(np.sign(y.real) * y.imag - np.sign(y.imag) * y.real) / mag
 
 
+ACQ_BW_RATIO = 4.0
+"""How much wider the acquisition phase runs than the tracking phase.
+
+`gardner_sync` uses 5.0 for the same job. This is 4.0 because the Costas loop
+runs at symbol rate rather than sample rate, so the same normalised bandwidth
+is a wider real one, and because the detector it drives is decision-directed:
+past a point a wider loop feeds its own decision errors back as phase. Both
+values are the same idea and neither is a fitted constant - the sweep in
+`reports/s3_loop_bw.md` measures the TRACKING bandwidth, which is the one that
+sets steady-state noise, and the acquisition multiplier only has to be large
+enough to pull in an offset the alignment check would have passed.
+"""
+
+ACQ_SYMBOLS = 150
+"""How long the acquisition phase lasts, in symbols. MEASURED, not copied.
+
+It was 400 for about an hour, because that is what `gardner_sync` uses, and
+400 is wrong here. 16-QAM at loop_bw 0.02 with a 0.02 x Rs residual offset,
+over 28 files at 4-13 dB, sweeping the two acquisition knobs:
+
+    ratio  symbols   clean   offset
+      1.0        0    14/28    1/28   <- single speed, before 5 Sep
+      2.0      150    14/28    4/28
+      2.0      400    14/28    8/28
+      4.0      150    14/28    9/28   <- chosen
+      4.0      400    12/28   12/28
+      8.0      150    13/28   11/28
+
+The bottom two rows are the trade this was supposed to remove: a longer or
+wider acquisition keeps pulling the offset in, and starts costing files that
+had no offset to pull. 150 symbols at 4x is the corner - the full clean-arm
+count, and nine times the offset-arm count of a single-speed loop.
+
+The asymmetry with `gardner_sync`'s 400 is not an inconsistency. That loop
+runs at sample rate on a stream that has not been equalised; this one runs at
+symbol rate on one that has, after `_EQ_WARMUP` has already spent 1200 symbols
+of the record, and its detector is decision-directed - so every extra
+wide-bandwidth symbol here is one more symbol of decision noise fed back as
+phase.
+"""
+
+MAX_LOOP_BW = 0.25
+"""Ceiling on the acquisition bandwidth, so a wide tracking value cannot
+multiply into an unstable one. A second-order PI loop this far open is no
+longer tracking anything; the coefficients stop meaning what their derivation
+says at around a quarter, and `max_freq` is at the same number for the
+neighbouring reason."""
+
+
 @dataclass
 class CostasResult:
     symbols: np.ndarray       # de-rotated symbols
@@ -70,14 +119,40 @@ def costas_loop(
     damping: float = np.sqrt(0.5),
     max_freq: float = 0.25,
     lock_threshold: float = 0.60,
+    acq_bw: float | None = None,
+    acq_symbols: int = ACQ_SYMBOLS,
 ) -> CostasResult:
     """Second-order carrier recovery, run at symbol rate after timing recovery.
 
     One sample per symbol is all the detector needs, and the slower loop rate
     means a narrower effective bandwidth for the same coefficients.
+
+    GEAR-SHIFTED since 5 Sep, the same way `gardner_sync` always was: a wider
+    bandwidth for the first `acq_symbols` symbols to pull the offset in, then
+    the tracking bandwidth for the rest. This loop ran at one bandwidth from
+    end to end until today, and `reports/s3_loop_bw.md` is what showed the
+    cost. Handed a residual carrier offset of 0.02 x Rs - which
+    `lockcheck.CARRIER_OFFSET_LIMIT` explicitly permits, so the pipeline does
+    hand it over - 16-QAM at loop_bw 0.02 decoded **1 of 28** files. At 0.04
+    it decoded 11, and lost a 10 dB file that had been decoding at 0.0029 to
+    0.0299, because the wider loop that acquires better also tracks noisier.
+
+    Two bandwidths dissolve that trade instead of choosing a side of it, and
+    the corpus cannot see the problem at all: every file in it has a true
+    offset of exactly zero, so the acquisition transient this fixes only
+    exists on a real capture or an injected one. That is the argument for
+    gear-shifting rather than for widening.
+
+    `acq_bw=None` means `ACQ_BW_RATIO x loop_bw`. Pass `acq_bw=loop_bw` to get
+    the pre-5-Sep single-speed behaviour back, which is what the sweep does
+    when it measures one bandwidth end to end.
     """
     y = np.asarray(symbols, dtype=np.complex128)
-    kp, ki = loop_coefficients(loop_bw, damping)
+    if acq_bw is None:
+        acq_bw = ACQ_BW_RATIO * loop_bw
+    kp_acq, ki_acq = loop_coefficients(min(float(acq_bw), MAX_LOOP_BW), damping)
+    kp_trk, ki_trk = loop_coefficients(loop_bw, damping)
+    kp, ki = kp_acq, ki_acq
 
     pts = np.asarray(sch.points, dtype=np.complex128)
     pts = pts / (np.sqrt(np.mean(np.abs(pts) ** 2)) or 1.0)
@@ -92,7 +167,13 @@ def costas_loop(
 
     phase = 0.0
     freq = 0.0
+    shift_at = max(0, int(acq_symbols))
     for k in range(y.size):
+        if k == shift_at:
+            # Down to the tracking bandwidth. The NCO's phase and frequency
+            # carry across untouched - only the gains change - so this is a
+            # narrowing of the loop, not a restart of it.
+            kp, ki = kp_trk, ki_trk
         d = y[k] * np.exp(-1j * phase)
         out[k] = d
         ph[k] = phase

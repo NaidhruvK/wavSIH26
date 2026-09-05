@@ -1,22 +1,29 @@
 """S3 against Dheeraj's real RF corpus, blind, with lock-failure detection.
 
-4 Sep. Owner: Anvith. Regenerate with:
+4 Sep, extended 5 Sep. Owner: Anvith. Regenerate with:
 
     python reports/s3_lock_gate_study.py            # measure and render
     python reports/s3_lock_gate_study.py --render-only
 
-Three arms over the same 36 files, so the difference between them is the code
-and nothing else:
+Three arms over the same corpus files, so the difference between them is the
+code and nothing else:
 
     truth-params    S3 handed the symbol rate the zoo used and no carrier
                     offset. The ceiling: what the receiver can do when its
                     inputs are right.
     s2-top          S3 handed S2's TOP hypothesis on every field, which is
-                    what it was doing until today. This is the arm that
+                    what the stage did before 4 Sep. This is the arm that
                     produced `status ok` on a stream with a bit error rate of
-                    0.485.
+                    0.485, and the arm Dheeraj's 5 Sep CFO fix moves most.
     search          `receive_best`: S2's ranked hypotheses, screened cheaply,
-                    the survivors run, the best kept. Today's work.
+                    the survivors run, the best kept. What ships.
+
+The corpus grew from 36 files to 252 on 5 Sep - seven seeds per (modulation,
+SNR) cell instead of one - and this study picks that up with no edit, because
+it globs the directory. Nothing here is per-file except the tables at the end.
+Read every number in it as "on 252 files": a one-seed cell cannot tell a
+receiver from a lucky noise draw, and several of the 4 Sep numbers this file
+used to print were one-seed cells.
 
 Every bit error rate here is measured against the bits the zoo actually
 transmitted, regenerated from the seed in the truth JSON - see
@@ -190,13 +197,110 @@ def _arm(rows, arm):
     return [r for r in rows if r["arm"] == arm]
 
 
+# The 5 Sep row states its targets by family and by SNR floor, not over the
+# corpus as a whole: "16-QAM reliable at 13 dB; PSK and FSK at 10 dB", verified
+# as "lock rate 90%+ at >=10 dB for PSK and FSK". Encoded here so the verdict
+# is computed from the same rows as everything else rather than read off a
+# table by eye.
+TARGETS = [
+    ("PSK", ("bpsk", "qpsk", "8psk"), 10.0),
+    ("FSK", ("2fsk", "4fsk"), 10.0),
+    ("16-QAM", ("16qam",), 13.0),
+]
+VERIFY_LOCK_RATE = 0.90
+
+
+def _harness_tables(srch) -> list[str]:
+    """One cell per (modulation, SNR), for both questions, and the verdict.
+
+    `locks` and `decodes` answer different questions and either table alone
+    can be read the wrong way round. `locks` is S3's own claim - `status: ok` -
+    and it is trivially maximised by never vetoing anything, which is exactly
+    the failure 4 Sep found: the pre-4-Sep build locked 19 of 36 files over a
+    bit error rate of 0.485. So the count of `ok` runs whose real bit error
+    rate is at or above CONFIDENTLY_WRONG_LIMIT sits in the same section, not
+    a later one. A lock rate is only worth having beside the count of lies it
+    permits.
+
+    Cells are `hits/files`. With seven seeds per (modulation, SNR) cell the
+    denominator is 7 on the full corpus and 1 on the original 36-file one, so
+    the shape of this table also says which corpus produced it.
+    """
+    # Registry order, not alphabetical: every other table in this project
+    # reads bpsk, qpsk, 8psk, 16qam, 2fsk, 4fsk, and a table that reads
+    # 16qam-first for no reason costs the reader a second look every time.
+    order = {name: i for i, name in enumerate(MODULATIONS)}
+    mods = sorted({r["true_mod"] for r in srch},
+                  key=lambda m: order.get(m, len(order)))
+    snrs = sorted({r["snr_db"] for r in srch})
+    hdr = "| modulation | " + " | ".join(f"{s:.0f} dB" for s in snrs) + " | all |"
+    sep = "|---" * (len(snrs) + 2) + "|"
+
+    def matrix(title, pred, note):
+        out = ["", title, "", hdr, sep]
+        for mod in mods:
+            cells = []
+            for s in snrs:
+                cell = [r for r in srch
+                        if r["true_mod"] == mod and r["snr_db"] == s]
+                cells.append(f"{sum(1 for r in cell if pred(r))}/{len(cell)}"
+                             if cell else "-")
+            rs = [r for r in srch if r["true_mod"] == mod]
+            cells.append(f"**{sum(1 for r in rs if pred(r))}/{len(rs)}**")
+            out.append(f"| {mod} | " + " | ".join(cells) + " |")
+        return out + ["", note]
+
+    L = ["", "## Harness table, by modulation and SNR bin", ""]
+    L += matrix(
+        "### Decodes - best rotation under "
+        f"{DECODE_LIMIT:.0%} raw bit error rate",
+        lambda r: r["decodes"],
+        "This is the one the day gate is written against. It is measured "
+        "against the bits the zoo transmitted, so it is what S4 would get, "
+        "not what S3 believes it got.")
+    L += matrix(
+        "### Locks - S3 returned `status: ok`",
+        lambda r: r["status"] == "ok",
+        "S3's own claim, made blind. Read it beside the row below it.")
+    L += matrix(
+        "### Confidently wrong - `ok`, estimate marked valid, real BER "
+        f">= {CONFIDENTLY_WRONG_LIMIT:.0%}",
+        lambda r: r["confidently_wrong"],
+        "Every cell here should be 0. A non-zero cell is worse than a failed "
+        "one: downstream reads `status` before it reads anything else, so "
+        "this is a stage telling S4 to spend its budget on noise.")
+
+    L += ["", "### Against the 5 Sep targets", "",
+          "| family | SNR floor | files | locks | decodes | confidently wrong "
+          "| verify |", "|---|---|---|---|---|---|---|"]
+    for label, schemes, floor in TARGETS:
+        rs = [r for r in srch
+              if r["true_mod"] in schemes and r["snr_db"] >= floor]
+        if not rs:
+            continue
+        n = len(rs)
+        lk = sum(1 for r in rs if r["status"] == "ok")
+        dc = sum(1 for r in rs if r["decodes"])
+        cw = sum(1 for r in rs if r["confidently_wrong"])
+        ok = (lk / n) >= VERIFY_LOCK_RATE and cw == 0
+        L.append(f"| **{label}** | ≥{floor:.0f} dB | {n} | "
+                 f"**{lk}/{n}** ({lk / n:.0%}) | {dc}/{n} ({dc / n:.0%}) | "
+                 f"{cw} | {'**PASS**' if ok else '**FAIL**'} |")
+    L += ["",
+          f"`verify` is the 5 Sep row's line - lock rate at or above "
+          f"{VERIFY_LOCK_RATE:.0%} above the family's floor - **and** zero "
+          "confidently wrong, which the row does not say and which is the "
+          "only reason the first number means anything."]
+    return L
+
+
 def _write_markdown(rows) -> None:
     arms = ["truth-params", "s2-top", "search"]
     n_files = len(_arm(rows, "search"))
 
     L = [
         "# S3 lock-failure detection and hypothesis retry - the 4 Sep gate", "",
-        "**Anvith.** Measured on Dheeraj's 36-file RF corpus "
+        f"**Anvith.** Measured on Dheeraj's {n_files}-file RF corpus "
         "(`zoo/corpus/rf/`), blind. Regenerate with "
         "`python reports/s3_lock_gate_study.py`.", "",
         "Bit error rates are against the bits the zoo actually transmitted, "
@@ -238,23 +342,28 @@ def _write_markdown(rows) -> None:
         "from the carrier lock metric alone - would have said about the very "
         "same runs. It is computed from the per-check verdicts each run "
         "recorded, so it is measured rather than remembered.", "",
-        f"On the `s2-top` arm, which is what S3 did until this morning, the old "
-        f"rule returns `ok` on **{cw_before} of {n_files}** files whose real bit "
-        "error rate is around 0.485 - a coin flip, reported as a clean lock, "
-        "with `estimated_output_ber` reading 0.000000 beside it.", "",
+        f"On the `s2-top` arm the old rule still returns `ok` on "
+        f"**{cw_before} of {n_files}** files it should not.", "",
         "The cause is one line in two stages meeting. `s2_estimate.estimate_cfo` "
-        "raises the signal to the M-th power and takes the strongest line; on a "
+        "raised the signal to the M-th power and took the strongest line; on a "
         "pulse-shaped stream that line is the **symbol rate**, not `M x cfo`, "
-        "so the offset comes back near `Rs / M`. De-rotating by `Rs / M` "
+        "so the offset came back near `Rs / M`. De-rotating by `Rs / M` "
         "advances the constellation exactly one symmetry step per symbol, and "
         "S3's lock metric `|E[u^S]|` is invariant under precisely that "
         "rotation. Neither stage was checkable against the other, because the "
         "only number either produced said everything was fine.", "",
-        "**Dheeraj** - the S2 half is yours and it is worth fixing at source: "
-        "the CFO search should exclude the symbol-rate line, or rank M-th "
-        "power peaks by something other than height. The corpus makes it easy "
-        "to check, because every file has a true offset of exactly zero and "
-        "S2 reports a non-zero one on 33 of 36.", "",
+        "**That half is fixed.** Dheeraj landed it on 5 Sep "
+        "(`426a780`, 'Fix S2 CFO estimator falling into the M-th power "
+        "spectral-line trap') and it is the largest single move in this "
+        "table. The `s2-top` arm - S3 reading S2's top hypothesis and nothing "
+        "else, which is what the stage did before 4 Sep - went from **4 of 36 "
+        "files decoding on 4 Sep** to "
+        f"**{dec_before} of {n_files}** on the same code path today. Measured "
+        "on the corpus this morning: every file still has a true offset of "
+        "exactly zero, and S2 now reports a non-zero one on 93 of 252 rather "
+        "than 33 of 36 - so the estimator is right far more often, and the "
+        "hypothesis-search and alignment check below are what cover the "
+        "remainder rather than papering over it.", "",
         "## What closed it", "",
         "Independent checks against different evidence, any one of which can "
         "veto a claim of lock (`pipeline/s3_receive/lockcheck.py`). Four are "
@@ -299,25 +408,44 @@ def _write_markdown(rows) -> None:
         worst = f"{min(r['snr_db'] for r in ok):.0f} dB" if ok else "-"
         L.append(f"| {mod} | {len(ok)} | {len(rs)} | {worst} |")
 
+    L += _harness_tables(srch)
+
     mods_ok = sorted({r["true_mod"] for r in srch if r["decodes"]})
     dec_frac = dec_after / max(n_files, 1)
+    hi = [r for r in srch if r["snr_db"] >= 10.0]
+    hi_dec = sum(r["decodes"] for r in hi)
+    hi_frac = hi_dec / max(len(hi), 1)
+    hi_mods = sorted({r["true_mod"] for r in hi if r["decodes"]})
     L += [
-        "", "## Against the 4 Sep gate", "",
-        "The gate is written for the whole pipeline (≥40% of the corpus to "
-        "exact bits, ≥4 of 6 modulations, no unhandled exception). S3 owns "
-        "the first two stages of that and can report its own half:", "",
-        f"- **{dec_frac:.0%}** of the corpus reaches LLRs under "
-        f"{DECODE_LIMIT:.0%} raw BER ({dec_after}/{n_files}).",
-        f"- **{len(mods_ok)} of 6** modulations are represented among them: "
-        f"{', '.join(mods_ok)}.",
+        "", "## Against the 5 Sep day gate", "",
+        "The gate is written for the whole pipeline - at least 65% of corpus "
+        "files at 10 dB or better decoding to exact bits across 5 or more "
+        "modulations, and Nehal's concatenated CCSDS chain recovering its "
+        "payload text. S4 and S5 finish that; S3 owns the front of it and can "
+        "report its own half:", "",
+        f"- **{hi_frac:.0%}** of the files at 10 dB and above reach LLRs "
+        f"under {DECODE_LIMIT:.0%} raw BER ({hi_dec}/{len(hi)}), across "
+        f"**{len(hi_mods)} of 6** modulations.",
+        f"- Over the whole corpus including 4 and 8 dB it is "
+        f"**{dec_frac:.0%}** ({dec_after}/{n_files}), across "
+        f"{len(mods_ok)} of 6.",
         "- No input in this study, or in the adversarial set in "
         "`tests/unit/test_s3_receive.py`, raised out of `receive()`.", "",
-        "## Every file, `search` arm", "",
+        "Quoting either number without the corpus size attached is how a "
+        "24/24 becomes a claim about a receiver rather than about 36 files, "
+        f"so: **{n_files} files**, seven seeds per (modulation, SNR) cell.", "",
+        "## Every file that did not decode, `search` arm", "",
+        f"All {n_files} rows are in `{OUT_CSV.name}`; this table is the "
+        "complement, because it is the list the next day's work is drawn "
+        "from. Sorted by SNR descending: a miss at 20 dB is a defect, a miss "
+        "at 4 dB may be the operating envelope, and they should not be read "
+        "in the same breath.", "",
         "| file | true | chosen | status | est BER | valid | measured BER | "
         "runs | s | why not |",
         "|---|---|---|---|---|---|---|---|---|---|",
     ]
-    for r in sorted(srch, key=lambda r: (r["true_mod"], r["snr_db"])):
+    misses = [r for r in srch if not r["decodes"]]
+    for r in sorted(misses, key=lambda r: (-r["snr_db"], r["true_mod"])):
         mark = "" if r["decodes"] else " ⚠"
         L.append(
             f"| {r['file']} | {r['true_mod']} | {r['chosen_mod'] or '-'} | "
@@ -336,31 +464,53 @@ def _write_markdown(rows) -> None:
         "90 s whole-pipeline window. The screen is what makes that true: "
         "without it the same candidate list is 6 modulations x 3 rates x 5 "
         "offsets of full chain runs.", "",
-        "## Known gaps, stated", "",
-        "- **The 4 dB files mostly do not decode**, on any arm. That is the "
-        "operating envelope, not a lock-detection failure - `truth-params` "
-        "does not decode them either. 5 Sep is the day that moves.",
-        "- **The four FSK misses split two ways, and the halves have "
-        "different owners.** `2fsk_8dB_2025` (S2 offers 11987, 9345, 59987 Hz "
-        "against a true 50000) and `4fsk_4dB_2030` (65634) fail because the "
-        "true rate is not in the list; the retry loop can only search what it "
-        "is given. **Dheeraj**: one predicate is behind both - `estimate()`'s "
-        "envelope test reads these WAVs as non-constant-envelope, so FSK "
-        "captures go to the LINEAR symbol-rate estimator, and "
-        "`fsk_order_hypotheses` comes back empty on all 36 files for the same "
-        "reason. That is worth more to this gate than anything left in S3.",
-        "- **`2fsk_4dB_2024` is mine, and it is a near miss.** S2's rate is "
-        "48479 against a true 50000, close enough to work, and the presence "
-        "check scored it 4.4 against a limit of 4.5. The limit is set from the "
-        "worst noise draw measured at the shortest record length, so lowering "
-        "it to catch this file would spend the margin that keeps noise out. "
-        "The right fix is a better statistic at 4 dB, not a looser threshold; "
-        "5 Sep is the day for it.",
-        "- **Choosing the modulation is not S3's job** and this does not make "
-        "it so. With no ranking from S2, the search runs every survivor and "
-        "picks on reported quality, which works on this corpus and is not a "
-        "classifier. When Dheeraj's lands, pass it as `modulations=` and the "
-        "search takes the first clean lock instead.",
+        "## Known gaps, stated - 5 Sep", "",
+        "- **8-PSK and 16-QAM at 4 dB do not decode, on any arm.** That is "
+        "the operating envelope and not a lock-detection failure: "
+        "`truth-params` does not decode them either, at a median raw bit "
+        "error rate of 0.23 and 0.31 with the true rate and no offset. "
+        "Nothing in S3 recovers a stream the demodulator cannot demodulate, "
+        "and the checks correctly refuse all of them.",
+        "- **16-QAM at 8 dB lands just the wrong side of the decode line, "
+        "and knows it.** Seven files, raw bit error rate 0.0117-0.0124 "
+        "against the 1% this study calls decoding, with the receiver's own "
+        "estimate at 0.0100-0.0109 - right to within 13%, `status: ok`, "
+        "correctly. They are counted as misses here and they are not misses "
+        "downstream: 1.2% is inside the 3% Nehal measured as the ceiling for "
+        "statistical code recovery. The number to move is the demodulator's, "
+        "not the threshold's, and moving the threshold to claim them would be "
+        "changing the definition of the gate to pass it.",
+        "- **FSK below 10 dB was the largest single gap, and most of it was "
+        "not S3's.** S2's symbol rate is exact on 224 of 252 files. The 28 "
+        "exceptions are every 2-FSK and 4-FSK file at 4 and 8 dB, wrong by up "
+        "to 81% - and `fsk_order_hypotheses` comes back empty on exactly "
+        "those 28, not on all files as this report said on 4 Sep. **Dheeraj** "
+        "has this documented and quantified in `reports/s2_envelope.md` as a "
+        "deliberate low-SNR-only gap; what that write-up could not know is "
+        "what it costs downstream, which is the whole of it: handed the true "
+        "rate, S3 decodes all 28 at a median raw bit error rate of 0.004. The "
+        "receiver was never the problem on those files. S3 now rescues the "
+        "rate for itself (`lockcheck.strongest_line`, "
+        "`reports/s3_rate_rescue.md`), which closes the gap from this side "
+        "without touching S2 - but fixing the envelope predicate at source is "
+        "still worth more, because every stage downstream of S2 inherits the "
+        "wrong rate and only this one now works around it.",
+        "- **A correction to what this report said on 4 Sep about "
+        "`2fsk_4dB_2024`.** It was written up as a presence-threshold near "
+        "miss - line score 4.4 against a limit of 4.5 - with the conclusion "
+        "that 4 dB needed a better statistic rather than a looser number. The "
+        "statistic was fine. Measured today: the 4.4 was scored at 48 479 Hz, "
+        "the rate S2 offered; at the true 50 000 Hz the same statistic on the "
+        "same file scores **45.2**, which is five times the limit for "
+        "declaring a line present. The threshold was never what stood in the "
+        "way, the rate was, and a study of the threshold would have spent the "
+        "day tuning a number that was already right.",
+        "- **Choosing the modulation is still not S3's job.** Dheeraj's "
+        "classifier has landed and `receive_best` reads its ranking through "
+        "`params_from_s2`, taking the first clean lock instead of running "
+        "every survivor - which is where the drop in median time comes from. "
+        "Where the classifier is wrong the search still recovers, because an "
+        "unranked modulation is tried last rather than not at all.",
     ]
     OUT_MD.write_text("\n".join(L) + "\n", encoding="utf-8")
 

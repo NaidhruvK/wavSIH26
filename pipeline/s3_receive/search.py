@@ -64,7 +64,7 @@ import numpy as np
 from registry import MODULATIONS
 
 from .base import S2Params
-from .lockcheck import carrier_alignment, signal_presence
+from .lockcheck import carrier_alignment, signal_presence, strongest_line
 from .result import Hypothesis, S3Result
 
 __all__ = ["receive_best", "Candidate", "params_from_s2",
@@ -87,6 +87,17 @@ intended - the sort of thing that turns into a five-minute stage without a
 single line of it looking wrong."""
 
 MAX_CHAIN_RUNS = 12
+
+RESCUE_PRIOR = 0.5
+"""How far a rate-rescued candidate sorts below the S2-derived one it replaces.
+
+It keeps the modulation prior it inherited, so the classifier's ranking still
+orders the rescued candidates among themselves; the factor only says that a
+rate S3 found for itself is weaker evidence than one S2 offered. In the case
+this exists for, every S2 rate has already been refused and the rescued
+candidates are the only survivors, so the factor decides nothing - which is
+the point. It must never reorder a search that was working.
+"""
 """Ceiling on full receiver runs, after screening. The screen is what is
 supposed to keep this small; this is the backstop for an input the screen finds
 plausible everywhere, which is a thing noise-shaped signals do."""
@@ -156,6 +167,7 @@ class _Screen:
     fs: float
     presence: dict = field(default_factory=dict)
     alignment: dict = field(default_factory=dict)
+    peak: dict = field(default_factory=dict)
     n_measurements: int = 0
 
     def presence_of(self, family: str, rate: float):
@@ -175,6 +187,18 @@ class _Screen:
             self.alignment[k] = carrier_alignment(x, self.fs, rate)
             self.n_measurements += 1
         return self.alignment[k]
+
+    def line_peak_of(self, family: str):
+        """Where this family's cyclostationary line is, measured once.
+
+        Same statistic, same spectrum and same carrier-invariance argument as
+        `presence_of`, so one measurement per family covers every rate and
+        every offset - two for the whole search.
+        """
+        if family not in self.peak:
+            self.peak[family] = strongest_line(self.iq, self.fs, family)
+            self.n_measurements += 1
+        return self.peak[family]
 
 
 def params_from_s2(s2_result: Any, fs: float | None = None) -> dict[str, Any]:
@@ -335,8 +359,18 @@ def receive_best(iq: np.ndarray, params: dict[str, Any],
 
     `params` is `params_from_s2(...)`, or any mapping with `fs` plus either
     `symbol_rate` or the ranked lists. `modulations` restricts the search to a
-    ranked subset - pass S2's classifier output here when it lands; the default
-    is every registered plug-in, in registration order.
+    ranked subset; the default is every registered plug-in, in registration
+    order.
+
+    S2's classifier landed on 5 Sep and its ranking arrives through `params`
+    as `modulation_hypotheses`, not through this argument - which is the
+    difference between a PRIOR and a RESTRICTION, and the distinction is the
+    reason the corpus still decodes where the classifier is wrong. A ranking
+    orders the queue and an unranked modulation is tried last; `modulations`
+    means the others are never tried at all. 2-FSK and 4-FSK classify at 0%
+    below 10 dB (Dheeraj's `reports/s2_coverage.md`), and 4-FSK is wrong on 6
+    of 7 files at 20 dB with the right answer sitting at rank 2, so a
+    restriction there would lose files a prior only reorders.
 
     `stop_on_clean_lock=None` (the default) decides for itself, and the rule is
     worth stating because getting it wrong costs correctness rather than time:
@@ -400,6 +434,27 @@ def receive_best(iq: np.ndarray, params: dict[str, Any],
         pres = screen.presence_of(family, c.symbol_rate)
         if pres.failed:
             c.rejected = pres.detail
+            # The rate axis gets the same treatment the offset axis already
+            # got below: a candidate refused by a measurement carries, in that
+            # same measurement, the correction that would fix it. "No line at
+            # the rate you claimed" is one FFT away from "the line is at this
+            # other rate", and until 5 Sep the search threw that away and
+            # returned `failed` with zero chain runs.
+            #
+            # Bounded so it stays a fallback and not a second estimator: one
+            # rate per family, only from a candidate that has already been
+            # refused, and the proposal re-enters this same screen rather than
+            # skipping it. If the rescued rate is not itself convincing, it is
+            # rejected exactly like anything else.
+            peak = screen.line_peak_of(family)
+            if peak is not None:
+                rate, _score = peak
+                new = Candidate(c.modulation, rate, c.cfo_hz,
+                                prior=c.prior * RESCUE_PRIOR,
+                                origin="rate-rescued")
+                if new.key() not in seen and len(queue) < MAX_CANDIDATES:
+                    seen.add(new.key())
+                    queue.append(new)
             continue
 
         align = screen.alignment_of(c.symbol_rate, c.cfo_hz)

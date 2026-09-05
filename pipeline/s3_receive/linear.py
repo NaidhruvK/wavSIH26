@@ -55,11 +55,53 @@ from .timing import gardner_sync
 
 __all__ = ["LinearDemod"]
 
-# The 4th-power line a square QAM constellation produces is genuinely weaker
-# than PSK's, because its points do not share a radius. One threshold across
-# both families would either fail every good QAM lock or accept every bad PSK
-# one, so the number lives with the family it describes.
-_LOCK_THRESHOLD = {"psk": 0.60, "qam": 0.55}
+# Carrier lock threshold, per SCHEME. It was per family - {"psk": 0.60,
+# "qam": 0.55} - until 5 Sep, and one key too coarse.
+#
+# The metric is |E[u^S]| with S the constellation's rotational symmetry: 2 for
+# BPSK, 4 for QPSK and 16-QAM, 8 for 8-PSK. Raising a noisy symbol to the S-th
+# power raises its phase error to the S-th power with it, so at a fixed symbol
+# error rate the metric falls as S rises. The three PSK schemes therefore
+# cannot share a number, for the same structural reason the old constant
+# already split PSK from QAM - one level finer. MEASURED at 8 dB, correct
+# hypothesis, over the 252-file corpus: bpsk 0.950, qpsk 0.837, 8psk 0.488,
+# 16qam 0.680. A single number across those is either loose enough to be
+# meaningless for BPSK or tight enough to refuse working 8-PSK, and 0.60 was
+# doing the second: every 8-PSK file at 8 dB demodulates at a bit error rate
+# of 0.0025-0.0034 and every one was reported `low_confidence`.
+#
+# Each value is the geometric midpoint of the gap between the two populations
+# this threshold is responsible for, measured in `reports/s3_lock_threshold.md`
+# over 1008 runs (every corpus file through every linear plug-in):
+#
+#     scheme   worst that decodes   best that does not   ratio   chosen
+#     bpsk           0.857                0.060         14.36x    0.23
+#     qpsk           0.636                0.328          1.94x    0.46
+#     8psk           0.488                0.184          2.65x    0.30
+#     16qam          0.784                0.437          1.79x    0.59
+#
+# "Best that does not" counts only genuine failures - runs at 2% raw bit error
+# rate or worse - and only runs that no OTHER check already vetoed, since a
+# hypothesis refused by `alphabet_used` on the same run cannot be admitted
+# whatever this number says. Seven 16-QAM files at 8 dB sit between the two
+# populations at 0.680-0.788 and 1.17-1.24% BER; they are in neither, because
+# they are a decode line drawn at 1% cutting a continuum, not a lock failure -
+# the receiver's own estimate on them is 1.00-1.09%, which is right, and they
+# pass at 0.59 as they should. That exclusion is the one judgement in this
+# table and it is stated rather than buried: include them and no threshold
+# separates 16-QAM at all, because the worst file that decodes reads 0.784 and
+# the best that does not reads 0.788.
+#
+# Note 16-QAM goes UP. The row for today says lower the thresholds and three
+# of the four come down hard; the measurement says this one was slightly loose
+# and it is reported as measured rather than as expected.
+_LOCK_THRESHOLD = {"bpsk": 0.23, "qpsk": 0.46, "8psk": 0.30, "16qam": 0.59}
+
+# Fallback for a scheme registered after this table was measured. A new
+# constellation gets the old family number until someone runs the study for
+# it, which is conservative in the direction that matters: too tight refuses a
+# working file, too loose claims a lock that is not there.
+_LOCK_THRESHOLD_BY_FAMILY = {"psk": 0.60, "qam": 0.55}
 
 # Symbols discarded after blind equalisation, before the carrier loop sees
 # anything. Measured, not guessed: with the equaliser output fed straight
@@ -70,18 +112,79 @@ _LOCK_THRESHOLD = {"psk": 0.60, "qam": 0.55}
 # on top of that. MMA is given longer because it is adapting two moduli.
 _EQ_WARMUP = {"psk": 600, "qam": 1200}
 
+# Loop noise bandwidths, per SCHEME and not per family. Both loops ran at one
+# global number until 5 Sep - `costas_loop`'s 0.02 and `gardner_sync`'s 0.004 -
+# and the two knobs are here rather than at the call site so that one place
+# answers "what bandwidth does this modulation use, and on what evidence".
+#
+# Per scheme rather than per family because the quantity that sets the right
+# bandwidth is the DETECTOR's self-noise, and that is a property of the
+# constellation, not of the family: QPSK and 8-PSK are both "psk" and their
+# decision-directed phase detectors do not behave alike. A wider loop acquires
+# sooner and tracks a drifting offset better; it also feeds more of the
+# detector's own noise back into the phase estimate, and past some point that
+# costs more than the tracking gains.
+#
+# Populated by `reports/s3_loop_bw_study.py`. Every entry that differs from the
+# old global carries its measurement below; entries equal to it are there
+# because the sweep found nothing better, which is also a result.
+# MEASURED 5 Sep, `reports/s3_loop_bw.md`: 112 files x 5 bandwidths x 2 arms
+# per knob, where the second arm carries the impairment the loop exists to
+# remove. Only 8-PSK's carrier bandwidth moved, and the reason the rest did not
+# is worth as much as the one that did:
+#
+#   bpsk, qpsk    28/28 in all ten cells of both arms. The sweep has no
+#                 discriminating power here and the honest output is "no
+#                 change", not the smallest number in the grid.
+#   8psk          0.02 -> 0.04. Clean arm identical at 21/28, impaired arm
+#                 20/28 -> 21/28, and the impaired response is monotone across
+#                 the grid, so the direction is real rather than a tie-break.
+#   16qam         stays at 0.02. 0.04 reaches 13/28 on the impaired arm
+#                 against 9/28, and costs `16qam_10dB_4020` on the clean arm -
+#                 raw BER 0.0029 -> 0.0299. That is a 10 dB file, and >=10 dB
+#                 is the region the day gate is written on, so it is not
+#                 traded for an injected scenario. Stated rather than
+#                 silently taken: a residual of 0.02 x Rs passes
+#                 `CARRIER_OFFSET_LIMIT` and does reach the loop uncorrected,
+#                 so the exposure is real and the number to beat is 9/28.
+#
+# Timing bandwidth: no scheme moved. 16-QAM's grid reads 12/14/13/14/13 on the
+# clean arm with median BER 0.020/0.009/0.015/0.009/0.019 - non-monotone across
+# a 16x range, which is a response with no reliable signal in it rather than an
+# optimum at 0.002. Picking the best cell of an alternating sequence is fitting
+# this corpus, not tuning a loop.
+#
+# The largest carrier-loop result of the day is not in this table at all: it is
+# that `costas_loop` had no acquisition phase. See `carrier.ACQ_SYMBOLS`.
+_CARRIER_LOOP_BW = {"bpsk": 0.02, "qpsk": 0.02, "8psk": 0.04, "16qam": 0.02}
+_TIMING_LOOP_BW = {"bpsk": 0.004, "qpsk": 0.004, "8psk": 0.004, "16qam": 0.004}
+
 
 class LinearDemod:
     def __init__(self, scheme_name: str, settle_symbols: int = 500,
-                 lock_threshold: float | None = None):
+                 lock_threshold: float | None = None,
+                 carrier_loop_bw: float | None = None,
+                 timing_loop_bw: float | None = None):
         self.scheme = scheme(scheme_name)
         self.name = self.scheme.name
         self.family = self.scheme.family
         self.order = self.scheme.order
         self.detail = self.scheme.detail
         self.settle_symbols = settle_symbols
-        self.lock_threshold = (lock_threshold if lock_threshold is not None
-                               else _LOCK_THRESHOLD[self.scheme.family])
+        self.lock_threshold = float(
+            lock_threshold if lock_threshold is not None
+            else _LOCK_THRESHOLD.get(
+                self.name, _LOCK_THRESHOLD_BY_FAMILY[self.scheme.family]))
+        # Overridable so the sweep can drive the real chain rather than a copy
+        # of it. A study that measures a reimplementation measures the
+        # reimplementation; this is the same class of mistake as the two
+        # channel models `tests/fixtures/corpus.py` was written to delete.
+        self.carrier_loop_bw = float(
+            carrier_loop_bw if carrier_loop_bw is not None
+            else _CARRIER_LOOP_BW.get(self.name, 0.02))
+        self.timing_loop_bw = float(
+            timing_loop_bw if timing_loop_bw is not None
+            else _TIMING_LOOP_BW.get(self.name, 0.004))
 
     # -- registry protocol ------------------------------------------------
 
@@ -168,7 +271,7 @@ class LinearDemod:
             x, fs=1.0, symbol_rate=1.0 / sps)
         y = matched_filter(x, beta, sps)
 
-        timing = gardner_sync(y, sps)
+        timing = gardner_sync(y, sps, loop_bw=self.timing_loop_bw)
         if timing.symbols.size < self.settle_symbols * 2:
             return self._fail(t0, "record too short to settle the timing loop",
                               envelope="outside", report=report)
@@ -215,6 +318,7 @@ class LinearDemod:
         equalised = eq.symbols[warm:]
 
         carrier = costas_loop(equalised, self.scheme,
+                              loop_bw=self.carrier_loop_bw,
                               lock_threshold=self.lock_threshold)
         report.add(loop_check(
             "carrier_locked", bool(carrier.locked),

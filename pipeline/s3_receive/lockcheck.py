@@ -86,7 +86,8 @@ import numpy as np
 from scipy import signal as sps_signal
 from scipy.signal import medfilt
 
-__all__ = ["Check", "LockReport", "symbol_rate_line", "carrier_offset",
+__all__ = ["Check", "LockReport", "symbol_rate_line", "strongest_line",
+           "carrier_offset",
            "signal_presence", "carrier_alignment", "output_usable",
            "alphabet_used", "tone_alias", "loop_check",
            "PASS", "FAIL", "UNKNOWN", "LINE_ABSENT_LIMIT",
@@ -331,47 +332,51 @@ def _averaged_spectrum(y: np.ndarray, fs: float,
     return np.sqrt(acc / max(count, 1)), np.fft.rfftfreq(n, d=1.0 / fs)
 
 
-def symbol_rate_line(x: np.ndarray, fs: float, symbol_rate: float,
-                     family: str) -> float:
-    """Height of the cyclostationary line at `symbol_rate`, over local median.
+def _cyclo_spectrum(x: np.ndarray, fs: float,
+                    family: str) -> tuple[np.ndarray, np.ndarray] | None:
+    """The family's cyclostationary statistic, Welch-averaged.
 
-    Linear modulation puts that line in the squared magnitude; FSK does not,
-    because its envelope is constant, so the FSK branch uses the derivative of
-    the instantaneous frequency instead - a train of impulses at the symbol
-    boundaries. Both are the statistics `pipeline/s2_estimate.py` searches; the
-    difference is that this function is told where to look and only reports how
-    strong the line is there.
+    Linear modulation puts a line at the symbol rate in the squared magnitude;
+    FSK does not, because its envelope is constant, so the FSK branch uses the
+    derivative of the instantaneous frequency instead - a train of impulses at
+    the symbol boundaries. Both are the statistics `pipeline/s2_estimate.py`
+    searches.
 
-    Returns 0.0 rather than raising on anything unmeasurable.
+    Split out of `symbol_rate_line` on 5 Sep so that `strongest_line` reads the
+    same spectrum rather than a second copy of it. Two implementations of one
+    statistic is the failure `tests/fixtures/corpus.py` deleted a whole fixture
+    to avoid: they agree with each other and nothing checks either.
+
+    Returns None on anything unmeasurable, so callers give one answer to
+    "there is nothing here to measure" rather than each inventing a sentinel.
     """
     x = np.asarray(x, dtype=np.complex128).ravel()
-    if x.size < 256 or not np.isfinite(symbol_rate) or symbol_rate <= 0:
-        return 0.0
-    if symbol_rate >= fs / 2.0:
-        return 0.0
-    if float(np.mean(np.abs(x) ** 2)) <= 1e-20:
-        return 0.0
+    if x.size < 256 or float(np.mean(np.abs(x) ** 2)) <= 1e-20:
+        return None
 
     if family == "fsk":
         inst = np.diff(np.unwrap(np.angle(x)))
         if inst.size < 8:
-            return 0.0
+            return None
         y = np.abs(np.diff(medfilt(inst, kernel_size=5)))
     else:
         y = np.abs(x) ** 2
 
     y = y - np.mean(y)
     if y.size < 64 or not np.any(np.abs(y) > 0):
-        return 0.0
+        return None
+    return _averaged_spectrum(y, fs)
 
-    spec, freqs = _averaged_spectrum(y, fs)
-    k = int(np.argmin(np.abs(freqs - symbol_rate)))
+
+def _line_score_at(spec: np.ndarray, k: int) -> float:
+    """Height of bin `k` over the median of the spectrum beside it.
+
+    Local rather than global: a global median is dominated by the far spectrum,
+    where there is nothing, and would report a large score for any signal at
+    all. The line itself is cut out of the neighbourhood before the median.
+    """
     if k <= 0 or k >= spec.size - 1:
         return 0.0
-
-    # Local median beside the line, with the line itself cut out. A global
-    # median would be dominated by the far spectrum, where there is nothing,
-    # and would report a large score for any signal at all.
     half = max(8, spec.size // 1024)
     lo, hi = max(1, k - 16 * half), min(spec.size, k + 16 * half)
     left, right = spec[lo:max(lo, k - half)], spec[min(hi, k + half):hi]
@@ -381,6 +386,83 @@ def symbol_rate_line(x: np.ndarray, fs: float, symbol_rate: float,
     med = float(np.median(neighbourhood)) + 1e-30
     # the peak may land a bin either side of the nominal rate
     return float(spec[k - 1:k + 2].max() / med)
+
+
+def symbol_rate_line(x: np.ndarray, fs: float, symbol_rate: float,
+                     family: str) -> float:
+    """Height of the cyclostationary line at `symbol_rate`, over local median.
+
+    Told where to look; reports only how strong the line is there. Its twin
+    `strongest_line` reads the same spectrum and answers where the line is.
+
+    Returns 0.0 rather than raising on anything unmeasurable.
+    """
+    if not np.isfinite(symbol_rate) or symbol_rate <= 0:
+        return 0.0
+    if symbol_rate >= fs / 2.0:
+        return 0.0
+
+    got = _cyclo_spectrum(x, fs, family)
+    if got is None:
+        return 0.0
+    spec, freqs = got
+    return _line_score_at(spec, int(np.argmin(np.abs(freqs - symbol_rate))))
+
+
+# Bounds on a rate `strongest_line` is allowed to propose. Not statistical -
+# they are the range in which the receiver behind this could actually run.
+# Above fs/2.5 there are fewer than 2.5 samples per symbol, and `LinearDemod`
+# refuses anything under 2 outright; below 256 symbols in the record no loop in
+# the chain has enough to settle. A peak outside these is real spectrum and
+# still not a symbol rate this stage can use.
+_RESCUE_MIN_SPS = 2.5
+_RESCUE_MIN_SYMBOLS = 256
+
+
+def strongest_line(x: np.ndarray, fs: float,
+                   family: str) -> tuple[float, float] | None:
+    """Where the cyclostationary line actually is: (rate_hz, score).
+
+    `symbol_rate_line` answers "how strong is the line at the rate I was
+    given"; this answers "where is the strongest line", off the same statistic
+    and the same averaged spectrum. It exists because a stage handed a wrong
+    symbol rate had, until 5 Sep, no way to say so: every candidate failed the
+    presence screen, the search returned `failed` with `chain_runs = 0`, and
+    the evidence that would have fixed it was already in the spectrum the
+    screen had just computed and thrown away.
+
+    MEASURED, 5 Sep, on the 252-file corpus: see `reports/s3_rate_rescue.md`.
+
+    This is deliberately NOT a symbol-rate estimator and must not become one.
+    It is a fallback consulted only when everything S2 offered has already been
+    refused, its output re-enters the same screen as any other candidate, and
+    it can propose exactly one rate per family. Estimation is S2's stage and
+    this stage does not get to have an opinion until S2's has failed.
+
+    Returns None when there is nothing measurable, or no bin inside the band
+    the receiver could run.
+    """
+    got = _cyclo_spectrum(x, fs, family)
+    if got is None:
+        return None
+    spec, freqs = got
+
+    n = int(np.asarray(x).size)
+    lo = max(_RESCUE_MIN_SYMBOLS * fs / max(n, 1), freqs[1] if freqs.size > 1
+             else 0.0)
+    hi = fs / _RESCUE_MIN_SPS
+    if not np.isfinite(lo) or not np.isfinite(hi) or lo >= hi:
+        return None
+
+    band = (freqs >= lo) & (freqs <= hi)
+    if not np.any(band):
+        return None
+    idx = np.flatnonzero(band)
+    k = int(idx[int(np.argmax(spec[idx]))])
+    rate = float(freqs[k])
+    if rate <= 0:
+        return None
+    return rate, _line_score_at(spec, k)
 
 
 def _psd(x: np.ndarray, fs: float, nperseg: int = 2048):

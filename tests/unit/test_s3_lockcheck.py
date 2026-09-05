@@ -25,7 +25,7 @@ from pipeline.s3_receive.lockcheck import (FAIL, LINE_ABSENT_LIMIT,  # noqa: E40
                                            LINE_PRESENT_LIMIT, PASS, UNKNOWN,
                                            Check, LockReport, carrier_offset,
                                            carrier_alignment, signal_presence,
-                                           symbol_rate_line)
+                                           strongest_line, symbol_rate_line)
 from pipeline.s3_receive.result import REQUIRED_VALUES  # noqa: E402
 from pipeline.s3_receive.search import (params_from_s2,  # noqa: E402
                                         receive_best)
@@ -562,6 +562,90 @@ def test_search_never_names_a_scheme():
         assert not any(name == lit for lit in literals), (
             f"search.py has {name!r} as a string literal in code rather than "
             "iterating MODULATIONS")
+
+
+# --- the rate rescue, 5 Sep -----------------------------------------------
+
+@pytest.mark.parametrize("sch,family", [("qpsk", "psk"), ("16qam", "psk"),
+                                        ("2fsk", "fsk"), ("4fsk", "fsk")])
+def test_strongest_line_finds_the_rate_it_was_not_told(sch, family):
+    """The whole rescue rests on this one claim, so it is pinned per family.
+
+    `symbol_rate_line` is told where to look. This is its twin, which is not,
+    and if it cannot find the rate on a clean synthetic signal it has no
+    business proposing one on a real capture.
+    """
+    x, fs, rs, _ = synth(sch, n_bits=80000, snr_db=8.0)
+    got = strongest_line(x, fs, family)
+    assert got is not None
+    rate, score = got
+    assert abs(rate - rs) < 0.01 * rs, f"found {rate:.0f}, true {rs:.0f}"
+    assert score >= LINE_PRESENT_LIMIT
+
+
+def test_strongest_line_will_not_propose_an_unusable_rate():
+    """The band is the range the receiver behind it could actually run, not a
+    statistical one. A peak outside it is real spectrum and still useless."""
+    x, fs, _, _ = synth("qpsk", n_bits=40000, snr_db=20.0)
+    rate, _ = strongest_line(x, fs, "psk")
+    assert 0.0 < rate <= fs / 2.5
+    assert rate >= 256 * fs / x.size
+    assert strongest_line(np.zeros(4096, dtype=complex), fs, "psk") is None
+
+
+def test_search_rescues_the_rate_when_every_hypothesis_is_wrong():
+    """5 Sep, and the reason this exists.
+
+    S2's envelope predicate sends low-SNR FSK captures to the linear
+    symbol-rate estimator, which returns rates like 11 987 Hz against a true
+    50 000. Every candidate then fails the presence screen, and until today
+    the search returned `failed` with zero chain runs while the receiver
+    behind it demodulated the same file at a bit error rate of 0.004 when
+    handed the right rate. 28 of the 252 corpus files were lost that way.
+    """
+    x, fs, rs, _ = synth("2fsk", n_bits=100000, snr_db=8.0)
+    wrong = {"fs": fs, "symbol_rate": 0.24 * rs,
+             "symbol_rate_hypotheses": [(0.24 * rs, 40.0), (1.57 * rs, 30.0)],
+             "cfo_hypotheses": [(0.0, 2, 10.0)]}
+
+    assert MODULATIONS["2fsk"].receive(
+        x, {"fs": fs, "symbol_rate": 0.24 * rs, "cfo_hz": 0.0}).status != "ok"
+
+    res = receive_best(x, wrong)
+    assert res.status == "ok", res.reason
+    assert abs(res.values["symbol_rate_used"] - rs) < 0.01 * rs
+    assert res.values["search_chosen"]["origin"] == "rate-rescued"
+
+
+def test_the_rate_rescue_does_not_let_noise_through():
+    """The rescue proposes a rate off the strongest line in the spectrum, and
+    noise has a strongest line too. What stops it is that the proposal
+    re-enters the same screen as every other candidate rather than skipping
+    it, so a peak that is not a signal is refused exactly like the rate it
+    replaced. Pinned because the cost of getting this wrong is not a slow
+    search, it is a stage handing S4 confident noise."""
+    params = {"fs": FS, "symbol_rate": 0.31 * RS,
+              "symbol_rate_hypotheses": [(0.31 * RS, 20.0), (2.2 * RS, 9.0)],
+              "cfo_hypotheses": [(0.0, 2, 5.0)]}
+    t0 = time.perf_counter()
+    res = receive_best(noise(), params)
+    elapsed = time.perf_counter() - t0
+    assert res.status == "failed"
+    assert res.values["search_chain_runs"] == 0, \
+        "the rate rescue let a full demodulation of pure noise through"
+    assert elapsed < 8.0, f"the rescue made the noise path {elapsed:.1f} s"
+
+
+def test_the_rate_rescue_stays_out_of_the_way_when_s2_is_right():
+    """A fallback that changes the answer when nothing has failed is not a
+    fallback. With a correct rate in the list the search must reach the same
+    candidate it reached before the rescue existed."""
+    x, fs, rs, _ = synth("qpsk", n_bits=100000, snr_db=15.0)
+    res = receive_best(x, {"fs": fs, "symbol_rate": rs,
+                           "symbol_rate_hypotheses": [(rs, 90.0)],
+                           "cfo_hypotheses": [(0.0, 4, 50.0)]})
+    assert res.status == "ok", res.reason
+    assert res.values["search_chosen"]["origin"] != "rate-rescued"
 
 
 # --- against the real corpus ----------------------------------------------

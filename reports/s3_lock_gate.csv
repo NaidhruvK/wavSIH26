@@ -1,109 +1,757 @@
 file,true_mod,snr_db,arm,chosen_mod,mod_correct,status,confidence,est_ber,est_ber_valid,measured_ber,decodes,confidently_wrong,old_rule_ok,lock_failures,chain_runs,secs,reason
-16qam_10dB_2020,16qam,10,truth-params,16qam,True,ok,0.7844,0.00284837,True,0.003058,True,False,True,,1,0.222,
-16qam_10dB_2020,16qam,10,s2-top,16qam,True,low_confidence,0.7108,0.0079431,False,0.374536,False,False,True,carrier_aligned,1,0.225,"spectrum sits -11865 Hz off centre (0.24 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-16qam_10dB_2020,16qam,10,search,16qam,True,ok,0.7844,0.00284871,True,0.003058,True,False,True,,12,1.82,
-16qam_13dB_2021,16qam,13,truth-params,16qam,True,ok,0.9561,7.479e-05,True,0.0001,True,False,True,,1,0.219,
-16qam_13dB_2021,16qam,13,s2-top,16qam,True,low_confidence,0.9066,0.00061187,False,0.37495,False,False,True,carrier_aligned,1,0.215,"spectrum sits +12500 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-16qam_13dB_2021,16qam,13,search,16qam,True,ok,0.9561,7.479e-05,True,0.0001,True,False,True,,6,0.925,
-16qam_15dB_2022,16qam,15,truth-params,16qam,True,ok,0.974,7e-08,True,0.0,True,False,True,,1,0.227,
-16qam_15dB_2022,16qam,15,s2-top,16qam,True,low_confidence,0.9485,4.243e-05,False,0.375163,False,False,True,carrier_aligned,1,0.22,"spectrum sits +12939 Hz off centre (0.26 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-16qam_15dB_2022,16qam,15,search,16qam,True,ok,0.974,7e-08,True,0.0,True,False,True,,12,1.815,
-16qam_20dB_2023,16qam,20,truth-params,16qam,True,ok,0.9338,0.0,True,0.0,True,False,True,,1,0.223,
-16qam_20dB_2023,16qam,20,s2-top,16qam,True,low_confidence,0.9293,0.0,False,0.373998,False,False,True,carrier_aligned,1,0.217,"spectrum sits -12549 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-16qam_20dB_2023,16qam,20,search,16qam,True,ok,0.9338,0.0,True,0.0,True,False,True,,12,1.841,
-16qam_4dB_2018,16qam,4,truth-params,16qam,True,low_confidence,0.3291,0.04702887,False,0.08422,False,False,False,carrier_locked,1,0.212,carrier lock 0.33 below 0.55
-16qam_4dB_2018,16qam,4,s2-top,16qam,True,low_confidence,0.0138,0.05773991,False,0.427226,False,False,False,carrier_aligned|carrier_locked|output_usable,1,0.223,"spectrum sits +12256 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
-16qam_4dB_2018,16qam,4,search,8psk,False,low_confidence,0.0402,0.08602773,False,0.484674,False,False,False,carrier_locked|output_usable,12,2.626,"carrier lock 0.04 below 0.60; the receiver estimates its own output BER at 0.086, over the 0.05 a lock should produce - "
-16qam_8dB_2019,16qam,8,truth-params,16qam,True,ok,0.7193,0.01070867,True,0.012072,False,False,True,,1,0.215,
-16qam_8dB_2019,16qam,8,s2-top,16qam,True,low_confidence,0.6402,0.02233754,False,0.38334,False,False,True,carrier_aligned,1,0.217,"spectrum sits -12842 Hz off centre (0.26 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-16qam_8dB_2019,16qam,8,search,16qam,True,ok,0.7204,0.01222849,True,0.014927,False,False,True,,12,1.809,
-2fsk_10dB_2026,2fsk,10,truth-params,2fsk,True,ok,0.8611,0.0,True,0.0,True,False,True,,1,0.053,
-2fsk_10dB_2026,2fsk,10,s2-top,2fsk,True,low_confidence,0.8611,0.0,False,0.0,True,False,True,carrier_aligned,1,0.059,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-2fsk_10dB_2026,2fsk,10,search,2fsk,True,ok,0.8611,0.0,True,0.0,True,False,True,,2,0.311,
-2fsk_13dB_2027,2fsk,13,truth-params,2fsk,True,ok,0.9016,0.0,True,0.0,True,False,True,,1,0.058,
-2fsk_13dB_2027,2fsk,13,s2-top,2fsk,True,low_confidence,0.9016,0.0,False,0.0,True,False,True,carrier_aligned,1,0.068,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-2fsk_13dB_2027,2fsk,13,search,2fsk,True,ok,0.9016,0.0,True,0.0,True,False,True,,2,0.3,
-2fsk_15dB_2028,2fsk,15,truth-params,2fsk,True,ok,0.9213,0.0,True,0.0,True,False,True,,1,0.058,
-2fsk_15dB_2028,2fsk,15,s2-top,2fsk,True,low_confidence,0.9213,0.0,False,0.0,True,False,True,carrier_aligned,1,0.058,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-2fsk_15dB_2028,2fsk,15,search,2fsk,True,ok,0.9213,0.0,True,0.0,True,False,True,,2,0.294,
-2fsk_20dB_2029,2fsk,20,truth-params,2fsk,True,ok,0.9558,0.0,True,0.0,True,False,True,,1,0.052,
-2fsk_20dB_2029,2fsk,20,s2-top,2fsk,True,low_confidence,0.9558,0.0,False,0.0,True,False,True,carrier_aligned,1,0.059,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-2fsk_20dB_2029,2fsk,20,search,2fsk,True,ok,0.9558,0.0,True,0.0,True,False,True,,4,0.425,
-2fsk_4dB_2024,2fsk,4,truth-params,2fsk,True,ok,0.7273,0.00299025,True,0.003756,True,False,True,,1,0.065,
-2fsk_4dB_2024,2fsk,4,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.028,"no symbol-rate line at 48479 Hz (1.6x local median, needs 4.5x) - either nothing is here or the rate is wrong"
-2fsk_4dB_2024,2fsk,4,search,,False,failed,0.0,1.0,False,1.0,False,False,False,,0,0.13,"every candidate was refused by the cheap screen: no symbol-rate line at 48479 Hz (4.4x local median, needs 4.5x) - eithe"
-2fsk_8dB_2025,2fsk,8,truth-params,2fsk,True,ok,0.8254,2.4e-07,True,0.0,True,False,True,,1,0.051,
+16qam_10dB_2020,16qam,10,truth-params,16qam,True,ok,0.7844,0.0028651,True,0.003559,True,False,True,,1,0.249,
+16qam_10dB_2020,16qam,10,s2-top,16qam,True,ok,0.7844,0.00286551,True,0.003559,True,False,True,,1,0.22,
+16qam_10dB_2020,16qam,10,search,16qam,True,ok,0.7844,0.00286551,True,0.003559,True,False,True,,1,0.26,
+16qam_10dB_3020,16qam,10,truth-params,16qam,True,ok,0.8246,0.00222957,True,0.002309,True,False,True,,1,0.256,
+16qam_10dB_3020,16qam,10,s2-top,16qam,True,ok,0.8246,0.00222957,True,0.002309,True,False,True,,1,0.213,
+16qam_10dB_3020,16qam,10,search,16qam,True,ok,0.8246,0.00222957,True,0.002309,True,False,True,,1,0.261,
+16qam_10dB_4020,16qam,10,truth-params,16qam,True,ok,0.8483,0.00258395,True,0.002907,True,False,True,,1,0.244,
+16qam_10dB_4020,16qam,10,s2-top,16qam,True,ok,0.8489,0.0025844,True,0.002907,True,False,True,,1,0.216,
+16qam_10dB_4020,16qam,10,search,16qam,True,ok,0.8489,0.0025844,True,0.002907,True,False,True,,1,0.257,
+16qam_10dB_5020,16qam,10,truth-params,16qam,True,ok,0.7982,0.00225262,True,0.002805,True,False,True,,1,0.249,
+16qam_10dB_5020,16qam,10,s2-top,16qam,True,ok,0.7983,0.00225261,True,0.002805,True,False,True,,1,0.217,
+16qam_10dB_5020,16qam,10,search,16qam,True,ok,0.7983,0.00225261,True,0.002805,True,False,True,,1,0.26,
+16qam_10dB_6020,16qam,10,truth-params,16qam,True,ok,0.8461,0.00257852,True,0.002455,True,False,True,,1,0.247,
+16qam_10dB_6020,16qam,10,s2-top,16qam,True,ok,0.8462,0.00257884,True,0.002455,True,False,True,,1,0.216,
+16qam_10dB_6020,16qam,10,search,16qam,True,ok,0.8462,0.00257884,True,0.002455,True,False,True,,1,0.253,
+16qam_10dB_7020,16qam,10,truth-params,16qam,True,ok,0.7933,0.00270732,True,0.002456,True,False,True,,1,0.249,
+16qam_10dB_7020,16qam,10,s2-top,16qam,True,ok,0.7933,0.0027083,True,0.002456,True,False,True,,1,0.222,
+16qam_10dB_7020,16qam,10,search,16qam,True,ok,0.7933,0.0027083,True,0.002456,True,False,True,,1,0.25,
+16qam_10dB_8020,16qam,10,truth-params,16qam,True,ok,0.847,0.00276365,True,0.002558,True,False,True,,1,0.257,
+16qam_10dB_8020,16qam,10,s2-top,16qam,True,ok,0.847,0.00276447,True,0.002558,True,False,True,,1,0.217,
+16qam_10dB_8020,16qam,10,search,16qam,True,ok,0.847,0.00276447,True,0.002558,True,False,True,,1,0.254,
+16qam_13dB_2021,16qam,13,truth-params,16qam,True,ok,0.9561,7.569e-05,True,0.0001,True,False,True,,1,0.256,
+16qam_13dB_2021,16qam,13,s2-top,16qam,True,ok,0.9561,7.569e-05,True,0.0001,True,False,True,,1,0.218,
+16qam_13dB_2021,16qam,13,search,16qam,True,ok,0.9561,7.569e-05,True,0.0001,True,False,True,,1,0.255,
+16qam_13dB_3021,16qam,13,truth-params,16qam,True,ok,0.9287,4.791e-05,True,5e-05,True,False,True,,1,0.257,
+16qam_13dB_3021,16qam,13,s2-top,16qam,True,ok,0.9287,4.791e-05,True,5e-05,True,False,True,,1,0.215,
+16qam_13dB_3021,16qam,13,search,16qam,True,ok,0.9287,4.791e-05,True,5e-05,True,False,True,,1,0.254,
+16qam_13dB_4021,16qam,13,truth-params,16qam,True,ok,0.8867,4.345e-05,True,0.0,True,False,True,,1,0.251,
+16qam_13dB_4021,16qam,13,s2-top,16qam,True,ok,0.8867,4.345e-05,True,0.0,True,False,True,,1,0.216,
+16qam_13dB_4021,16qam,13,search,16qam,True,ok,0.8867,4.345e-05,True,0.0,True,False,True,,1,0.255,
+16qam_13dB_5021,16qam,13,truth-params,16qam,True,ok,0.938,3.422e-05,True,0.0,True,False,True,,1,0.243,
+16qam_13dB_5021,16qam,13,s2-top,16qam,True,ok,0.9407,3.423e-05,True,0.0,True,False,True,,1,0.223,
+16qam_13dB_5021,16qam,13,search,16qam,True,ok,0.9407,3.423e-05,True,0.0,True,False,True,,1,0.258,
+16qam_13dB_6021,16qam,13,truth-params,16qam,True,ok,0.892,5.755e-05,True,0.0,True,False,True,,1,0.25,
+16qam_13dB_6021,16qam,13,s2-top,16qam,True,ok,0.892,5.755e-05,True,0.0,True,False,True,,1,0.217,
+16qam_13dB_6021,16qam,13,search,16qam,True,ok,0.892,5.755e-05,True,0.0,True,False,True,,1,0.248,
+16qam_13dB_7021,16qam,13,truth-params,16qam,True,ok,0.9336,3.465e-05,True,5e-05,True,False,True,,1,0.244,
+16qam_13dB_7021,16qam,13,s2-top,16qam,True,ok,0.9336,3.465e-05,True,5e-05,True,False,True,,1,0.217,
+16qam_13dB_7021,16qam,13,search,16qam,True,ok,0.9336,3.465e-05,True,5e-05,True,False,True,,1,0.252,
+16qam_13dB_8021,16qam,13,truth-params,16qam,True,ok,0.9515,5.855e-05,True,0.0,True,False,True,,1,0.253,
+16qam_13dB_8021,16qam,13,s2-top,16qam,True,ok,0.9515,5.855e-05,True,0.0,True,False,True,,1,0.215,
+16qam_13dB_8021,16qam,13,search,16qam,True,ok,0.9515,5.855e-05,True,0.0,True,False,True,,1,0.267,
+16qam_15dB_2022,16qam,15,truth-params,16qam,True,ok,0.974,7e-08,True,0.0,True,False,True,,1,0.265,
+16qam_15dB_2022,16qam,15,s2-top,16qam,True,ok,0.974,7e-08,True,0.0,True,False,True,,1,0.221,
+16qam_15dB_2022,16qam,15,search,16qam,True,ok,0.974,7e-08,True,0.0,True,False,True,,1,0.263,
+16qam_15dB_3022,16qam,15,truth-params,16qam,True,ok,0.9756,0.0,True,0.0,True,False,True,,1,0.245,
+16qam_15dB_3022,16qam,15,s2-top,16qam,True,ok,0.9756,0.0,True,0.0,True,False,True,,1,0.218,
+16qam_15dB_3022,16qam,15,search,16qam,True,ok,0.9756,0.0,True,0.0,True,False,True,,1,0.254,
+16qam_15dB_4022,16qam,15,truth-params,16qam,True,ok,0.9698,1.03e-06,True,0.0,True,False,True,,1,0.249,
+16qam_15dB_4022,16qam,15,s2-top,16qam,True,ok,0.9698,1.03e-06,True,0.0,True,False,True,,1,0.213,
+16qam_15dB_4022,16qam,15,search,16qam,True,ok,0.9698,1.03e-06,True,0.0,True,False,True,,1,0.26,
+16qam_15dB_5022,16qam,15,truth-params,16qam,True,ok,0.9193,1e-08,True,0.0,True,False,True,,1,0.247,
+16qam_15dB_5022,16qam,15,s2-top,16qam,True,ok,0.9221,1e-08,True,0.0,True,False,True,,1,0.219,
+16qam_15dB_5022,16qam,15,search,16qam,True,ok,0.9221,1e-08,True,0.0,True,False,True,,1,0.264,
+16qam_15dB_6022,16qam,15,truth-params,16qam,True,ok,0.9422,0.0,True,0.0,True,False,True,,1,0.245,
+16qam_15dB_6022,16qam,15,s2-top,16qam,True,ok,0.9422,0.0,True,0.0,True,False,True,,1,0.212,
+16qam_15dB_6022,16qam,15,search,16qam,True,ok,0.9422,0.0,True,0.0,True,False,True,,1,0.251,
+16qam_15dB_7022,16qam,15,truth-params,16qam,True,ok,0.9411,1.086e-05,True,0.0,True,False,True,,1,0.253,
+16qam_15dB_7022,16qam,15,s2-top,16qam,True,ok,0.9411,1.086e-05,True,0.0,True,False,True,,1,0.215,
+16qam_15dB_7022,16qam,15,search,16qam,True,ok,0.9411,1.086e-05,True,0.0,True,False,True,,1,0.251,
+16qam_15dB_8022,16qam,15,truth-params,16qam,True,ok,0.9759,1.9e-07,True,0.0,True,False,True,,1,0.251,
+16qam_15dB_8022,16qam,15,s2-top,16qam,True,ok,0.9759,1.9e-07,True,0.0,True,False,True,,1,0.213,
+16qam_15dB_8022,16qam,15,search,16qam,True,ok,0.9759,1.9e-07,True,0.0,True,False,True,,1,0.256,
+16qam_20dB_2023,16qam,20,truth-params,16qam,True,ok,0.9338,0.0,True,0.0,True,False,True,,1,0.25,
+16qam_20dB_2023,16qam,20,s2-top,16qam,True,ok,0.9338,0.0,True,0.0,True,False,True,,1,0.215,
+16qam_20dB_2023,16qam,20,search,16qam,True,ok,0.9338,0.0,True,0.0,True,False,True,,1,0.253,
+16qam_20dB_3023,16qam,20,truth-params,16qam,True,ok,0.9333,0.0,True,0.0,True,False,True,,1,0.247,
+16qam_20dB_3023,16qam,20,s2-top,16qam,True,ok,0.9333,0.0,True,0.0,True,False,True,,1,0.219,
+16qam_20dB_3023,16qam,20,search,16qam,True,ok,0.9333,0.0,True,0.0,True,False,True,,1,0.248,
+16qam_20dB_4023,16qam,20,truth-params,16qam,True,ok,0.9926,0.0,True,0.0,True,False,True,,1,0.249,
+16qam_20dB_4023,16qam,20,s2-top,16qam,True,ok,0.9926,0.0,True,0.0,True,False,True,,1,0.216,
+16qam_20dB_4023,16qam,20,search,16qam,True,ok,0.9926,0.0,True,0.0,True,False,True,,1,0.258,
+16qam_20dB_5023,16qam,20,truth-params,16qam,True,ok,0.9504,0.0,True,0.0,True,False,True,,1,0.253,
+16qam_20dB_5023,16qam,20,s2-top,16qam,True,ok,0.9504,0.0,True,0.0,True,False,True,,1,0.221,
+16qam_20dB_5023,16qam,20,search,16qam,True,ok,0.9504,0.0,True,0.0,True,False,True,,1,0.255,
+16qam_20dB_6023,16qam,20,truth-params,16qam,True,ok,0.9924,0.0,True,0.0,True,False,True,,1,0.245,
+16qam_20dB_6023,16qam,20,s2-top,16qam,True,ok,0.9924,0.0,True,0.0,True,False,True,,1,0.224,
+16qam_20dB_6023,16qam,20,search,16qam,True,ok,0.9924,0.0,True,0.0,True,False,True,,1,0.255,
+16qam_20dB_7023,16qam,20,truth-params,16qam,True,ok,0.9925,0.0,True,0.0,True,False,True,,1,0.252,
+16qam_20dB_7023,16qam,20,s2-top,16qam,True,ok,0.9925,0.0,True,0.0,True,False,True,,1,0.216,
+16qam_20dB_7023,16qam,20,search,16qam,True,ok,0.9925,0.0,True,0.0,True,False,True,,1,0.257,
+16qam_20dB_8023,16qam,20,truth-params,16qam,True,ok,0.9927,0.0,True,0.0,True,False,True,,1,0.244,
+16qam_20dB_8023,16qam,20,s2-top,16qam,True,ok,0.9927,0.0,True,0.0,True,False,True,,1,0.214,
+16qam_20dB_8023,16qam,20,search,16qam,True,ok,0.9927,0.0,True,0.0,True,False,True,,1,0.261,
+16qam_4dB_2018,16qam,4,truth-params,16qam,True,low_confidence,0.0343,0.05657759,False,0.428478,False,False,False,carrier_locked|output_usable,1,0.251,"carrier lock 0.03 below 0.59; the receiver estimates its own output BER at 0.0566, over the 0.05 a lock should produce -"
+16qam_4dB_2018,16qam,4,s2-top,16qam,True,low_confidence,0.0308,0.05657349,False,0.428478,False,False,False,carrier_locked|output_usable,1,0.222,"carrier lock 0.03 below 0.59; the receiver estimates its own output BER at 0.0566, over the 0.05 a lock should produce -"
+16qam_4dB_2018,16qam,4,search,bpsk,False,low_confidence,0.0316,0.12511106,False,0.478521,False,False,False,carrier_locked|output_usable,12,2.6,"carrier lock 0.03 below 0.23; the receiver estimates its own output BER at 0.125, over the 0.05 a lock should produce - "
+16qam_4dB_3018,16qam,4,truth-params,16qam,True,low_confidence,0.0166,0.05906887,False,0.422013,False,False,False,carrier_locked|output_usable,1,0.253,"carrier lock 0.02 below 0.59; the receiver estimates its own output BER at 0.0591, over the 0.05 a lock should produce -"
+16qam_4dB_3018,16qam,4,s2-top,16qam,True,low_confidence,0.0166,0.05906887,False,0.422013,False,False,False,carrier_locked|output_usable,1,0.218,"carrier lock 0.02 below 0.59; the receiver estimates its own output BER at 0.0591, over the 0.05 a lock should produce -"
+16qam_4dB_3018,16qam,4,search,4fsk,False,low_confidence,0.1228,0.36580817,False,0.483258,False,False,False,output_usable|tone_margin,12,2.191,"the receiver estimates its own output BER at 0.366, over the 0.05 a lock should produce - it is describing a demodulatio"
+16qam_4dB_4018,16qam,4,truth-params,16qam,True,low_confidence,0.0565,0.05786521,False,0.422104,False,False,False,carrier_locked|output_usable,1,0.253,"carrier lock 0.06 below 0.59; the receiver estimates its own output BER at 0.0579, over the 0.05 a lock should produce -"
+16qam_4dB_4018,16qam,4,s2-top,16qam,True,low_confidence,0.0531,0.05780928,False,0.421953,False,False,False,carrier_locked|output_usable,1,0.217,"carrier lock 0.05 below 0.59; the receiver estimates its own output BER at 0.0578, over the 0.05 a lock should produce -"
+16qam_4dB_4018,16qam,4,search,2fsk,False,low_confidence,0.1683,0.34585414,False,0.477763,False,False,True,output_usable,12,2.412,"the receiver estimates its own output BER at 0.346, over the 0.05 a lock should produce - it is describing a demodulatio"
+16qam_4dB_5018,16qam,4,truth-params,16qam,True,low_confidence,0.0385,0.05729388,False,0.415789,False,False,False,carrier_locked|output_usable,1,0.249,"carrier lock 0.04 below 0.59; the receiver estimates its own output BER at 0.0573, over the 0.05 a lock should produce -"
+16qam_4dB_5018,16qam,4,s2-top,16qam,True,low_confidence,0.0385,0.05729385,False,0.415789,False,False,False,carrier_locked|output_usable,1,0.232,"carrier lock 0.04 below 0.59; the receiver estimates its own output BER at 0.0573, over the 0.05 a lock should produce -"
+16qam_4dB_5018,16qam,4,search,2fsk,False,low_confidence,0.2323,0.285759,False,0.479133,False,False,True,output_usable,12,1.768,"the receiver estimates its own output BER at 0.286, over the 0.05 a lock should produce - it is describing a demodulatio"
+16qam_4dB_6018,16qam,4,truth-params,16qam,True,low_confidence,0.0271,0.0564644,False,0.425972,False,False,False,carrier_locked|output_usable,1,0.25,"carrier lock 0.03 below 0.59; the receiver estimates its own output BER at 0.0565, over the 0.05 a lock should produce -"
+16qam_4dB_6018,16qam,4,s2-top,16qam,True,low_confidence,0.0271,0.05644506,False,0.425972,False,False,False,carrier_locked|output_usable,1,0.221,"carrier lock 0.03 below 0.59; the receiver estimates its own output BER at 0.0564, over the 0.05 a lock should produce -"
+16qam_4dB_6018,16qam,4,search,2fsk,False,low_confidence,0.1039,0.40775911,False,0.478749,False,False,False,output_usable|tone_margin,12,1.788,"the receiver estimates its own output BER at 0.408, over the 0.05 a lock should produce - it is describing a demodulatio"
+16qam_4dB_7018,16qam,4,truth-params,16qam,True,low_confidence,0.082,0.05776389,False,0.427762,False,False,False,carrier_locked|output_usable,1,0.252,"carrier lock 0.08 below 0.59; the receiver estimates its own output BER at 0.0578, over the 0.05 a lock should produce -"
+16qam_4dB_7018,16qam,4,s2-top,16qam,True,low_confidence,0.082,0.05776386,False,0.427762,False,False,False,carrier_locked|output_usable,1,0.217,"carrier lock 0.08 below 0.59; the receiver estimates its own output BER at 0.0578, over the 0.05 a lock should produce -"
+16qam_4dB_7018,16qam,4,search,2fsk,False,low_confidence,0.2115,0.30658269,False,0.479683,False,False,True,output_usable,12,2.007,"the receiver estimates its own output BER at 0.307, over the 0.05 a lock should produce - it is describing a demodulatio"
+16qam_4dB_8018,16qam,4,truth-params,16qam,True,low_confidence,0.0495,0.05778609,False,0.419683,False,False,False,carrier_locked|output_usable,1,0.245,"carrier lock 0.05 below 0.59; the receiver estimates its own output BER at 0.0578, over the 0.05 a lock should produce -"
+16qam_4dB_8018,16qam,4,s2-top,16qam,True,low_confidence,0.0495,0.05778611,False,0.419683,False,False,False,carrier_locked|output_usable,1,0.217,"carrier lock 0.05 below 0.59; the receiver estimates its own output BER at 0.0578, over the 0.05 a lock should produce -"
+16qam_4dB_8018,16qam,4,search,2fsk,False,low_confidence,0.2659,0.25714779,False,0.479844,False,False,True,output_usable,12,1.782,"the receiver estimates its own output BER at 0.257, over the 0.05 a lock should produce - it is describing a demodulatio"
+16qam_8dB_2019,16qam,8,truth-params,16qam,True,low_confidence,0.4882,0.01050774,False,0.011054,False,False,False,carrier_locked,1,0.238,carrier lock 0.49 below 0.59
+16qam_8dB_2019,16qam,8,s2-top,16qam,True,low_confidence,0.4882,0.0105313,False,0.011062,False,False,False,carrier_locked,1,0.2,carrier lock 0.49 below 0.59
+16qam_8dB_2019,16qam,8,search,16qam,True,low_confidence,0.4882,0.0105313,False,0.011062,False,False,False,carrier_locked,12,1.978,carrier lock 0.49 below 0.59
+16qam_8dB_3019,16qam,8,truth-params,16qam,True,ok,0.7881,0.01067703,True,0.012945,False,False,True,,1,0.244,
+16qam_8dB_3019,16qam,8,s2-top,16qam,True,ok,0.7881,0.01067703,True,0.012945,False,False,True,,1,0.212,
+16qam_8dB_3019,16qam,8,search,16qam,True,ok,0.7881,0.01067703,True,0.012945,False,False,True,,1,0.254,
+16qam_8dB_4019,16qam,8,truth-params,16qam,True,ok,0.6961,0.01091422,True,0.012395,False,False,True,,1,0.24,
+16qam_8dB_4019,16qam,8,s2-top,16qam,True,ok,0.6961,0.01091422,True,0.012395,False,False,True,,1,0.213,
+16qam_8dB_4019,16qam,8,search,16qam,True,ok,0.6961,0.01091422,True,0.012395,False,False,True,,1,0.255,
+16qam_8dB_5019,16qam,8,truth-params,16qam,True,low_confidence,0.0234,0.04778137,False,0.40926,False,False,False,carrier_locked,1,0.246,carrier lock 0.02 below 0.59
+16qam_8dB_5019,16qam,8,s2-top,16qam,True,low_confidence,0.0234,0.04778137,False,0.40926,False,False,False,carrier_locked,1,0.223,carrier lock 0.02 below 0.59
+16qam_8dB_5019,16qam,8,search,16qam,True,ok,0.6946,0.0125505,True,0.013945,False,False,True,,2,0.521,
+16qam_8dB_6019,16qam,8,truth-params,16qam,True,ok,0.7006,0.01067742,True,0.012288,False,False,True,,1,0.249,
+16qam_8dB_6019,16qam,8,s2-top,16qam,True,ok,0.7002,0.01067984,True,0.012288,False,False,True,,1,0.214,
+16qam_8dB_6019,16qam,8,search,16qam,True,ok,0.7002,0.01067984,True,0.012288,False,False,True,,1,0.253,
+16qam_8dB_7019,16qam,8,truth-params,16qam,True,ok,0.6865,0.01056949,True,0.012691,False,False,True,,1,0.25,
+16qam_8dB_7019,16qam,8,s2-top,16qam,True,ok,0.6865,0.01056949,True,0.012691,False,False,True,,1,0.219,
+16qam_8dB_7019,16qam,8,search,16qam,True,ok,0.6865,0.01056949,True,0.012691,False,False,True,,1,0.248,
+16qam_8dB_8019,16qam,8,truth-params,16qam,True,ok,0.6805,0.01008624,True,0.012174,False,False,True,,1,0.251,
+16qam_8dB_8019,16qam,8,s2-top,16qam,True,ok,0.6801,0.01008564,True,0.012174,False,False,True,,1,0.216,
+16qam_8dB_8019,16qam,8,search,16qam,True,ok,0.6801,0.01008564,True,0.012174,False,False,True,,1,0.267,
+2fsk_10dB_2026,2fsk,10,truth-params,2fsk,True,ok,0.8611,0.0,True,0.0,True,False,True,,1,0.065,
+2fsk_10dB_2026,2fsk,10,s2-top,2fsk,True,low_confidence,0.8611,0.0,False,0.0,True,False,True,carrier_aligned,1,0.063,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_10dB_2026,2fsk,10,search,2fsk,True,ok,0.8611,0.0,True,0.0,True,False,True,,1,0.361,
+2fsk_10dB_3026,2fsk,10,truth-params,2fsk,True,ok,0.861,0.0,True,0.0,True,False,True,,1,0.067,
+2fsk_10dB_3026,2fsk,10,s2-top,2fsk,True,low_confidence,0.861,0.0,False,0.0,True,False,True,carrier_aligned,1,0.066,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_10dB_3026,2fsk,10,search,2fsk,True,ok,0.861,0.0,True,0.0,True,False,True,,1,0.396,
+2fsk_10dB_4026,2fsk,10,truth-params,2fsk,True,ok,0.8615,0.0,True,0.0,True,False,True,,1,0.069,
+2fsk_10dB_4026,2fsk,10,s2-top,2fsk,True,low_confidence,0.8615,0.0,False,0.0,True,False,True,carrier_aligned,1,0.062,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_10dB_4026,2fsk,10,search,2fsk,True,ok,0.8615,0.0,True,0.0,True,False,True,,1,0.281,
+2fsk_10dB_5026,2fsk,10,truth-params,2fsk,True,ok,0.8608,0.0,True,0.0,True,False,True,,1,0.067,
+2fsk_10dB_5026,2fsk,10,s2-top,2fsk,True,low_confidence,0.8608,0.0,False,0.0,True,False,True,carrier_aligned,1,0.061,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_10dB_5026,2fsk,10,search,2fsk,True,ok,0.8608,0.0,True,0.0,True,False,True,,1,0.329,
+2fsk_10dB_6026,2fsk,10,truth-params,2fsk,True,ok,0.8608,0.0,True,0.0,True,False,True,,1,0.067,
+2fsk_10dB_6026,2fsk,10,s2-top,2fsk,True,low_confidence,0.8608,0.0,False,0.0,True,False,True,carrier_aligned,1,0.068,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_10dB_6026,2fsk,10,search,2fsk,True,ok,0.8608,0.0,True,0.0,True,False,True,,1,0.344,
+2fsk_10dB_7026,2fsk,10,truth-params,2fsk,True,ok,0.8604,0.0,True,0.0,True,False,True,,1,0.065,
+2fsk_10dB_7026,2fsk,10,s2-top,2fsk,True,low_confidence,0.8604,0.0,False,0.0,True,False,True,carrier_aligned,1,0.069,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_10dB_7026,2fsk,10,search,2fsk,True,ok,0.8604,0.0,True,0.0,True,False,True,,1,0.318,
+2fsk_10dB_8026,2fsk,10,truth-params,2fsk,True,ok,0.8611,0.0,True,0.0,True,False,True,,1,0.066,
+2fsk_10dB_8026,2fsk,10,s2-top,2fsk,True,low_confidence,0.8611,0.0,False,0.0,True,False,True,carrier_aligned,1,0.065,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_10dB_8026,2fsk,10,search,2fsk,True,ok,0.8611,0.0,True,0.0,True,False,True,,1,0.322,
+2fsk_13dB_2027,2fsk,13,truth-params,2fsk,True,ok,0.9016,0.0,True,0.0,True,False,True,,1,0.064,
+2fsk_13dB_2027,2fsk,13,s2-top,2fsk,True,low_confidence,0.9016,0.0,False,0.0,True,False,True,carrier_aligned,1,0.071,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_13dB_2027,2fsk,13,search,2fsk,True,ok,0.9016,0.0,True,0.0,True,False,True,,1,0.28,
+2fsk_13dB_3027,2fsk,13,truth-params,2fsk,True,ok,0.9012,0.0,True,0.0,True,False,True,,1,0.066,
+2fsk_13dB_3027,2fsk,13,s2-top,2fsk,True,low_confidence,0.9012,0.0,False,0.0,True,False,True,carrier_aligned,1,0.073,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_13dB_3027,2fsk,13,search,2fsk,True,ok,0.9012,0.0,True,0.0,True,False,True,,1,0.29,
+2fsk_13dB_4027,2fsk,13,truth-params,2fsk,True,ok,0.9014,0.0,True,0.0,True,False,True,,1,0.066,
+2fsk_13dB_4027,2fsk,13,s2-top,2fsk,True,low_confidence,0.9014,0.0,False,0.0,True,False,True,carrier_aligned,1,0.067,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_13dB_4027,2fsk,13,search,2fsk,True,ok,0.9014,0.0,True,0.0,True,False,True,,1,0.386,
+2fsk_13dB_5027,2fsk,13,truth-params,2fsk,True,ok,0.9014,0.0,True,0.0,True,False,True,,1,0.063,
+2fsk_13dB_5027,2fsk,13,s2-top,2fsk,True,low_confidence,0.9014,0.0,False,0.0,True,False,True,carrier_aligned,1,0.073,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_13dB_5027,2fsk,13,search,2fsk,True,ok,0.9014,0.0,True,0.0,True,False,True,,1,0.324,
+2fsk_13dB_6027,2fsk,13,truth-params,2fsk,True,ok,0.9015,0.0,True,0.0,True,False,True,,1,0.067,
+2fsk_13dB_6027,2fsk,13,s2-top,2fsk,True,low_confidence,0.9015,0.0,False,0.0,True,False,True,carrier_aligned,1,0.066,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_13dB_6027,2fsk,13,search,2fsk,True,ok,0.9015,0.0,True,0.0,True,False,True,,1,0.39,
+2fsk_13dB_7027,2fsk,13,truth-params,2fsk,True,ok,0.9012,0.0,True,0.0,True,False,True,,1,0.067,
+2fsk_13dB_7027,2fsk,13,s2-top,2fsk,True,low_confidence,0.9012,0.0,False,0.0,True,False,True,carrier_aligned,1,0.064,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_13dB_7027,2fsk,13,search,2fsk,True,ok,0.9012,0.0,True,0.0,True,False,True,,1,0.324,
+2fsk_13dB_8027,2fsk,13,truth-params,2fsk,True,ok,0.9012,0.0,True,0.0,True,False,True,,1,0.064,
+2fsk_13dB_8027,2fsk,13,s2-top,2fsk,True,low_confidence,0.9012,0.0,False,0.0,True,False,True,carrier_aligned,1,0.074,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_13dB_8027,2fsk,13,search,2fsk,True,ok,0.9012,0.0,True,0.0,True,False,True,,1,0.376,
+2fsk_15dB_2028,2fsk,15,truth-params,2fsk,True,ok,0.9213,0.0,True,0.0,True,False,True,,1,0.066,
+2fsk_15dB_2028,2fsk,15,s2-top,2fsk,True,low_confidence,0.9213,0.0,False,0.0,True,False,True,carrier_aligned,1,0.065,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_15dB_2028,2fsk,15,search,2fsk,True,ok,0.9213,0.0,True,0.0,True,False,True,,1,0.329,
+2fsk_15dB_3028,2fsk,15,truth-params,2fsk,True,ok,0.9216,0.0,True,0.0,True,False,True,,1,0.069,
+2fsk_15dB_3028,2fsk,15,s2-top,2fsk,True,low_confidence,0.9216,0.0,False,0.0,True,False,True,carrier_aligned,1,0.061,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_15dB_3028,2fsk,15,search,2fsk,True,ok,0.9216,0.0,True,0.0,True,False,True,,1,0.334,
+2fsk_15dB_4028,2fsk,15,truth-params,2fsk,True,ok,0.9215,0.0,True,0.0,True,False,True,,1,0.064,
+2fsk_15dB_4028,2fsk,15,s2-top,2fsk,True,low_confidence,0.9215,0.0,False,0.0,True,False,True,carrier_aligned,1,0.067,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_15dB_4028,2fsk,15,search,2fsk,True,ok,0.9215,0.0,True,0.0,True,False,True,,1,0.29,
+2fsk_15dB_5028,2fsk,15,truth-params,2fsk,True,ok,0.9214,0.0,True,0.0,True,False,True,,1,0.07,
+2fsk_15dB_5028,2fsk,15,s2-top,2fsk,True,low_confidence,0.9214,0.0,False,0.0,True,False,True,carrier_aligned,1,0.057,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_15dB_5028,2fsk,15,search,2fsk,True,ok,0.9214,0.0,True,0.0,True,False,True,,1,0.363,
+2fsk_15dB_6028,2fsk,15,truth-params,2fsk,True,ok,0.9214,0.0,True,0.0,True,False,True,,1,0.064,
+2fsk_15dB_6028,2fsk,15,s2-top,2fsk,True,low_confidence,0.9214,0.0,False,0.0,True,False,True,carrier_aligned,1,0.073,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_15dB_6028,2fsk,15,search,2fsk,True,ok,0.9214,0.0,True,0.0,True,False,True,,1,0.267,
+2fsk_15dB_7028,2fsk,15,truth-params,2fsk,True,ok,0.9217,0.0,True,0.0,True,False,True,,1,0.064,
+2fsk_15dB_7028,2fsk,15,s2-top,2fsk,True,low_confidence,0.9217,0.0,False,0.0,True,False,True,carrier_aligned,1,0.065,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_15dB_7028,2fsk,15,search,2fsk,True,ok,0.9217,0.0,True,0.0,True,False,True,,1,0.321,
+2fsk_15dB_8028,2fsk,15,truth-params,2fsk,True,ok,0.9218,0.0,True,0.0,True,False,True,,1,0.066,
+2fsk_15dB_8028,2fsk,15,s2-top,2fsk,True,low_confidence,0.9218,0.0,False,0.0,True,False,True,carrier_aligned,1,0.062,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_15dB_8028,2fsk,15,search,2fsk,True,ok,0.9218,0.0,True,0.0,True,False,True,,1,0.269,
+2fsk_20dB_2029,2fsk,20,truth-params,2fsk,True,ok,0.9558,0.0,True,0.0,True,False,True,,1,0.064,
+2fsk_20dB_2029,2fsk,20,s2-top,2fsk,True,low_confidence,0.9558,0.0,False,0.0,True,False,True,carrier_aligned,1,0.068,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_20dB_2029,2fsk,20,search,2fsk,True,ok,0.9558,0.0,True,0.0,True,False,True,,1,0.279,
+2fsk_20dB_3029,2fsk,20,truth-params,2fsk,True,ok,0.9557,0.0,True,0.0,True,False,True,,1,0.064,
+2fsk_20dB_3029,2fsk,20,s2-top,2fsk,True,low_confidence,0.9557,0.0,False,0.0,True,False,True,carrier_aligned,1,0.064,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_20dB_3029,2fsk,20,search,2fsk,True,ok,0.9557,0.0,True,0.0,True,False,True,,1,0.3,
+2fsk_20dB_4029,2fsk,20,truth-params,2fsk,True,ok,0.9558,0.0,True,0.0,True,False,True,,1,0.065,
+2fsk_20dB_4029,2fsk,20,s2-top,2fsk,True,low_confidence,0.9558,0.0,False,0.0,True,False,True,carrier_aligned,1,0.062,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_20dB_4029,2fsk,20,search,2fsk,True,ok,0.9558,0.0,True,0.0,True,False,True,,1,0.281,
+2fsk_20dB_5029,2fsk,20,truth-params,2fsk,True,ok,0.9559,0.0,True,0.0,True,False,True,,1,0.067,
+2fsk_20dB_5029,2fsk,20,s2-top,2fsk,True,low_confidence,0.9559,0.0,False,0.0,True,False,True,carrier_aligned,1,0.059,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_20dB_5029,2fsk,20,search,2fsk,True,ok,0.9559,0.0,True,0.0,True,False,True,,1,0.285,
+2fsk_20dB_6029,2fsk,20,truth-params,2fsk,True,ok,0.9558,0.0,True,0.0,True,False,True,,1,0.064,
+2fsk_20dB_6029,2fsk,20,s2-top,2fsk,True,low_confidence,0.9558,0.0,False,0.0,True,False,True,carrier_aligned,1,0.066,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_20dB_6029,2fsk,20,search,2fsk,True,ok,0.9558,0.0,True,0.0,True,False,True,,1,0.327,
+2fsk_20dB_7029,2fsk,20,truth-params,2fsk,True,ok,0.9556,0.0,True,0.0,True,False,True,,1,0.063,
+2fsk_20dB_7029,2fsk,20,s2-top,2fsk,True,low_confidence,0.9556,0.0,False,0.0,True,False,True,carrier_aligned,1,0.07,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_20dB_7029,2fsk,20,search,2fsk,True,ok,0.9556,0.0,True,0.0,True,False,True,,1,0.271,
+2fsk_20dB_8029,2fsk,20,truth-params,2fsk,True,ok,0.9557,0.0,True,0.0,True,False,True,,1,0.067,
+2fsk_20dB_8029,2fsk,20,s2-top,2fsk,True,low_confidence,0.9557,0.0,False,0.0,True,False,True,carrier_aligned,1,0.066,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+2fsk_20dB_8029,2fsk,20,search,2fsk,True,ok,0.9557,0.0,True,0.0,True,False,True,,1,0.353,
+2fsk_4dB_2024,2fsk,4,truth-params,2fsk,True,ok,0.7273,0.00299025,True,0.003756,True,False,True,,1,0.05,
+2fsk_4dB_2024,2fsk,4,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.027,"no symbol-rate line at 48479 Hz (1.6x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_4dB_2024,2fsk,4,search,2fsk,True,ok,0.7273,0.00299025,True,0.003756,True,False,True,,2,0.46,
+2fsk_4dB_3024,2fsk,4,truth-params,2fsk,True,ok,0.7274,0.00277979,True,0.00381,True,False,True,,1,0.051,
+2fsk_4dB_3024,2fsk,4,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.028,"no symbol-rate line at 14914 Hz (1.0x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_4dB_3024,2fsk,4,search,2fsk,True,ok,0.7274,0.00277979,True,0.00381,True,False,True,,2,0.405,
+2fsk_4dB_4024,2fsk,4,truth-params,2fsk,True,ok,0.7266,0.00318759,True,0.004014,True,False,True,,1,0.06,
+2fsk_4dB_4024,2fsk,4,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.027,"no symbol-rate line at 47409 Hz (1.9x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_4dB_4024,2fsk,4,search,2fsk,True,ok,0.7266,0.00318759,True,0.004014,True,False,True,,10,7.069,
+2fsk_4dB_5024,2fsk,4,truth-params,2fsk,True,ok,0.7285,0.00287139,True,0.003559,True,False,True,,1,0.054,
+2fsk_4dB_5024,2fsk,4,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.03,"no symbol-rate line at 43216 Hz (2.2x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_4dB_5024,2fsk,4,search,2fsk,True,ok,0.7285,0.00287139,True,0.003559,True,False,True,,10,6.319,
+2fsk_4dB_6024,2fsk,4,truth-params,2fsk,True,ok,0.727,0.0028469,True,0.003358,True,False,True,,1,0.05,
+2fsk_4dB_6024,2fsk,4,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.027,"no symbol-rate line at 51061 Hz (1.6x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_4dB_6024,2fsk,4,search,2fsk,True,ok,0.727,0.0028469,True,0.003358,True,False,True,,2,0.372,
+2fsk_4dB_7024,2fsk,4,truth-params,2fsk,True,ok,0.7296,0.00282163,True,0.003961,True,False,True,,1,0.081,
+2fsk_4dB_7024,2fsk,4,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.033,"no symbol-rate line at 45265 Hz (1.5x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_4dB_7024,2fsk,4,search,2fsk,True,ok,0.7296,0.00282163,True,0.003961,True,False,True,,2,0.364,
+2fsk_4dB_8024,2fsk,4,truth-params,2fsk,True,ok,0.7277,0.00284855,True,0.00351,True,False,True,,1,0.053,
+2fsk_4dB_8024,2fsk,4,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.027,"no symbol-rate line at 72517 Hz (0.8x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_4dB_8024,2fsk,4,search,2fsk,True,ok,0.7277,0.00284855,True,0.00351,True,False,True,,10,9.914,
+2fsk_8dB_2025,2fsk,8,truth-params,2fsk,True,ok,0.8254,2.4e-07,True,0.0,True,False,True,,1,0.054,
 2fsk_8dB_2025,2fsk,8,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.027,"no symbol-rate line at 11987 Hz (1.0x local median, needs 4.5x) - either nothing is here or the rate is wrong"
-2fsk_8dB_2025,2fsk,8,search,,False,failed,0.0,1.0,False,1.0,False,False,False,,0,0.129,"every candidate was refused by the cheap screen: no symbol-rate line at 11987 Hz (3.9x local median, needs 4.5x) - eithe"
-4fsk_10dB_2032,4fsk,10,truth-params,4fsk,True,ok,0.7978,0.0,True,0.0,True,False,True,,1,0.034,
-4fsk_10dB_2032,4fsk,10,s2-top,4fsk,True,low_confidence,0.6123,0.00027325,False,0.247254,False,False,True,carrier_aligned,1,0.033,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-4fsk_10dB_2032,4fsk,10,search,4fsk,True,ok,0.7978,0.0,True,0.0,True,False,True,,2,0.132,
-4fsk_13dB_2033,4fsk,13,truth-params,4fsk,True,ok,0.8565,0.0,True,0.0,True,False,True,,1,0.033,
-4fsk_13dB_2033,4fsk,13,s2-top,4fsk,True,low_confidence,0.4801,0.0551752,False,0.255824,False,False,True,carrier_aligned|output_usable,1,0.034,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
-4fsk_13dB_2033,4fsk,13,search,4fsk,True,ok,0.8565,0.0,True,0.0,True,False,True,,4,0.212,
-4fsk_15dB_2034,4fsk,15,truth-params,4fsk,True,ok,0.8858,0.0,True,0.0,True,False,True,,1,0.033,
-4fsk_15dB_2034,4fsk,15,s2-top,4fsk,True,low_confidence,0.542,0.1035044,False,0.247645,False,False,True,carrier_aligned|output_usable,1,0.035,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
-4fsk_15dB_2034,4fsk,15,search,4fsk,True,ok,0.8858,0.0,True,0.0,True,False,True,,2,0.129,
-4fsk_20dB_2035,4fsk,20,truth-params,4fsk,True,ok,0.9355,0.0,True,0.0,True,False,True,,1,0.034,
-4fsk_20dB_2035,4fsk,20,s2-top,4fsk,True,low_confidence,0.5163,0.06779308,False,0.249172,False,False,True,carrier_aligned|output_usable,1,0.036,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+2fsk_8dB_2025,2fsk,8,search,2fsk,True,ok,0.8254,2.4e-07,True,0.0,True,False,True,,2,0.378,
+2fsk_8dB_3025,2fsk,8,truth-params,2fsk,True,ok,0.8254,7e-08,True,0.0,True,False,True,,1,0.05,
+2fsk_8dB_3025,2fsk,8,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.027,"no symbol-rate line at 41822 Hz (0.5x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_8dB_3025,2fsk,8,search,2fsk,True,ok,0.8254,7e-08,True,0.0,True,False,True,,2,0.385,
+2fsk_8dB_4025,2fsk,8,truth-params,2fsk,True,ok,0.8253,2.25e-06,True,0.0,True,False,True,,1,0.05,
+2fsk_8dB_4025,2fsk,8,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.027,"no symbol-rate line at 20364 Hz (2.1x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_8dB_4025,2fsk,8,search,2fsk,True,ok,0.8253,2.25e-06,True,0.0,True,False,True,,10,3.308,
+2fsk_8dB_5025,2fsk,8,truth-params,2fsk,True,ok,0.8253,2.7e-07,True,0.0,True,False,True,,1,0.05,
+2fsk_8dB_5025,2fsk,8,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.026,"no symbol-rate line at 45043 Hz (2.2x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_8dB_5025,2fsk,8,search,2fsk,True,ok,0.8253,2.7e-07,True,0.0,True,False,True,,2,0.347,
+2fsk_8dB_6025,2fsk,8,truth-params,2fsk,True,ok,0.826,2.6e-07,True,0.0,True,False,True,,1,0.056,
+2fsk_8dB_6025,2fsk,8,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.026,"no symbol-rate line at 78765 Hz (1.9x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_8dB_6025,2fsk,8,search,2fsk,True,ok,0.826,2.6e-07,True,0.0,True,False,True,,2,0.35,
+2fsk_8dB_7025,2fsk,8,truth-params,2fsk,True,ok,0.8252,9e-08,True,0.0,True,False,True,,1,0.053,
+2fsk_8dB_7025,2fsk,8,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.026,"no symbol-rate line at 45559 Hz (2.9x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_8dB_7025,2fsk,8,search,2fsk,True,ok,0.8252,9e-08,True,0.0,True,False,True,,2,0.374,
+2fsk_8dB_8025,2fsk,8,truth-params,2fsk,True,ok,0.8259,1.4e-07,True,0.0,True,False,True,,1,0.053,
+2fsk_8dB_8025,2fsk,8,s2-top,2fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.027,"no symbol-rate line at 41598 Hz (2.2x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+2fsk_8dB_8025,2fsk,8,search,2fsk,True,ok,0.8259,1.4e-07,True,0.0,True,False,True,,2,0.374,
+4fsk_10dB_2032,4fsk,10,truth-params,4fsk,True,ok,0.7978,0.0,True,0.0,True,False,True,,1,0.041,
+4fsk_10dB_2032,4fsk,10,s2-top,4fsk,True,low_confidence,0.6123,0.00027325,False,0.247254,False,False,True,carrier_aligned,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_10dB_2032,4fsk,10,search,4fsk,True,ok,0.7978,0.0,True,0.0,True,False,True,,1,0.136,
+4fsk_10dB_3032,4fsk,10,truth-params,4fsk,True,ok,0.7971,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_10dB_3032,4fsk,10,s2-top,4fsk,True,low_confidence,0.4771,0.0920472,False,0.288793,False,False,True,carrier_aligned|output_usable,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_10dB_3032,4fsk,10,search,4fsk,True,ok,0.7971,0.0,True,0.0,True,False,True,,2,0.185,
+4fsk_10dB_4032,4fsk,10,truth-params,4fsk,True,ok,0.797,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_10dB_4032,4fsk,10,s2-top,4fsk,True,low_confidence,0.4508,0.06106048,False,0.246828,False,False,True,carrier_aligned|output_usable,1,0.049,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_10dB_4032,4fsk,10,search,4fsk,True,ok,0.797,0.0,True,0.0,True,False,True,,1,0.127,
+4fsk_10dB_5032,4fsk,10,truth-params,4fsk,True,ok,0.798,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_10dB_5032,4fsk,10,s2-top,4fsk,True,low_confidence,0.4832,0.0923565,False,0.286752,False,False,True,carrier_aligned|output_usable,1,0.044,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_10dB_5032,4fsk,10,search,4fsk,True,ok,0.798,0.0,True,0.0,True,False,True,,2,0.18,
+4fsk_10dB_6032,4fsk,10,truth-params,4fsk,True,ok,0.7978,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_10dB_6032,4fsk,10,s2-top,4fsk,True,low_confidence,0.4678,0.08582295,False,0.247106,False,False,True,carrier_aligned|output_usable,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_10dB_6032,4fsk,10,search,4fsk,True,ok,0.7978,0.0,True,0.0,True,False,True,,1,0.132,
+4fsk_10dB_7032,4fsk,10,truth-params,4fsk,True,ok,0.7977,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_10dB_7032,4fsk,10,s2-top,4fsk,True,low_confidence,0.6268,0.0001287,False,0.0,True,False,True,carrier_aligned,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_10dB_7032,4fsk,10,search,4fsk,True,ok,0.7977,0.0,True,0.0,True,False,True,,1,0.133,
+4fsk_10dB_8032,4fsk,10,truth-params,4fsk,True,ok,0.7973,0.0,True,0.0,True,False,True,,1,0.039,
+4fsk_10dB_8032,4fsk,10,s2-top,4fsk,True,low_confidence,0.7536,0.0,False,0.247281,False,False,True,carrier_aligned,1,0.042,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_10dB_8032,4fsk,10,search,4fsk,True,ok,0.7973,0.0,True,0.0,True,False,True,,2,0.183,
+4fsk_13dB_2033,4fsk,13,truth-params,4fsk,True,ok,0.8565,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_13dB_2033,4fsk,13,s2-top,4fsk,True,low_confidence,0.4801,0.0551752,False,0.255824,False,False,True,carrier_aligned|output_usable,1,0.044,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_13dB_2033,4fsk,13,search,4fsk,True,ok,0.8565,0.0,True,0.0,True,False,True,,2,0.188,
+4fsk_13dB_3033,4fsk,13,truth-params,4fsk,True,ok,0.8559,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_13dB_3033,4fsk,13,s2-top,4fsk,True,low_confidence,0.8129,0.0,False,0.0,True,False,True,carrier_aligned,1,0.046,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_13dB_3033,4fsk,13,search,4fsk,True,ok,0.8559,0.0,True,0.0,True,False,True,,2,0.148,
+4fsk_13dB_4033,4fsk,13,truth-params,4fsk,True,ok,0.8557,0.0,True,0.0,True,False,True,,1,0.044,
+4fsk_13dB_4033,4fsk,13,s2-top,4fsk,True,low_confidence,0.4993,0.06619648,False,0.258742,False,False,True,carrier_aligned|output_usable,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_13dB_4033,4fsk,13,search,4fsk,True,ok,0.8557,0.0,True,0.0,True,False,True,,2,0.191,
+4fsk_13dB_5033,4fsk,13,truth-params,4fsk,True,ok,0.8565,0.0,True,0.0,True,False,True,,1,0.041,
+4fsk_13dB_5033,4fsk,13,s2-top,4fsk,True,low_confidence,0.5297,0.1297051,False,0.291111,False,False,True,carrier_aligned|output_usable,1,0.042,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_13dB_5033,4fsk,13,search,4fsk,True,ok,0.8565,0.0,True,0.0,True,False,True,,2,0.186,
+4fsk_13dB_6033,4fsk,13,truth-params,4fsk,True,ok,0.8561,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_13dB_6033,4fsk,13,s2-top,4fsk,True,low_confidence,0.553,0.03397434,False,0.247756,False,False,True,carrier_aligned,1,0.042,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_13dB_6033,4fsk,13,search,4fsk,True,ok,0.8561,0.0,True,0.0,True,False,True,,2,0.195,
+4fsk_13dB_7033,4fsk,13,truth-params,4fsk,True,ok,0.8562,0.0,True,0.0,True,False,True,,1,0.043,
+4fsk_13dB_7033,4fsk,13,s2-top,4fsk,True,low_confidence,0.5515,0.03173711,False,0.252823,False,False,True,carrier_aligned,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_13dB_7033,4fsk,13,search,4fsk,True,ok,0.8562,0.0,True,0.0,True,False,True,,1,0.103,
+4fsk_13dB_8033,4fsk,13,truth-params,4fsk,True,ok,0.8561,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_13dB_8033,4fsk,13,s2-top,4fsk,True,low_confidence,0.6729,4e-08,False,0.24901,False,False,True,carrier_aligned,1,0.045,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_13dB_8033,4fsk,13,search,4fsk,True,ok,0.8561,0.0,True,0.0,True,False,True,,2,0.158,
+4fsk_15dB_2034,4fsk,15,truth-params,4fsk,True,ok,0.8858,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_15dB_2034,4fsk,15,s2-top,4fsk,True,low_confidence,0.542,0.1035044,False,0.247645,False,False,True,carrier_aligned|output_usable,1,0.042,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_15dB_2034,4fsk,15,search,4fsk,True,ok,0.8858,0.0,True,0.0,True,False,True,,1,0.109,
+4fsk_15dB_3034,4fsk,15,truth-params,4fsk,True,ok,0.8855,0.0,True,0.0,True,False,True,,1,0.041,
+4fsk_15dB_3034,4fsk,15,s2-top,4fsk,True,low_confidence,0.5438,0.12795866,False,0.283237,False,False,True,carrier_aligned|output_usable,1,0.042,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_15dB_3034,4fsk,15,search,4fsk,True,ok,0.8855,0.0,True,0.0,True,False,True,,2,0.193,
+4fsk_15dB_4034,4fsk,15,truth-params,4fsk,True,ok,0.8857,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_15dB_4034,4fsk,15,s2-top,4fsk,True,low_confidence,0.6231,1.478e-05,False,0.247233,False,False,True,carrier_aligned,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_15dB_4034,4fsk,15,search,4fsk,True,ok,0.8857,0.0,True,0.0,True,False,True,,3,0.223,
+4fsk_15dB_5034,4fsk,15,truth-params,4fsk,True,ok,0.8851,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_15dB_5034,4fsk,15,s2-top,4fsk,True,low_confidence,0.4863,0.04638377,False,0.249223,False,False,True,carrier_aligned,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_15dB_5034,4fsk,15,search,4fsk,True,ok,0.8851,0.0,True,0.0,True,False,True,,1,0.134,
+4fsk_15dB_6034,4fsk,15,truth-params,4fsk,True,ok,0.8859,0.0,True,0.0,True,False,True,,1,0.039,
+4fsk_15dB_6034,4fsk,15,s2-top,4fsk,True,low_confidence,0.5119,0.06265903,False,0.259578,False,False,True,carrier_aligned|output_usable,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_15dB_6034,4fsk,15,search,4fsk,True,ok,0.8859,0.0,True,0.0,True,False,True,,1,0.126,
+4fsk_15dB_7034,4fsk,15,truth-params,4fsk,True,ok,0.8857,0.0,True,0.0,True,False,True,,1,0.039,
+4fsk_15dB_7034,4fsk,15,s2-top,4fsk,True,low_confidence,0.7807,0.0,False,0.0,True,False,True,carrier_aligned,1,0.047,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_15dB_7034,4fsk,15,search,4fsk,True,ok,0.8857,0.0,True,0.0,True,False,True,,2,0.186,
+4fsk_15dB_8034,4fsk,15,truth-params,4fsk,True,ok,0.8853,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_15dB_8034,4fsk,15,s2-top,4fsk,True,low_confidence,0.5527,0.13445838,False,0.247783,False,False,True,carrier_aligned|output_usable,1,0.042,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_15dB_8034,4fsk,15,search,4fsk,True,ok,0.8853,0.0,True,0.0,True,False,True,,2,0.193,
+4fsk_20dB_2035,4fsk,20,truth-params,4fsk,True,ok,0.9355,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_20dB_2035,4fsk,20,s2-top,4fsk,True,low_confidence,0.5163,0.06779308,False,0.249172,False,False,True,carrier_aligned|output_usable,1,0.044,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
 4fsk_20dB_2035,4fsk,20,search,4fsk,True,ok,0.9355,0.0,True,0.0,True,False,True,,4,0.2,
-4fsk_4dB_2030,4fsk,4,truth-params,4fsk,True,ok,0.6046,0.00438201,True,0.005521,True,False,True,,1,0.032,
+4fsk_20dB_3035,4fsk,20,truth-params,4fsk,True,ok,0.9354,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_20dB_3035,4fsk,20,s2-top,4fsk,True,low_confidence,0.5109,0.04233795,False,0.251016,False,False,True,carrier_aligned,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_20dB_3035,4fsk,20,search,4fsk,True,ok,0.9354,0.0,True,0.0,True,False,True,,4,0.242,
+4fsk_20dB_4035,4fsk,20,truth-params,4fsk,True,ok,0.9357,0.0,True,0.0,True,False,True,,1,0.043,
+4fsk_20dB_4035,4fsk,20,s2-top,4fsk,True,low_confidence,0.7544,0.0,False,0.0,True,False,True,carrier_aligned,1,0.042,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_20dB_4035,4fsk,20,search,4fsk,True,ok,0.9357,0.0,True,0.0,True,False,True,,4,0.201,
+4fsk_20dB_5035,4fsk,20,truth-params,4fsk,True,ok,0.9354,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_20dB_5035,4fsk,20,s2-top,4fsk,True,low_confidence,0.5719,0.10867264,False,0.250288,False,False,True,carrier_aligned|output_usable,1,0.042,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_20dB_5035,4fsk,20,search,4fsk,True,ok,0.9354,0.0,True,0.0,True,False,True,,2,0.141,
+4fsk_20dB_6035,4fsk,20,truth-params,4fsk,True,ok,0.9356,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_20dB_6035,4fsk,20,s2-top,4fsk,True,low_confidence,0.5719,0.11351565,False,0.249875,False,False,True,carrier_aligned|output_usable,1,0.042,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_20dB_6035,4fsk,20,search,4fsk,True,ok,0.9356,0.0,True,0.0,True,False,True,,1,0.163,
+4fsk_20dB_7035,4fsk,20,truth-params,4fsk,True,ok,0.9357,0.0,True,0.0,True,False,True,,1,0.04,
+4fsk_20dB_7035,4fsk,20,s2-top,4fsk,True,low_confidence,0.595,0.00392489,False,0.249862,False,False,True,carrier_aligned,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
+4fsk_20dB_7035,4fsk,20,search,4fsk,True,ok,0.9357,0.0,True,0.0,True,False,True,,4,0.227,
+4fsk_20dB_8035,4fsk,20,truth-params,4fsk,True,ok,0.9355,0.0,True,0.0,True,False,True,,1,0.044,
+4fsk_20dB_8035,4fsk,20,s2-top,4fsk,True,low_confidence,0.5914,0.13575771,False,0.245701,False,False,True,carrier_aligned|output_usable,1,0.043,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; the r"
+4fsk_20dB_8035,4fsk,20,search,4fsk,True,ok,0.9355,0.0,True,0.0,True,False,True,,4,0.2,
+4fsk_4dB_2030,4fsk,4,truth-params,4fsk,True,ok,0.6046,0.00438201,True,0.005521,True,False,True,,1,0.029,
 4fsk_4dB_2030,4fsk,4,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.012,"no symbol-rate line at 65634 Hz (0.6x local median, needs 4.5x) - either nothing is here or the rate is wrong"
-4fsk_4dB_2030,4fsk,4,search,,False,failed,0.0,1.0,False,1.0,False,False,False,,0,0.052,"every candidate was refused by the cheap screen: no symbol-rate line at 65634 Hz (4.0x local median, needs 4.5x) - eithe"
+4fsk_4dB_2030,4fsk,4,search,4fsk,True,ok,0.6046,0.00438201,True,0.005521,True,False,True,,2,0.147,
+4fsk_4dB_3030,4fsk,4,truth-params,4fsk,True,ok,0.6036,0.00468088,True,0.006721,True,False,True,,1,0.032,
+4fsk_4dB_3030,4fsk,4,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.012,"no symbol-rate line at 28802 Hz (2.0x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_4dB_3030,4fsk,4,search,4fsk,True,ok,0.6036,0.00468088,True,0.006721,True,False,True,,4,0.216,
+4fsk_4dB_4030,4fsk,4,truth-params,4fsk,True,ok,0.6042,0.00471068,True,0.005764,True,False,True,,1,0.032,
+4fsk_4dB_4030,4fsk,4,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.012,"no symbol-rate line at 39537 Hz (1.7x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_4dB_4030,4fsk,4,search,4fsk,True,ok,0.6042,0.00471068,True,0.005764,True,False,True,,2,0.162,
+4fsk_4dB_5030,4fsk,4,truth-params,4fsk,True,ok,0.6031,0.00442459,True,0.005714,True,False,True,,1,0.032,
+4fsk_4dB_5030,4fsk,4,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.012,"no symbol-rate line at 71672 Hz (1.1x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_4dB_5030,4fsk,4,search,4fsk,True,ok,0.6031,0.00442459,True,0.005714,True,False,True,,2,0.147,
+4fsk_4dB_6030,4fsk,4,truth-params,4fsk,True,ok,0.604,0.00447887,True,0.006719,True,False,True,,1,0.034,
+4fsk_4dB_6030,4fsk,4,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.011,"no symbol-rate line at 31691 Hz (2.4x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_4dB_6030,4fsk,4,search,4fsk,True,ok,0.604,0.00447887,True,0.006719,True,False,True,,4,0.212,
+4fsk_4dB_7030,4fsk,4,truth-params,4fsk,True,ok,0.6042,0.00482277,True,0.00561,True,False,True,,1,0.032,
+4fsk_4dB_7030,4fsk,4,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.012,"no symbol-rate line at 9543 Hz (1.5x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_4dB_7030,4fsk,4,search,4fsk,True,ok,0.6042,0.00482277,True,0.00561,True,False,True,,4,0.215,
+4fsk_4dB_8030,4fsk,4,truth-params,4fsk,True,ok,0.6032,0.00473705,True,0.005564,True,False,True,,1,0.032,
+4fsk_4dB_8030,4fsk,4,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.012,"no symbol-rate line at 21056 Hz (0.8x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_4dB_8030,4fsk,4,search,4fsk,True,ok,0.6032,0.00473705,True,0.005564,True,False,True,,2,0.139,
 4fsk_8dB_2031,4fsk,8,truth-params,4fsk,True,ok,0.7453,8.6e-07,True,0.0,True,False,True,,1,0.032,
-4fsk_8dB_2031,4fsk,8,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.013,"no symbol-rate line at 47713 Hz (1.1x local median, needs 4.5x) - either nothing is here or the rate is wrong"
-4fsk_8dB_2031,4fsk,8,search,bpsk,False,low_confidence,0.2324,0.09745572,False,0.483758,False,False,False,carrier_locked|output_usable,4,1.742,"carrier lock 0.23 below 0.60; the receiver estimates its own output BER at 0.0975, over the 0.05 a lock should produce -"
-8psk_10dB_2014,8psk,10,truth-params,8psk,True,ok,0.6594,0.00031215,True,0.000301,True,False,True,,1,0.335,
-8psk_10dB_2014,8psk,10,s2-top,8psk,True,low_confidence,0.6291,0.00053827,False,0.483185,False,False,True,carrier_aligned,1,0.316,"spectrum sits -6055 Hz off centre (0.12 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-8psk_10dB_2014,8psk,10,search,8psk,True,ok,0.6594,0.00031134,True,0.000251,True,False,True,,12,2.453,
-8psk_13dB_2015,8psk,13,truth-params,8psk,True,ok,0.8023,1.6e-07,True,0.0,True,False,True,,1,0.316,
-8psk_13dB_2015,8psk,13,s2-top,8psk,True,low_confidence,0.7829,1.7e-06,False,0.483855,False,False,True,carrier_aligned,1,0.323,"spectrum sits -6592 Hz off centre (0.13 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-8psk_13dB_2015,8psk,13,search,8psk,True,ok,0.8023,1.6e-07,True,0.0,True,False,True,,12,2.527,
-8psk_15dB_2016,8psk,15,truth-params,8psk,True,ok,0.879,0.0,True,0.0,True,False,True,,1,0.319,
-8psk_15dB_2016,8psk,15,s2-top,8psk,True,low_confidence,0.8667,0.0,False,0.483665,False,False,True,carrier_aligned,1,0.319,"spectrum sits -6738 Hz off centre (0.13 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-8psk_15dB_2016,8psk,15,search,8psk,True,ok,0.879,0.0,True,0.0,True,False,True,,12,2.646,
-8psk_20dB_2017,8psk,20,truth-params,8psk,True,ok,0.9574,0.0,True,0.0,True,False,True,,1,0.418,
-8psk_20dB_2017,8psk,20,s2-top,8psk,True,low_confidence,0.9537,0.0,False,0.48397,False,False,True,carrier_aligned,1,0.415,"spectrum sits -5762 Hz off centre (0.12 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-8psk_20dB_2017,8psk,20,search,8psk,True,ok,0.9574,0.0,True,0.0,True,False,True,,12,2.936,
-8psk_4dB_2012,8psk,4,truth-params,8psk,True,low_confidence,0.1625,0.0294019,False,0.230387,False,False,False,carrier_locked,1,0.397,carrier lock 0.16 below 0.60
-8psk_4dB_2012,8psk,4,s2-top,8psk,True,low_confidence,0.0155,0.04240038,False,0.482343,False,False,False,carrier_aligned|carrier_locked,1,0.45,"spectrum sits +5078 Hz off centre (0.10 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carrie"
-8psk_4dB_2012,8psk,4,search,8psk,True,low_confidence,0.1625,0.0294019,False,0.230387,False,False,False,carrier_locked,12,3.058,carrier lock 0.16 below 0.60
-8psk_8dB_2013,8psk,8,truth-params,8psk,True,low_confidence,0.4882,0.00280605,False,0.002805,True,False,False,carrier_locked,1,0.376,carrier lock 0.49 below 0.60
-8psk_8dB_2013,8psk,8,s2-top,8psk,True,low_confidence,0.0302,0.02883428,False,0.482617,False,False,False,carrier_aligned|carrier_locked,1,0.405,"spectrum sits +3369 Hz off centre (0.07 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carrie"
-8psk_8dB_2013,8psk,8,search,8psk,True,low_confidence,0.4882,0.00280605,False,0.002805,True,False,False,carrier_locked,12,2.97,carrier lock 0.49 below 0.60
-bpsk_10dB_2002,bpsk,10,truth-params,bpsk,True,ok,0.9699,0.0,True,0.0,True,False,True,,1,1.002,
-bpsk_10dB_2002,bpsk,10,s2-top,bpsk,True,low_confidence,0.089,0.05353738,False,0.48512,False,False,False,carrier_aligned|carrier_locked|output_usable,1,1.012,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
-bpsk_10dB_2002,bpsk,10,search,bpsk,True,ok,0.9699,0.0,True,0.0,True,False,True,,6,4.503,
-bpsk_13dB_2003,bpsk,13,truth-params,bpsk,True,ok,0.9858,0.0,True,0.0,True,False,True,,1,0.93,
-bpsk_13dB_2003,bpsk,13,s2-top,bpsk,True,low_confidence,0.0971,0.02354746,False,0.485244,False,False,False,carrier_aligned|carrier_locked,1,1.042,"spectrum sits +25049 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
-bpsk_13dB_2003,bpsk,13,search,bpsk,True,ok,0.9858,0.0,True,0.0,True,False,True,,6,4.77,
-bpsk_15dB_2004,bpsk,15,truth-params,bpsk,True,ok,0.991,0.0,True,0.0,True,False,True,,1,1.206,
-bpsk_15dB_2004,bpsk,15,s2-top,bpsk,True,low_confidence,0.0784,0.04589516,False,0.485871,False,False,False,carrier_aligned|carrier_locked,1,1.048,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
-bpsk_15dB_2004,bpsk,15,search,bpsk,True,ok,0.991,0.0,True,0.0,True,False,True,,6,4.75,
-bpsk_20dB_2005,bpsk,20,truth-params,bpsk,True,ok,0.9973,0.0,True,0.0,True,False,True,,1,0.944,
-bpsk_20dB_2005,bpsk,20,s2-top,bpsk,True,low_confidence,0.7403,0.00013549,False,0.483045,False,False,True,carrier_aligned,1,0.961,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-bpsk_20dB_2005,bpsk,20,search,bpsk,True,ok,0.9973,0.0,True,0.0,True,False,True,,6,4.686,
-bpsk_4dB_2000,bpsk,4,truth-params,bpsk,True,ok,0.8645,1.52e-06,True,0.0,True,False,True,,1,0.944,
-bpsk_4dB_2000,bpsk,4,s2-top,bpsk,True,low_confidence,0.1095,0.07362836,False,0.486094,False,False,False,carrier_aligned|carrier_locked|output_usable,1,0.939,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
-bpsk_4dB_2000,bpsk,4,search,bpsk,True,ok,0.8645,1.52e-06,True,0.0,True,False,True,,6,4.674,
-bpsk_8dB_2001,bpsk,8,truth-params,bpsk,True,ok,0.9502,0.0,True,0.0,True,False,True,,1,0.94,
-bpsk_8dB_2001,bpsk,8,s2-top,bpsk,True,low_confidence,0.1205,0.05920743,False,0.486581,False,False,False,carrier_aligned|carrier_locked|output_usable,1,1.035,"spectrum sits -24951 Hz off centre (0.50 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
-bpsk_8dB_2001,bpsk,8,search,bpsk,True,ok,0.9502,0.0,True,0.0,True,False,True,,6,4.795,
-qpsk_10dB_2008,qpsk,10,truth-params,qpsk,True,ok,0.9005,0.0,True,0.0,True,False,True,,1,0.468,
-qpsk_10dB_2008,qpsk,10,s2-top,qpsk,True,low_confidence,0.8612,0.0,False,0.485234,False,False,True,carrier_aligned,1,0.522,"spectrum sits -12207 Hz off centre (0.24 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-qpsk_10dB_2008,qpsk,10,search,qpsk,True,ok,0.9005,0.0,True,0.0,True,False,True,,12,4.634,
-qpsk_13dB_2009,qpsk,13,truth-params,qpsk,True,ok,0.9479,0.0,True,0.0,True,False,True,,1,0.476,
-qpsk_13dB_2009,qpsk,13,s2-top,qpsk,True,low_confidence,0.9275,0.0,False,0.484463,False,False,True,carrier_aligned,1,0.49,"spectrum sits -12354 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-qpsk_13dB_2009,qpsk,13,search,qpsk,True,ok,0.9479,0.0,True,0.0,True,False,True,,12,4.475,
-qpsk_15dB_2010,qpsk,15,truth-params,qpsk,True,ok,0.9674,0.0,True,0.0,True,False,True,,1,0.503,
-qpsk_15dB_2010,qpsk,15,s2-top,qpsk,True,low_confidence,0.9547,0.0,False,0.48502,False,False,True,carrier_aligned,1,0.47,"spectrum sits +12549 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-qpsk_15dB_2010,qpsk,15,search,qpsk,True,ok,0.9674,0.0,True,0.0,True,False,True,,6,2.225,
-qpsk_20dB_2011,qpsk,20,truth-params,qpsk,True,ok,0.989,0.0,True,0.0,True,False,True,,1,0.489,
-qpsk_20dB_2011,qpsk,20,s2-top,qpsk,True,low_confidence,0.9846,0.0,False,0.484636,False,False,True,carrier_aligned,1,0.479,"spectrum sits -12402 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-qpsk_20dB_2011,qpsk,20,search,qpsk,True,ok,0.989,0.0,True,0.0,True,False,True,,6,2.337,
-qpsk_4dB_2006,qpsk,4,truth-params,qpsk,True,ok,0.6365,0.00096521,True,0.001154,True,False,True,,1,0.516,
-qpsk_4dB_2006,qpsk,4,s2-top,qpsk,True,low_confidence,0.5424,0.00404943,False,0.483622,False,False,False,carrier_aligned|carrier_locked,1,0.475,"spectrum sits +12354 Hz off centre (0.25 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carri"
-qpsk_4dB_2006,qpsk,4,search,qpsk,True,ok,0.6365,0.00096521,True,0.001154,True,False,True,,6,2.339,
-qpsk_8dB_2007,qpsk,8,truth-params,qpsk,True,ok,0.8409,0.0,True,0.0,True,False,True,,1,0.499,
-qpsk_8dB_2007,qpsk,8,s2-top,qpsk,True,low_confidence,0.7867,1.23e-05,False,0.482814,False,False,True,carrier_aligned,1,0.534,"spectrum sits +12109 Hz off centre (0.24 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong"
-qpsk_8dB_2007,qpsk,8,search,qpsk,True,ok,0.8411,0.0,True,0.0,True,False,True,,12,4.345,
+4fsk_8dB_2031,4fsk,8,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.012,"no symbol-rate line at 47713 Hz (1.1x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_8dB_2031,4fsk,8,search,4fsk,True,ok,0.7453,8.6e-07,True,0.0,True,False,True,,10,3.274,
+4fsk_8dB_3031,4fsk,8,truth-params,4fsk,True,ok,0.7445,1.3e-07,True,0.0,True,False,True,,1,0.032,
+4fsk_8dB_3031,4fsk,8,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.011,"no symbol-rate line at 12591 Hz (1.1x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_8dB_3031,4fsk,8,search,4fsk,True,ok,0.7445,1.3e-07,True,0.0,True,False,True,,2,0.143,
+4fsk_8dB_4031,4fsk,8,truth-params,4fsk,True,ok,0.7453,1.3e-07,True,0.0,True,False,True,,1,0.032,
+4fsk_8dB_4031,4fsk,8,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.011,"no symbol-rate line at 76668 Hz (1.1x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_8dB_4031,4fsk,8,search,4fsk,True,ok,0.7453,1.3e-07,True,0.0,True,False,True,,4,0.222,
+4fsk_8dB_5031,4fsk,8,truth-params,4fsk,True,ok,0.7462,1.185e-05,True,0.0,True,False,True,,1,0.052,
+4fsk_8dB_5031,4fsk,8,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.012,"no symbol-rate line at 28026 Hz (1.4x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_8dB_5031,4fsk,8,search,4fsk,True,ok,0.7462,1.185e-05,True,0.0,True,False,True,,2,0.141,
+4fsk_8dB_6031,4fsk,8,truth-params,4fsk,True,ok,0.747,1.3e-07,True,0.0,True,False,True,,1,0.032,
+4fsk_8dB_6031,4fsk,8,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.012,"no symbol-rate line at 25639 Hz (0.7x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_8dB_6031,4fsk,8,search,4fsk,True,ok,0.747,1.3e-07,True,0.0,True,False,True,,4,0.223,
+4fsk_8dB_7031,4fsk,8,truth-params,4fsk,True,ok,0.745,1.147e-05,True,0.0,True,False,True,,1,0.032,
+4fsk_8dB_7031,4fsk,8,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.011,"no symbol-rate line at 19736 Hz (0.3x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_8dB_7031,4fsk,8,search,qpsk,False,low_confidence,0.0113,0.10363765,False,0.481826,False,False,False,carrier_locked|output_usable,12,1.829,"carrier lock 0.01 below 0.46; the receiver estimates its own output BER at 0.104, over the 0.05 a lock should produce - "
+4fsk_8dB_8031,4fsk,8,truth-params,4fsk,True,ok,0.7468,1.17e-06,True,0.0,True,False,True,,1,0.032,
+4fsk_8dB_8031,4fsk,8,s2-top,4fsk,True,failed,0.0,1.0,False,1.0,False,False,False,signal_present,1,0.011,"no symbol-rate line at 72882 Hz (1.7x local median, needs 4.5x) - either nothing is here or the rate is wrong"
+4fsk_8dB_8031,4fsk,8,search,4fsk,True,ok,0.7468,1.17e-06,True,0.0,True,False,True,,4,0.215,
+8psk_10dB_2014,8psk,10,truth-params,8psk,True,ok,0.6463,0.0003739,True,0.000501,True,False,True,,1,0.322,
+8psk_10dB_2014,8psk,10,s2-top,8psk,True,ok,0.6463,0.00037396,True,0.000501,True,False,True,,1,0.294,
+8psk_10dB_2014,8psk,10,search,8psk,True,ok,0.6463,0.00037396,True,0.000501,True,False,True,,1,0.347,
+8psk_10dB_3014,8psk,10,truth-params,8psk,True,ok,0.6374,0.00037888,True,0.000401,True,False,True,,1,0.33,
+8psk_10dB_3014,8psk,10,s2-top,8psk,True,ok,0.6375,0.00037892,True,0.000401,True,False,True,,1,0.298,
+8psk_10dB_3014,8psk,10,search,8psk,True,ok,0.6375,0.00037892,True,0.000401,True,False,True,,1,0.352,
+8psk_10dB_4014,8psk,10,truth-params,8psk,True,ok,0.6597,0.00039337,True,0.000451,True,False,True,,1,0.33,
+8psk_10dB_4014,8psk,10,s2-top,8psk,True,ok,0.6597,0.00039338,True,0.000451,True,False,True,,1,0.3,
+8psk_10dB_4014,8psk,10,search,8psk,True,ok,0.6597,0.00039338,True,0.000451,True,False,True,,1,0.343,
+8psk_10dB_5014,8psk,10,truth-params,8psk,True,ok,0.6536,0.00033406,True,0.000301,True,False,True,,1,0.32,
+8psk_10dB_5014,8psk,10,s2-top,8psk,True,ok,0.6536,0.00033406,True,0.000301,True,False,True,,1,0.3,
+8psk_10dB_5014,8psk,10,search,8psk,True,ok,0.6536,0.00033406,True,0.000301,True,False,True,,1,0.342,
+8psk_10dB_6014,8psk,10,truth-params,8psk,True,ok,0.6403,0.00037436,True,0.000602,True,False,True,,1,0.319,
+8psk_10dB_6014,8psk,10,s2-top,8psk,True,ok,0.6403,0.00037436,True,0.000602,True,False,True,,1,0.293,
+8psk_10dB_6014,8psk,10,search,8psk,True,ok,0.6403,0.00037436,True,0.000602,True,False,True,,1,0.352,
+8psk_10dB_7014,8psk,10,truth-params,8psk,True,ok,0.6397,0.00041319,True,0.000552,True,False,True,,1,0.33,
+8psk_10dB_7014,8psk,10,s2-top,8psk,True,ok,0.64,0.00041322,True,0.000552,True,False,True,,1,0.293,
+8psk_10dB_7014,8psk,10,search,8psk,True,ok,0.64,0.00041322,True,0.000552,True,False,True,,1,0.358,
+8psk_10dB_8014,8psk,10,truth-params,8psk,True,ok,0.6481,0.00041104,True,0.000301,True,False,True,,1,0.323,
+8psk_10dB_8014,8psk,10,s2-top,8psk,True,ok,0.6481,0.00041104,True,0.000301,True,False,True,,1,0.292,
+8psk_10dB_8014,8psk,10,search,8psk,True,ok,0.6481,0.00041104,True,0.000301,True,False,True,,1,0.333,
+8psk_13dB_2015,8psk,13,truth-params,8psk,True,ok,0.7944,4.1e-07,True,0.0,True,False,True,,1,0.328,
+8psk_13dB_2015,8psk,13,s2-top,8psk,True,ok,0.7944,4.1e-07,True,0.0,True,False,True,,1,0.298,
+8psk_13dB_2015,8psk,13,search,8psk,True,ok,0.7944,4.1e-07,True,0.0,True,False,True,,1,0.342,
+8psk_13dB_3015,8psk,13,truth-params,8psk,True,ok,0.8026,2.2e-07,True,0.0,True,False,True,,1,0.337,
+8psk_13dB_3015,8psk,13,s2-top,8psk,True,ok,0.8025,2.2e-07,True,0.0,True,False,True,,1,0.295,
+8psk_13dB_3015,8psk,13,search,8psk,True,ok,0.8025,2.2e-07,True,0.0,True,False,True,,1,0.35,
+8psk_13dB_4015,8psk,13,truth-params,8psk,True,ok,0.8099,1.14e-06,True,0.0,True,False,True,,1,0.334,
+8psk_13dB_4015,8psk,13,s2-top,8psk,True,ok,0.8099,1.14e-06,True,0.0,True,False,True,,1,0.295,
+8psk_13dB_4015,8psk,13,search,8psk,True,ok,0.8099,1.14e-06,True,0.0,True,False,True,,1,0.329,
+8psk_13dB_5015,8psk,13,truth-params,8psk,True,ok,0.7952,3e-08,True,0.0,True,False,True,,1,0.324,
+8psk_13dB_5015,8psk,13,s2-top,8psk,True,ok,0.7952,3e-08,True,0.0,True,False,True,,1,0.288,
+8psk_13dB_5015,8psk,13,search,8psk,True,ok,0.7952,3e-08,True,0.0,True,False,True,,1,0.338,
+8psk_13dB_6015,8psk,13,truth-params,8psk,True,ok,0.7952,5e-08,True,0.0,True,False,True,,1,0.333,
+8psk_13dB_6015,8psk,13,s2-top,8psk,True,ok,0.7952,5e-08,True,0.0,True,False,True,,1,0.298,
+8psk_13dB_6015,8psk,13,search,8psk,True,ok,0.7952,5e-08,True,0.0,True,False,True,,1,0.35,
+8psk_13dB_7015,8psk,13,truth-params,8psk,True,ok,0.7968,3.9e-07,True,0.0,True,False,True,,1,0.338,
+8psk_13dB_7015,8psk,13,s2-top,8psk,True,ok,0.7972,3.9e-07,True,0.0,True,False,True,,1,0.299,
+8psk_13dB_7015,8psk,13,search,8psk,True,ok,0.7972,3.9e-07,True,0.0,True,False,True,,1,0.35,
+8psk_13dB_8015,8psk,13,truth-params,8psk,True,ok,0.8078,6.8e-07,True,0.0,True,False,True,,1,0.331,
+8psk_13dB_8015,8psk,13,s2-top,8psk,True,ok,0.8078,6.8e-07,True,0.0,True,False,True,,1,0.296,
+8psk_13dB_8015,8psk,13,search,8psk,True,ok,0.8078,6.8e-07,True,0.0,True,False,True,,1,0.358,
+8psk_15dB_2016,8psk,15,truth-params,8psk,True,ok,0.8739,0.0,True,0.0,True,False,True,,1,0.323,
+8psk_15dB_2016,8psk,15,s2-top,8psk,True,ok,0.8739,0.0,True,0.0,True,False,True,,1,0.289,
+8psk_15dB_2016,8psk,15,search,8psk,True,ok,0.8739,0.0,True,0.0,True,False,True,,1,0.34,
+8psk_15dB_3016,8psk,15,truth-params,8psk,True,ok,0.8816,0.0,True,0.0,True,False,True,,1,0.333,
+8psk_15dB_3016,8psk,15,s2-top,8psk,True,ok,0.8816,0.0,True,0.0,True,False,True,,1,0.291,
+8psk_15dB_3016,8psk,15,search,8psk,True,ok,0.8816,0.0,True,0.0,True,False,True,,1,0.325,
+8psk_15dB_4016,8psk,15,truth-params,8psk,True,ok,0.8669,0.0,True,0.0,True,False,True,,1,0.326,
+8psk_15dB_4016,8psk,15,s2-top,8psk,True,ok,0.8669,0.0,True,0.0,True,False,True,,1,0.295,
+8psk_15dB_4016,8psk,15,search,8psk,True,ok,0.8669,0.0,True,0.0,True,False,True,,1,0.336,
+8psk_15dB_5016,8psk,15,truth-params,8psk,True,ok,0.8667,0.0,True,0.0,True,False,True,,1,0.319,
+8psk_15dB_5016,8psk,15,s2-top,8psk,True,ok,0.8667,0.0,True,0.0,True,False,True,,1,0.3,
+8psk_15dB_5016,8psk,15,search,8psk,True,ok,0.8667,0.0,True,0.0,True,False,True,,1,0.34,
+8psk_15dB_6016,8psk,15,truth-params,8psk,True,ok,0.8774,0.0,True,0.0,True,False,True,,1,0.331,
+8psk_15dB_6016,8psk,15,s2-top,8psk,True,ok,0.8775,0.0,True,0.0,True,False,True,,1,0.297,
+8psk_15dB_6016,8psk,15,search,8psk,True,ok,0.8775,0.0,True,0.0,True,False,True,,1,0.341,
+8psk_15dB_7016,8psk,15,truth-params,8psk,True,ok,0.8654,0.0,True,0.0,True,False,True,,1,0.333,
+8psk_15dB_7016,8psk,15,s2-top,8psk,True,ok,0.8654,0.0,True,0.0,True,False,True,,1,0.293,
+8psk_15dB_7016,8psk,15,search,8psk,True,ok,0.8654,0.0,True,0.0,True,False,True,,5,1.381,
+8psk_15dB_8016,8psk,15,truth-params,8psk,True,ok,0.8615,0.0,True,0.0,True,False,True,,1,0.33,
+8psk_15dB_8016,8psk,15,s2-top,8psk,True,ok,0.8615,0.0,True,0.0,True,False,True,,1,0.287,
+8psk_15dB_8016,8psk,15,search,8psk,True,ok,0.8615,0.0,True,0.0,True,False,True,,1,0.344,
+8psk_20dB_2017,8psk,20,truth-params,8psk,True,ok,0.9557,0.0,True,0.0,True,False,True,,1,0.339,
+8psk_20dB_2017,8psk,20,s2-top,8psk,True,ok,0.9557,0.0,True,0.0,True,False,True,,1,0.309,
+8psk_20dB_2017,8psk,20,search,8psk,True,ok,0.9557,0.0,True,0.0,True,False,True,,1,0.357,
+8psk_20dB_3017,8psk,20,truth-params,8psk,True,ok,0.956,0.0,True,0.0,True,False,True,,1,0.336,
+8psk_20dB_3017,8psk,20,s2-top,8psk,True,ok,0.956,0.0,True,0.0,True,False,True,,1,0.303,
+8psk_20dB_3017,8psk,20,search,8psk,True,ok,0.956,0.0,True,0.0,True,False,True,,1,0.37,
+8psk_20dB_4017,8psk,20,truth-params,8psk,True,ok,0.9563,0.0,True,0.0,True,False,True,,1,0.344,
+8psk_20dB_4017,8psk,20,s2-top,8psk,True,ok,0.9563,0.0,True,0.0,True,False,True,,1,0.313,
+8psk_20dB_4017,8psk,20,search,8psk,True,ok,0.9563,0.0,True,0.0,True,False,True,,1,0.349,
+8psk_20dB_5017,8psk,20,truth-params,8psk,True,ok,0.9554,0.0,True,0.0,True,False,True,,1,0.344,
+8psk_20dB_5017,8psk,20,s2-top,8psk,True,ok,0.9554,0.0,True,0.0,True,False,True,,1,0.311,
+8psk_20dB_5017,8psk,20,search,8psk,True,ok,0.9554,0.0,True,0.0,True,False,True,,1,0.353,
+8psk_20dB_6017,8psk,20,truth-params,8psk,True,ok,0.9546,0.0,True,0.0,True,False,True,,1,0.35,
+8psk_20dB_6017,8psk,20,s2-top,8psk,True,ok,0.9546,0.0,True,0.0,True,False,True,,1,0.318,
+8psk_20dB_6017,8psk,20,search,8psk,True,ok,0.9546,0.0,True,0.0,True,False,True,,1,0.359,
+8psk_20dB_7017,8psk,20,truth-params,8psk,True,ok,0.9566,0.0,True,0.0,True,False,True,,1,0.339,
+8psk_20dB_7017,8psk,20,s2-top,8psk,True,ok,0.9566,0.0,True,0.0,True,False,True,,1,0.316,
+8psk_20dB_7017,8psk,20,search,8psk,True,ok,0.9566,0.0,True,0.0,True,False,True,,1,0.348,
+8psk_20dB_8017,8psk,20,truth-params,8psk,True,ok,0.9553,0.0,True,0.0,True,False,True,,1,0.34,
+8psk_20dB_8017,8psk,20,s2-top,8psk,True,ok,0.9553,0.0,True,0.0,True,False,True,,1,0.314,
+8psk_20dB_8017,8psk,20,search,8psk,True,ok,0.9553,0.0,True,0.0,True,False,True,,1,0.361,
+8psk_4dB_2012,8psk,4,truth-params,8psk,True,low_confidence,0.0306,0.03792086,False,0.386788,False,False,False,carrier_locked,1,0.327,carrier lock 0.03 below 0.30
+8psk_4dB_2012,8psk,4,s2-top,8psk,True,low_confidence,0.063,0.03893558,False,0.483798,False,False,False,carrier_aligned|carrier_locked,1,0.3,"spectrum sits +5078 Hz off centre (0.10 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carrie"
+8psk_4dB_2012,8psk,4,search,2fsk,False,low_confidence,0.1553,0.35653407,False,0.482318,False,False,True,output_usable,12,2.589,"the receiver estimates its own output BER at 0.357, over the 0.05 a lock should produce - it is describing a demodulatio"
+8psk_4dB_3012,8psk,4,truth-params,8psk,True,low_confidence,0.0165,0.03984612,False,0.483614,False,False,False,carrier_locked,1,0.333,carrier lock 0.02 below 0.30
+8psk_4dB_3012,8psk,4,s2-top,8psk,True,low_confidence,0.0672,0.0381196,False,0.473943,False,False,False,carrier_locked,1,0.302,carrier lock 0.07 below 0.30
+8psk_4dB_3012,8psk,4,search,16qam,False,low_confidence,0.0411,0.04853645,False,0.484566,False,False,False,carrier_locked,12,2.146,carrier lock 0.04 below 0.59
+8psk_4dB_4012,8psk,4,truth-params,8psk,True,low_confidence,0.0071,0.04036589,False,0.484183,False,False,False,carrier_locked,1,0.327,carrier lock 0.01 below 0.30
+8psk_4dB_4012,8psk,4,s2-top,8psk,True,low_confidence,0.04,0.03930049,False,0.484233,False,False,False,carrier_aligned|carrier_locked,1,0.301,"spectrum sits +5908 Hz off centre (0.12 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carrie"
+8psk_4dB_4012,8psk,4,search,4fsk,False,low_confidence,0.1197,0.34722924,False,0.486138,False,False,False,output_usable|tone_margin,12,2.301,"the receiver estimates its own output BER at 0.347, over the 0.05 a lock should produce - it is describing a demodulatio"
+8psk_4dB_5012,8psk,4,truth-params,8psk,True,low_confidence,0.011,0.04009702,False,0.482788,False,False,False,carrier_locked,1,0.333,carrier lock 0.01 below 0.30
+8psk_4dB_5012,8psk,4,s2-top,8psk,True,low_confidence,0.0165,0.04237087,False,0.483289,False,False,False,carrier_aligned|carrier_locked,1,0.301,"spectrum sits -8398 Hz off centre (0.17 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carrie"
+8psk_4dB_5012,8psk,4,search,2fsk,False,low_confidence,0.2105,0.30152383,False,0.481548,False,False,True,output_usable,12,2.339,"the receiver estimates its own output BER at 0.302, over the 0.05 a lock should produce - it is describing a demodulatio"
+8psk_4dB_6012,8psk,4,truth-params,8psk,True,low_confidence,0.0931,0.0364985,False,0.463976,False,False,False,carrier_locked,1,0.328,carrier lock 0.09 below 0.30
+8psk_4dB_6012,8psk,4,s2-top,8psk,True,low_confidence,0.0187,0.04485835,False,0.483279,False,False,False,carrier_aligned|carrier_locked,1,0.298,"spectrum sits +9619 Hz off centre (0.19 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carrie"
+8psk_4dB_6012,8psk,4,search,2fsk,False,low_confidence,0.1893,0.32220374,False,0.480635,False,False,True,output_usable,12,2.305,"the receiver estimates its own output BER at 0.322, over the 0.05 a lock should produce - it is describing a demodulatio"
+8psk_4dB_7012,8psk,4,truth-params,8psk,True,low_confidence,0.1176,0.03809126,False,0.483682,False,False,False,carrier_locked,1,0.322,carrier lock 0.12 below 0.30
+8psk_4dB_7012,8psk,4,s2-top,8psk,True,low_confidence,0.0133,0.04421666,False,0.483431,False,False,False,carrier_aligned|carrier_locked,1,0.294,"spectrum sits -9619 Hz off centre (0.19 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carrie"
+8psk_4dB_7012,8psk,4,search,8psk,True,low_confidence,0.1176,0.03809126,False,0.483682,False,False,False,carrier_locked,12,2.314,carrier lock 0.12 below 0.30
+8psk_4dB_8012,8psk,4,truth-params,8psk,True,low_confidence,0.0194,0.04033492,False,0.482372,False,False,False,carrier_locked,1,0.326,carrier lock 0.02 below 0.30
+8psk_4dB_8012,8psk,4,s2-top,8psk,True,low_confidence,0.039,0.03872591,False,0.482823,False,False,False,carrier_aligned|carrier_locked,1,0.3,"spectrum sits -6201 Hz off centre (0.12 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carrie"
+8psk_4dB_8012,8psk,4,search,2fsk,False,low_confidence,0.2313,0.28122665,False,0.479754,False,False,True,output_usable,12,2.314,"the receiver estimates its own output BER at 0.281, over the 0.05 a lock should produce - it is describing a demodulatio"
+8psk_8dB_2013,8psk,8,truth-params,8psk,True,ok,0.4695,0.00329568,True,0.003507,True,False,True,,1,0.325,
+8psk_8dB_2013,8psk,8,s2-top,8psk,True,ok,0.4695,0.00329568,True,0.003507,True,False,True,,1,0.294,
+8psk_8dB_2013,8psk,8,search,8psk,True,ok,0.4695,0.00329568,True,0.003507,True,False,True,,1,0.355,
+8psk_8dB_3013,8psk,8,truth-params,8psk,True,ok,0.4994,0.00295832,True,0.003357,True,False,True,,1,0.324,
+8psk_8dB_3013,8psk,8,s2-top,8psk,True,ok,0.4995,0.00295856,True,0.003357,True,False,True,,1,0.296,
+8psk_8dB_3013,8psk,8,search,8psk,True,ok,0.4995,0.00295856,True,0.003357,True,False,True,,1,0.348,
+8psk_8dB_4013,8psk,8,truth-params,8psk,True,ok,0.488,0.00317796,True,0.003408,True,False,True,,1,0.326,
+8psk_8dB_4013,8psk,8,s2-top,8psk,True,ok,0.4882,0.00317833,True,0.003408,True,False,True,,1,0.295,
+8psk_8dB_4013,8psk,8,search,8psk,True,ok,0.4882,0.00317833,True,0.003408,True,False,True,,1,0.356,
+8psk_8dB_5013,8psk,8,truth-params,8psk,True,ok,0.4905,0.00313011,True,0.00351,True,False,True,,1,0.327,
+8psk_8dB_5013,8psk,8,s2-top,8psk,True,low_confidence,0.0304,0.02865973,False,0.483379,False,False,False,carrier_aligned|carrier_locked,1,0.299,"spectrum sits +3223 Hz off centre (0.06 of the symbol rate, limit 0.03) - the carrier offset hypothesis is wrong; carrie"
+8psk_8dB_5013,8psk,8,search,8psk,True,ok,0.4905,0.00313011,True,0.00351,True,False,True,,1,0.361,
+8psk_8dB_6013,8psk,8,truth-params,8psk,True,ok,0.4755,0.00318515,True,0.003409,True,False,True,,1,0.325,
+8psk_8dB_6013,8psk,8,s2-top,8psk,True,ok,0.4755,0.00318515,True,0.003409,True,False,True,,1,0.294,
+8psk_8dB_6013,8psk,8,search,8psk,True,ok,0.4755,0.00318515,True,0.003409,True,False,True,,1,0.355,
+8psk_8dB_7013,8psk,8,truth-params,8psk,True,ok,0.4736,0.00328537,True,0.003662,True,False,True,,1,0.326,
+8psk_8dB_7013,8psk,8,s2-top,8psk,True,ok,0.4749,0.00330894,True,0.003913,True,False,True,,1,0.295,
+8psk_8dB_7013,8psk,8,search,8psk,True,ok,0.4749,0.00330894,True,0.003913,True,False,True,,1,0.355,
+8psk_8dB_8013,8psk,8,truth-params,8psk,True,ok,0.4866,0.00338837,True,0.004056,True,False,True,,1,0.327,
+8psk_8dB_8013,8psk,8,s2-top,8psk,True,ok,0.4858,0.00338823,True,0.004056,True,False,True,,1,0.296,
+8psk_8dB_8013,8psk,8,search,8psk,True,ok,0.4858,0.00338823,True,0.004056,True,False,True,,1,0.356,
+bpsk_10dB_2002,bpsk,10,truth-params,bpsk,True,ok,0.9699,0.0,True,0.0,True,False,True,,1,0.782,
+bpsk_10dB_2002,bpsk,10,s2-top,bpsk,True,ok,0.9699,0.0,True,0.0,True,False,True,,1,0.752,
+bpsk_10dB_2002,bpsk,10,search,bpsk,True,ok,0.9699,0.0,True,0.0,True,False,True,,1,0.965,
+bpsk_10dB_3002,bpsk,10,truth-params,bpsk,True,ok,0.9675,0.0,True,0.0,True,False,True,,1,0.764,
+bpsk_10dB_3002,bpsk,10,s2-top,bpsk,True,ok,0.9675,0.0,True,0.0,True,False,True,,1,0.762,
+bpsk_10dB_3002,bpsk,10,search,bpsk,True,ok,0.9675,0.0,True,0.0,True,False,True,,1,0.986,
+bpsk_10dB_4002,bpsk,10,truth-params,bpsk,True,ok,0.9711,0.0,True,0.0,True,False,True,,1,0.778,
+bpsk_10dB_4002,bpsk,10,s2-top,bpsk,True,ok,0.9711,0.0,True,0.0,True,False,True,,1,0.754,
+bpsk_10dB_4002,bpsk,10,search,bpsk,True,ok,0.9711,0.0,True,0.0,True,False,True,,1,0.975,
+bpsk_10dB_5002,bpsk,10,truth-params,bpsk,True,ok,0.9725,0.0,True,0.0,True,False,True,,1,0.772,
+bpsk_10dB_5002,bpsk,10,s2-top,bpsk,True,ok,0.9725,0.0,True,0.0,True,False,True,,1,0.737,
+bpsk_10dB_5002,bpsk,10,search,bpsk,True,ok,0.9725,0.0,True,0.0,True,False,True,,1,0.978,
+bpsk_10dB_6002,bpsk,10,truth-params,bpsk,True,ok,0.9691,0.0,True,0.0,True,False,True,,1,0.772,
+bpsk_10dB_6002,bpsk,10,s2-top,bpsk,True,ok,0.9692,0.0,True,0.0,True,False,True,,1,0.738,
+bpsk_10dB_6002,bpsk,10,search,bpsk,True,ok,0.9692,0.0,True,0.0,True,False,True,,1,0.958,
+bpsk_10dB_7002,bpsk,10,truth-params,bpsk,True,ok,0.9719,0.0,True,0.0,True,False,True,,1,0.783,
+bpsk_10dB_7002,bpsk,10,s2-top,bpsk,True,ok,0.9719,0.0,True,0.0,True,False,True,,1,0.753,
+bpsk_10dB_7002,bpsk,10,search,bpsk,True,ok,0.9719,0.0,True,0.0,True,False,True,,1,0.985,
+bpsk_10dB_8002,bpsk,10,truth-params,bpsk,True,ok,0.969,0.0,True,0.0,True,False,True,,1,0.778,
+bpsk_10dB_8002,bpsk,10,s2-top,bpsk,True,ok,0.9689,0.0,True,0.0,True,False,True,,1,0.748,
+bpsk_10dB_8002,bpsk,10,search,bpsk,True,ok,0.9689,0.0,True,0.0,True,False,True,,1,0.989,
+bpsk_13dB_2003,bpsk,13,truth-params,bpsk,True,ok,0.9858,0.0,True,0.0,True,False,True,,1,0.787,
+bpsk_13dB_2003,bpsk,13,s2-top,bpsk,True,ok,0.9858,0.0,True,0.0,True,False,True,,1,0.758,
+bpsk_13dB_2003,bpsk,13,search,bpsk,True,ok,0.9858,0.0,True,0.0,True,False,True,,1,0.995,
+bpsk_13dB_3003,bpsk,13,truth-params,bpsk,True,ok,0.9859,0.0,True,0.0,True,False,True,,1,0.778,
+bpsk_13dB_3003,bpsk,13,s2-top,bpsk,True,ok,0.9859,0.0,True,0.0,True,False,True,,1,0.753,
+bpsk_13dB_3003,bpsk,13,search,bpsk,True,ok,0.9859,0.0,True,0.0,True,False,True,,1,1.0,
+bpsk_13dB_4003,bpsk,13,truth-params,bpsk,True,ok,0.9866,0.0,True,0.0,True,False,True,,1,0.788,
+bpsk_13dB_4003,bpsk,13,s2-top,bpsk,True,ok,0.9866,0.0,True,0.0,True,False,True,,1,0.748,
+bpsk_13dB_4003,bpsk,13,search,bpsk,True,ok,0.9866,0.0,True,0.0,True,False,True,,1,0.975,
+bpsk_13dB_5003,bpsk,13,truth-params,bpsk,True,ok,0.9862,0.0,True,0.0,True,False,True,,1,0.781,
+bpsk_13dB_5003,bpsk,13,s2-top,bpsk,True,ok,0.9862,0.0,True,0.0,True,False,True,,1,0.752,
+bpsk_13dB_5003,bpsk,13,search,bpsk,True,ok,0.9862,0.0,True,0.0,True,False,True,,1,0.97,
+bpsk_13dB_6003,bpsk,13,truth-params,bpsk,True,ok,0.9869,0.0,True,0.0,True,False,True,,1,0.773,
+bpsk_13dB_6003,bpsk,13,s2-top,bpsk,True,ok,0.9869,0.0,True,0.0,True,False,True,,1,0.759,
+bpsk_13dB_6003,bpsk,13,search,bpsk,True,ok,0.9869,0.0,True,0.0,True,False,True,,1,0.943,
+bpsk_13dB_7003,bpsk,13,truth-params,bpsk,True,ok,0.9862,0.0,True,0.0,True,False,True,,1,0.771,
+bpsk_13dB_7003,bpsk,13,s2-top,bpsk,True,ok,0.9862,0.0,True,0.0,True,False,True,,1,0.751,
+bpsk_13dB_7003,bpsk,13,search,bpsk,True,ok,0.9862,0.0,True,0.0,True,False,True,,1,0.981,
+bpsk_13dB_8003,bpsk,13,truth-params,bpsk,True,ok,0.9861,0.0,True,0.0,True,False,True,,1,0.771,
+bpsk_13dB_8003,bpsk,13,s2-top,bpsk,True,ok,0.9862,0.0,True,0.0,True,False,True,,1,0.751,
+bpsk_13dB_8003,bpsk,13,search,bpsk,True,ok,0.9862,0.0,True,0.0,True,False,True,,1,0.988,
+bpsk_15dB_2004,bpsk,15,truth-params,bpsk,True,ok,0.991,0.0,True,0.0,True,False,True,,1,0.783,
+bpsk_15dB_2004,bpsk,15,s2-top,bpsk,True,ok,0.991,0.0,True,0.0,True,False,True,,1,0.747,
+bpsk_15dB_2004,bpsk,15,search,bpsk,True,ok,0.991,0.0,True,0.0,True,False,True,,1,0.977,
+bpsk_15dB_3004,bpsk,15,truth-params,bpsk,True,ok,0.9915,0.0,True,0.0,True,False,True,,1,0.777,
+bpsk_15dB_3004,bpsk,15,s2-top,bpsk,True,ok,0.9915,0.0,True,0.0,True,False,True,,1,0.751,
+bpsk_15dB_3004,bpsk,15,search,bpsk,True,ok,0.9915,0.0,True,0.0,True,False,True,,1,0.975,
+bpsk_15dB_4004,bpsk,15,truth-params,bpsk,True,ok,0.9914,0.0,True,0.0,True,False,True,,1,0.759,
+bpsk_15dB_4004,bpsk,15,s2-top,bpsk,True,ok,0.9914,0.0,True,0.0,True,False,True,,1,0.746,
+bpsk_15dB_4004,bpsk,15,search,bpsk,True,ok,0.9914,0.0,True,0.0,True,False,True,,1,1.019,
+bpsk_15dB_5004,bpsk,15,truth-params,bpsk,True,ok,0.9913,0.0,True,0.0,True,False,True,,1,0.784,
+bpsk_15dB_5004,bpsk,15,s2-top,bpsk,True,ok,0.9913,0.0,True,0.0,True,False,True,,1,0.744,
+bpsk_15dB_5004,bpsk,15,search,bpsk,True,ok,0.9913,0.0,True,0.0,True,False,True,,1,0.986,
+bpsk_15dB_6004,bpsk,15,truth-params,bpsk,True,ok,0.9913,0.0,True,0.0,True,False,True,,1,0.775,
+bpsk_15dB_6004,bpsk,15,s2-top,bpsk,True,ok,0.9913,0.0,True,0.0,True,False,True,,1,0.751,
+bpsk_15dB_6004,bpsk,15,search,bpsk,True,ok,0.9913,0.0,True,0.0,True,False,True,,1,0.989,
+bpsk_15dB_7004,bpsk,15,truth-params,bpsk,True,ok,0.9916,0.0,True,0.0,True,False,True,,1,0.783,
+bpsk_15dB_7004,bpsk,15,s2-top,bpsk,True,ok,0.9916,0.0,True,0.0,True,False,True,,1,0.735,
+bpsk_15dB_7004,bpsk,15,search,bpsk,True,ok,0.9916,0.0,True,0.0,True,False,True,,1,0.912,
+bpsk_15dB_8004,bpsk,15,truth-params,bpsk,True,ok,0.9916,0.0,True,0.0,True,False,True,,1,0.775,
+bpsk_15dB_8004,bpsk,15,s2-top,bpsk,True,ok,0.9916,0.0,True,0.0,True,False,True,,1,0.762,
+bpsk_15dB_8004,bpsk,15,search,bpsk,True,ok,0.9916,0.0,True,0.0,True,False,True,,1,0.974,
+bpsk_20dB_2005,bpsk,20,truth-params,bpsk,True,ok,0.9973,0.0,True,0.0,True,False,True,,1,0.764,
+bpsk_20dB_2005,bpsk,20,s2-top,bpsk,True,ok,0.9973,0.0,True,0.0,True,False,True,,1,0.729,
+bpsk_20dB_2005,bpsk,20,search,bpsk,True,ok,0.9973,0.0,True,0.0,True,False,True,,1,0.983,
+bpsk_20dB_3005,bpsk,20,truth-params,bpsk,True,ok,0.9972,0.0,True,0.0,True,False,True,,1,0.774,
+bpsk_20dB_3005,bpsk,20,s2-top,bpsk,True,ok,0.9972,0.0,True,0.0,True,False,True,,1,0.744,
+bpsk_20dB_3005,bpsk,20,search,bpsk,True,ok,0.9972,0.0,True,0.0,True,False,True,,1,0.967,
+bpsk_20dB_4005,bpsk,20,truth-params,bpsk,True,ok,0.9974,0.0,True,0.0,True,False,True,,1,0.772,
+bpsk_20dB_4005,bpsk,20,s2-top,bpsk,True,ok,0.9974,0.0,True,0.0,True,False,True,,1,0.755,
+bpsk_20dB_4005,bpsk,20,search,bpsk,True,ok,0.9974,0.0,True,0.0,True,False,True,,1,0.991,
+bpsk_20dB_5005,bpsk,20,truth-params,bpsk,True,ok,0.9972,0.0,True,0.0,True,False,True,,1,0.763,
+bpsk_20dB_5005,bpsk,20,s2-top,bpsk,True,ok,0.9972,0.0,True,0.0,True,False,True,,1,0.749,
+bpsk_20dB_5005,bpsk,20,search,bpsk,True,ok,0.9972,0.0,True,0.0,True,False,True,,1,0.978,
+bpsk_20dB_6005,bpsk,20,truth-params,bpsk,True,ok,0.9974,0.0,True,0.0,True,False,True,,1,0.791,
+bpsk_20dB_6005,bpsk,20,s2-top,bpsk,True,ok,0.9974,0.0,True,0.0,True,False,True,,1,0.751,
+bpsk_20dB_6005,bpsk,20,search,bpsk,True,ok,0.9974,0.0,True,0.0,True,False,True,,1,0.979,
+bpsk_20dB_7005,bpsk,20,truth-params,bpsk,True,ok,0.9974,0.0,True,0.0,True,False,True,,1,0.783,
+bpsk_20dB_7005,bpsk,20,s2-top,bpsk,True,ok,0.9974,0.0,True,0.0,True,False,True,,1,0.747,
+bpsk_20dB_7005,bpsk,20,search,bpsk,True,ok,0.9974,0.0,True,0.0,True,False,True,,1,0.921,
+bpsk_20dB_8005,bpsk,20,truth-params,bpsk,True,ok,0.9973,0.0,True,0.0,True,False,True,,1,0.774,
+bpsk_20dB_8005,bpsk,20,s2-top,bpsk,True,ok,0.9973,0.0,True,0.0,True,False,True,,1,0.759,
+bpsk_20dB_8005,bpsk,20,search,bpsk,True,ok,0.9973,0.0,True,0.0,True,False,True,,1,0.984,
+bpsk_4dB_2000,bpsk,4,truth-params,bpsk,True,ok,0.8645,1.52e-06,True,0.0,True,False,True,,1,0.829,
+bpsk_4dB_2000,bpsk,4,s2-top,bpsk,True,ok,0.8645,1.52e-06,True,0.0,True,False,True,,1,0.758,
+bpsk_4dB_2000,bpsk,4,search,bpsk,True,ok,0.8645,1.52e-06,True,0.0,True,False,True,,1,0.989,
+bpsk_4dB_3000,bpsk,4,truth-params,bpsk,True,ok,0.8728,9.93e-06,True,0.0,True,False,True,,1,0.768,
+bpsk_4dB_3000,bpsk,4,s2-top,bpsk,True,ok,0.8728,9.93e-06,True,0.0,True,False,True,,1,0.758,
+bpsk_4dB_3000,bpsk,4,search,bpsk,True,ok,0.8728,9.93e-06,True,0.0,True,False,True,,1,0.986,
+bpsk_4dB_4000,bpsk,4,truth-params,bpsk,True,ok,0.8728,1.21e-06,True,0.0,True,False,True,,1,0.784,
+bpsk_4dB_4000,bpsk,4,s2-top,bpsk,True,ok,0.8728,1.21e-06,True,0.0,True,False,True,,1,0.76,
+bpsk_4dB_4000,bpsk,4,search,bpsk,True,ok,0.8728,1.21e-06,True,0.0,True,False,True,,1,0.975,
+bpsk_4dB_5000,bpsk,4,truth-params,bpsk,True,ok,0.8692,3.24e-06,True,0.0,True,False,True,,1,0.757,
+bpsk_4dB_5000,bpsk,4,s2-top,bpsk,True,ok,0.8692,3.24e-06,True,0.0,True,False,True,,1,0.734,
+bpsk_4dB_5000,bpsk,4,search,bpsk,True,ok,0.8692,3.24e-06,True,0.0,True,False,True,,1,0.978,
+bpsk_4dB_6000,bpsk,4,truth-params,bpsk,True,ok,0.8574,9.29e-06,True,0.0,True,False,True,,1,0.786,
+bpsk_4dB_6000,bpsk,4,s2-top,bpsk,True,ok,0.8574,9.29e-06,True,0.0,True,False,True,,1,0.744,
+bpsk_4dB_6000,bpsk,4,search,bpsk,True,ok,0.8574,9.29e-06,True,0.0,True,False,True,,1,0.988,
+bpsk_4dB_7000,bpsk,4,truth-params,bpsk,True,ok,0.887,2.68e-06,True,0.0,True,False,True,,1,0.768,
+bpsk_4dB_7000,bpsk,4,s2-top,bpsk,True,ok,0.887,2.68e-06,True,0.0,True,False,True,,1,0.76,
+bpsk_4dB_7000,bpsk,4,search,bpsk,True,ok,0.887,2.68e-06,True,0.0,True,False,True,,1,0.992,
+bpsk_4dB_8000,bpsk,4,truth-params,bpsk,True,ok,0.8722,1.117e-05,True,0.0,True,False,True,,1,0.768,
+bpsk_4dB_8000,bpsk,4,s2-top,bpsk,True,ok,0.8722,1.117e-05,True,0.0,True,False,True,,1,0.758,
+bpsk_4dB_8000,bpsk,4,search,bpsk,True,ok,0.8722,1.117e-05,True,0.0,True,False,True,,1,0.968,
+bpsk_8dB_2001,bpsk,8,truth-params,bpsk,True,ok,0.9502,0.0,True,0.0,True,False,True,,1,0.787,
+bpsk_8dB_2001,bpsk,8,s2-top,bpsk,True,ok,0.9502,0.0,True,0.0,True,False,True,,1,0.749,
+bpsk_8dB_2001,bpsk,8,search,bpsk,True,ok,0.9502,0.0,True,0.0,True,False,True,,1,0.986,
+bpsk_8dB_3001,bpsk,8,truth-params,bpsk,True,ok,0.9527,0.0,True,0.0,True,False,True,,1,0.771,
+bpsk_8dB_3001,bpsk,8,s2-top,bpsk,True,ok,0.9527,0.0,True,0.0,True,False,True,,1,0.751,
+bpsk_8dB_3001,bpsk,8,search,bpsk,True,ok,0.9527,0.0,True,0.0,True,False,True,,1,0.996,
+bpsk_8dB_4001,bpsk,8,truth-params,bpsk,True,ok,0.9529,0.0,True,0.0,True,False,True,,1,0.777,
+bpsk_8dB_4001,bpsk,8,s2-top,bpsk,True,ok,0.9529,0.0,True,0.0,True,False,True,,1,0.77,
+bpsk_8dB_4001,bpsk,8,search,bpsk,True,ok,0.9529,0.0,True,0.0,True,False,True,,1,0.982,
+bpsk_8dB_5001,bpsk,8,truth-params,bpsk,True,ok,0.9498,0.0,True,0.0,True,False,True,,1,0.778,
+bpsk_8dB_5001,bpsk,8,s2-top,bpsk,True,ok,0.9498,0.0,True,0.0,True,False,True,,1,0.764,
+bpsk_8dB_5001,bpsk,8,search,bpsk,True,ok,0.9498,0.0,True,0.0,True,False,True,,1,1.0,
+bpsk_8dB_6001,bpsk,8,truth-params,bpsk,True,ok,0.9561,0.0,True,0.0,True,False,True,,1,0.779,
+bpsk_8dB_6001,bpsk,8,s2-top,bpsk,True,ok,0.9561,0.0,True,0.0,True,False,True,,1,0.776,
+bpsk_8dB_6001,bpsk,8,search,bpsk,True,ok,0.9561,0.0,True,0.0,True,False,True,,1,0.986,
+bpsk_8dB_7001,bpsk,8,truth-params,bpsk,True,ok,0.9574,0.0,True,0.0,True,False,True,,1,0.765,
+bpsk_8dB_7001,bpsk,8,s2-top,bpsk,True,ok,0.9574,0.0,True,0.0,True,False,True,,1,0.763,
+bpsk_8dB_7001,bpsk,8,search,bpsk,True,ok,0.9574,0.0,True,0.0,True,False,True,,1,0.982,
+bpsk_8dB_8001,bpsk,8,truth-params,bpsk,True,ok,0.951,0.0,True,0.0,True,False,True,,1,0.782,
+bpsk_8dB_8001,bpsk,8,s2-top,bpsk,True,ok,0.951,0.0,True,0.0,True,False,True,,1,0.761,
+bpsk_8dB_8001,bpsk,8,search,bpsk,True,ok,0.951,0.0,True,0.0,True,False,True,,1,0.983,
+qpsk_10dB_2008,qpsk,10,truth-params,qpsk,True,ok,0.9005,0.0,True,0.0,True,False,True,,1,0.428,
+qpsk_10dB_2008,qpsk,10,s2-top,qpsk,True,ok,0.9005,0.0,True,0.0,True,False,True,,1,0.393,
+qpsk_10dB_2008,qpsk,10,search,qpsk,True,ok,0.9005,0.0,True,0.0,True,False,True,,1,0.503,
+qpsk_10dB_3008,qpsk,10,truth-params,qpsk,True,ok,0.8968,0.0,True,0.0,True,False,True,,1,0.426,
+qpsk_10dB_3008,qpsk,10,s2-top,qpsk,True,ok,0.8968,0.0,True,0.0,True,False,True,,1,0.39,
+qpsk_10dB_3008,qpsk,10,search,qpsk,True,ok,0.8968,0.0,True,0.0,True,False,True,,1,0.479,
+qpsk_10dB_4008,qpsk,10,truth-params,qpsk,True,ok,0.8964,0.0,True,0.0,True,False,True,,1,0.415,
+qpsk_10dB_4008,qpsk,10,s2-top,qpsk,True,ok,0.8964,0.0,True,0.0,True,False,True,,1,0.388,
+qpsk_10dB_4008,qpsk,10,search,qpsk,True,ok,0.8964,0.0,True,0.0,True,False,True,,1,0.485,
+qpsk_10dB_5008,qpsk,10,truth-params,qpsk,True,ok,0.9019,0.0,True,0.0,True,False,True,,1,0.42,
+qpsk_10dB_5008,qpsk,10,s2-top,qpsk,True,ok,0.9018,0.0,True,0.0,True,False,True,,1,0.386,
+qpsk_10dB_5008,qpsk,10,search,qpsk,True,ok,0.9018,0.0,True,0.0,True,False,True,,1,0.48,
+qpsk_10dB_6008,qpsk,10,truth-params,qpsk,True,ok,0.8992,0.0,True,0.0,True,False,True,,1,0.422,
+qpsk_10dB_6008,qpsk,10,s2-top,qpsk,True,ok,0.8992,0.0,True,0.0,True,False,True,,1,0.388,
+qpsk_10dB_6008,qpsk,10,search,qpsk,True,ok,0.8992,0.0,True,0.0,True,False,True,,1,0.474,
+qpsk_10dB_7008,qpsk,10,truth-params,qpsk,True,ok,0.8961,0.0,True,0.0,True,False,True,,1,0.415,
+qpsk_10dB_7008,qpsk,10,s2-top,qpsk,True,ok,0.8961,0.0,True,0.0,True,False,True,,1,0.381,
+qpsk_10dB_7008,qpsk,10,search,qpsk,True,ok,0.8961,0.0,True,0.0,True,False,True,,1,0.491,
+qpsk_10dB_8008,qpsk,10,truth-params,qpsk,True,ok,0.898,0.0,True,0.0,True,False,True,,1,0.417,
+qpsk_10dB_8008,qpsk,10,s2-top,qpsk,True,ok,0.898,0.0,True,0.0,True,False,True,,1,0.399,
+qpsk_10dB_8008,qpsk,10,search,qpsk,True,ok,0.898,0.0,True,0.0,True,False,True,,1,0.476,
+qpsk_13dB_2009,qpsk,13,truth-params,qpsk,True,ok,0.9479,0.0,True,0.0,True,False,True,,1,0.433,
+qpsk_13dB_2009,qpsk,13,s2-top,qpsk,True,ok,0.9479,0.0,True,0.0,True,False,True,,1,0.398,
+qpsk_13dB_2009,qpsk,13,search,qpsk,True,ok,0.9479,0.0,True,0.0,True,False,True,,1,0.475,
+qpsk_13dB_3009,qpsk,13,truth-params,qpsk,True,ok,0.9471,0.0,True,0.0,True,False,True,,1,0.416,
+qpsk_13dB_3009,qpsk,13,s2-top,qpsk,True,ok,0.9471,0.0,True,0.0,True,False,True,,1,0.392,
+qpsk_13dB_3009,qpsk,13,search,qpsk,True,ok,0.9471,0.0,True,0.0,True,False,True,,1,0.494,
+qpsk_13dB_4009,qpsk,13,truth-params,qpsk,True,ok,0.9487,0.0,True,0.0,True,False,True,,1,0.41,
+qpsk_13dB_4009,qpsk,13,s2-top,qpsk,True,ok,0.9487,0.0,True,0.0,True,False,True,,1,0.402,
+qpsk_13dB_4009,qpsk,13,search,qpsk,True,ok,0.9487,0.0,True,0.0,True,False,True,,1,0.475,
+qpsk_13dB_5009,qpsk,13,truth-params,qpsk,True,ok,0.9467,0.0,True,0.0,True,False,True,,1,0.421,
+qpsk_13dB_5009,qpsk,13,s2-top,qpsk,True,ok,0.9467,0.0,True,0.0,True,False,True,,1,0.383,
+qpsk_13dB_5009,qpsk,13,search,qpsk,True,ok,0.9467,0.0,True,0.0,True,False,True,,1,0.476,
+qpsk_13dB_6009,qpsk,13,truth-params,qpsk,True,ok,0.9489,0.0,True,0.0,True,False,True,,1,0.41,
+qpsk_13dB_6009,qpsk,13,s2-top,qpsk,True,ok,0.9489,0.0,True,0.0,True,False,True,,1,0.393,
+qpsk_13dB_6009,qpsk,13,search,qpsk,True,ok,0.9489,0.0,True,0.0,True,False,True,,1,0.455,
+qpsk_13dB_7009,qpsk,13,truth-params,qpsk,True,ok,0.947,0.0,True,0.0,True,False,True,,1,0.421,
+qpsk_13dB_7009,qpsk,13,s2-top,qpsk,True,ok,0.947,0.0,True,0.0,True,False,True,,1,0.396,
+qpsk_13dB_7009,qpsk,13,search,qpsk,True,ok,0.947,0.0,True,0.0,True,False,True,,1,0.48,
+qpsk_13dB_8009,qpsk,13,truth-params,qpsk,True,ok,0.946,0.0,True,0.0,True,False,True,,1,0.419,
+qpsk_13dB_8009,qpsk,13,s2-top,qpsk,True,ok,0.946,0.0,True,0.0,True,False,True,,1,0.393,
+qpsk_13dB_8009,qpsk,13,search,qpsk,True,ok,0.946,0.0,True,0.0,True,False,True,,1,0.473,
+qpsk_15dB_2010,qpsk,15,truth-params,qpsk,True,ok,0.9674,0.0,True,0.0,True,False,True,,1,0.425,
+qpsk_15dB_2010,qpsk,15,s2-top,qpsk,True,ok,0.9674,0.0,True,0.0,True,False,True,,1,0.39,
+qpsk_15dB_2010,qpsk,15,search,qpsk,True,ok,0.9674,0.0,True,0.0,True,False,True,,1,0.487,
+qpsk_15dB_3010,qpsk,15,truth-params,qpsk,True,ok,0.9652,0.0,True,0.0,True,False,True,,1,0.416,
+qpsk_15dB_3010,qpsk,15,s2-top,qpsk,True,ok,0.9652,0.0,True,0.0,True,False,True,,1,0.4,
+qpsk_15dB_3010,qpsk,15,search,qpsk,True,ok,0.9652,0.0,True,0.0,True,False,True,,1,0.479,
+qpsk_15dB_4010,qpsk,15,truth-params,qpsk,True,ok,0.9669,0.0,True,0.0,True,False,True,,1,0.434,
+qpsk_15dB_4010,qpsk,15,s2-top,qpsk,True,ok,0.9669,0.0,True,0.0,True,False,True,,1,0.384,
+qpsk_15dB_4010,qpsk,15,search,qpsk,True,ok,0.9669,0.0,True,0.0,True,False,True,,1,0.482,
+qpsk_15dB_5010,qpsk,15,truth-params,qpsk,True,ok,0.9647,0.0,True,0.0,True,False,True,,1,0.42,
+qpsk_15dB_5010,qpsk,15,s2-top,qpsk,True,ok,0.9647,0.0,True,0.0,True,False,True,,1,0.38,
+qpsk_15dB_5010,qpsk,15,search,qpsk,True,ok,0.9647,0.0,True,0.0,True,False,True,,1,0.484,
+qpsk_15dB_6010,qpsk,15,truth-params,qpsk,True,ok,0.9669,0.0,True,0.0,True,False,True,,1,0.42,
+qpsk_15dB_6010,qpsk,15,s2-top,qpsk,True,ok,0.9668,0.0,True,0.0,True,False,True,,1,0.387,
+qpsk_15dB_6010,qpsk,15,search,qpsk,True,ok,0.9668,0.0,True,0.0,True,False,True,,1,0.486,
+qpsk_15dB_7010,qpsk,15,truth-params,qpsk,True,ok,0.9658,0.0,True,0.0,True,False,True,,1,0.43,
+qpsk_15dB_7010,qpsk,15,s2-top,qpsk,True,ok,0.9658,0.0,True,0.0,True,False,True,,1,0.389,
+qpsk_15dB_7010,qpsk,15,search,qpsk,True,ok,0.9658,0.0,True,0.0,True,False,True,,1,0.48,
+qpsk_15dB_8010,qpsk,15,truth-params,qpsk,True,ok,0.9663,0.0,True,0.0,True,False,True,,1,0.423,
+qpsk_15dB_8010,qpsk,15,s2-top,qpsk,True,ok,0.9663,0.0,True,0.0,True,False,True,,1,0.391,
+qpsk_15dB_8010,qpsk,15,search,qpsk,True,ok,0.9663,0.0,True,0.0,True,False,True,,1,0.476,
+qpsk_20dB_2011,qpsk,20,truth-params,qpsk,True,ok,0.989,0.0,True,0.0,True,False,True,,1,0.433,
+qpsk_20dB_2011,qpsk,20,s2-top,qpsk,True,ok,0.989,0.0,True,0.0,True,False,True,,1,0.401,
+qpsk_20dB_2011,qpsk,20,search,qpsk,True,ok,0.989,0.0,True,0.0,True,False,True,,1,0.489,
+qpsk_20dB_3011,qpsk,20,truth-params,qpsk,True,ok,0.9897,0.0,True,0.0,True,False,True,,1,0.43,
+qpsk_20dB_3011,qpsk,20,s2-top,qpsk,True,ok,0.9897,0.0,True,0.0,True,False,True,,1,0.392,
+qpsk_20dB_3011,qpsk,20,search,qpsk,True,ok,0.9897,0.0,True,0.0,True,False,True,,1,0.496,
+qpsk_20dB_4011,qpsk,20,truth-params,qpsk,True,ok,0.989,0.0,True,0.0,True,False,True,,1,0.432,
+qpsk_20dB_4011,qpsk,20,s2-top,qpsk,True,ok,0.989,0.0,True,0.0,True,False,True,,1,0.393,
+qpsk_20dB_4011,qpsk,20,search,qpsk,True,ok,0.989,0.0,True,0.0,True,False,True,,1,0.477,
+qpsk_20dB_5011,qpsk,20,truth-params,qpsk,True,ok,0.9893,0.0,True,0.0,True,False,True,,1,0.428,
+qpsk_20dB_5011,qpsk,20,s2-top,qpsk,True,ok,0.9893,0.0,True,0.0,True,False,True,,1,0.39,
+qpsk_20dB_5011,qpsk,20,search,qpsk,True,ok,0.9893,0.0,True,0.0,True,False,True,,1,0.492,
+qpsk_20dB_6011,qpsk,20,truth-params,qpsk,True,ok,0.9888,0.0,True,0.0,True,False,True,,1,0.438,
+qpsk_20dB_6011,qpsk,20,s2-top,qpsk,True,ok,0.9888,0.0,True,0.0,True,False,True,,1,0.399,
+qpsk_20dB_6011,qpsk,20,search,qpsk,True,ok,0.9888,0.0,True,0.0,True,False,True,,1,0.488,
+qpsk_20dB_7011,qpsk,20,truth-params,qpsk,True,ok,0.9894,0.0,True,0.0,True,False,True,,1,0.429,
+qpsk_20dB_7011,qpsk,20,s2-top,qpsk,True,ok,0.9894,0.0,True,0.0,True,False,True,,1,0.398,
+qpsk_20dB_7011,qpsk,20,search,qpsk,True,ok,0.9894,0.0,True,0.0,True,False,True,,1,0.487,
+qpsk_20dB_8011,qpsk,20,truth-params,qpsk,True,ok,0.9895,0.0,True,0.0,True,False,True,,1,0.425,
+qpsk_20dB_8011,qpsk,20,s2-top,qpsk,True,ok,0.9895,0.0,True,0.0,True,False,True,,1,0.396,
+qpsk_20dB_8011,qpsk,20,search,qpsk,True,ok,0.9895,0.0,True,0.0,True,False,True,,1,0.5,
+qpsk_4dB_2006,qpsk,4,truth-params,qpsk,True,ok,0.6365,0.00096524,True,0.001154,True,False,True,,1,0.417,
+qpsk_4dB_2006,qpsk,4,s2-top,qpsk,True,ok,0.6365,0.00096524,True,0.001154,True,False,True,,1,0.391,
+qpsk_4dB_2006,qpsk,4,search,qpsk,True,ok,0.6365,0.00096524,True,0.001154,True,False,True,,3,1.357,
+qpsk_4dB_3006,qpsk,4,truth-params,qpsk,True,ok,0.6624,0.00085667,True,0.000853,True,False,True,,1,0.415,
+qpsk_4dB_3006,qpsk,4,s2-top,qpsk,True,ok,0.6618,0.00085672,True,0.000853,True,False,True,,1,0.391,
+qpsk_4dB_3006,qpsk,4,search,qpsk,True,ok,0.6618,0.00085672,True,0.000853,True,False,True,,3,1.336,
+qpsk_4dB_4006,qpsk,4,truth-params,qpsk,True,ok,0.6523,0.00099279,True,0.000552,True,False,True,,1,0.421,
+qpsk_4dB_4006,qpsk,4,s2-top,qpsk,True,ok,0.6523,0.00099279,True,0.000552,True,False,True,,1,0.4,
+qpsk_4dB_4006,qpsk,4,search,qpsk,True,ok,0.6523,0.00099279,True,0.000552,True,False,True,,3,1.343,
+qpsk_4dB_5006,qpsk,4,truth-params,qpsk,True,ok,0.6409,0.00101212,True,0.001052,True,False,True,,1,0.431,
+qpsk_4dB_5006,qpsk,4,s2-top,qpsk,True,ok,0.6407,0.00101223,True,0.001052,True,False,True,,1,0.407,
+qpsk_4dB_5006,qpsk,4,search,qpsk,True,ok,0.6407,0.00101223,True,0.001052,True,False,True,,3,1.471,
+qpsk_4dB_6006,qpsk,4,truth-params,qpsk,True,ok,0.639,0.0011864,True,0.001152,True,False,True,,1,0.477,
+qpsk_4dB_6006,qpsk,4,s2-top,qpsk,True,ok,0.639,0.0011864,True,0.001152,True,False,True,,1,0.424,
+qpsk_4dB_6006,qpsk,4,search,qpsk,True,ok,0.639,0.0011864,True,0.001152,True,False,True,,3,1.326,
+qpsk_4dB_7006,qpsk,4,truth-params,qpsk,True,ok,0.6565,0.00089126,True,0.001103,True,False,True,,1,0.419,
+qpsk_4dB_7006,qpsk,4,s2-top,qpsk,True,ok,0.6566,0.00089129,True,0.001103,True,False,True,,1,0.383,
+qpsk_4dB_7006,qpsk,4,search,qpsk,True,ok,0.6566,0.00089129,True,0.001103,True,False,True,,3,1.315,
+qpsk_4dB_8006,qpsk,4,truth-params,qpsk,True,ok,0.6378,0.00093944,True,0.001004,True,False,True,,1,0.42,
+qpsk_4dB_8006,qpsk,4,s2-top,qpsk,True,ok,0.6378,0.00093944,True,0.001004,True,False,True,,1,0.393,
+qpsk_4dB_8006,qpsk,4,search,qpsk,True,ok,0.6378,0.00093944,True,0.001004,True,False,True,,5,2.185,
+qpsk_8dB_2007,qpsk,8,truth-params,qpsk,True,ok,0.8409,0.0,True,0.0,True,False,True,,1,0.414,
+qpsk_8dB_2007,qpsk,8,s2-top,qpsk,True,ok,0.8411,0.0,True,0.0,True,False,True,,1,0.399,
+qpsk_8dB_2007,qpsk,8,search,qpsk,True,ok,0.8411,0.0,True,0.0,True,False,True,,1,0.496,
+qpsk_8dB_3007,qpsk,8,truth-params,qpsk,True,ok,0.8367,5.43e-06,True,0.0,True,False,True,,1,0.418,
+qpsk_8dB_3007,qpsk,8,s2-top,qpsk,True,ok,0.8367,5.43e-06,True,0.0,True,False,True,,1,0.382,
+qpsk_8dB_3007,qpsk,8,search,qpsk,True,ok,0.8367,5.43e-06,True,0.0,True,False,True,,1,0.48,
+qpsk_8dB_4007,qpsk,8,truth-params,qpsk,True,ok,0.8388,8e-08,True,0.0,True,False,True,,1,0.411,
+qpsk_8dB_4007,qpsk,8,s2-top,qpsk,True,ok,0.8389,8e-08,True,0.0,True,False,True,,1,0.391,
+qpsk_8dB_4007,qpsk,8,search,qpsk,True,ok,0.8389,8e-08,True,0.0,True,False,True,,1,0.491,
+qpsk_8dB_5007,qpsk,8,truth-params,qpsk,True,ok,0.8428,8e-08,True,0.0,True,False,True,,1,0.419,
+qpsk_8dB_5007,qpsk,8,s2-top,qpsk,True,ok,0.8428,8e-08,True,0.0,True,False,True,,1,0.389,
+qpsk_8dB_5007,qpsk,8,search,qpsk,True,ok,0.8428,8e-08,True,0.0,True,False,True,,1,0.46,
+qpsk_8dB_6007,qpsk,8,truth-params,qpsk,True,ok,0.8397,2e-08,True,0.0,True,False,True,,1,0.422,
+qpsk_8dB_6007,qpsk,8,s2-top,qpsk,True,ok,0.8397,2e-08,True,0.0,True,False,True,,1,0.394,
+qpsk_8dB_6007,qpsk,8,search,qpsk,True,ok,0.8397,2e-08,True,0.0,True,False,True,,1,0.489,
+qpsk_8dB_7007,qpsk,8,truth-params,qpsk,True,ok,0.8481,1.4e-07,True,0.0,True,False,True,,1,0.42,
+qpsk_8dB_7007,qpsk,8,s2-top,qpsk,True,ok,0.8481,1.4e-07,True,0.0,True,False,True,,1,0.397,
+qpsk_8dB_7007,qpsk,8,search,qpsk,True,ok,0.8481,1.4e-07,True,0.0,True,False,True,,1,0.484,
+qpsk_8dB_8007,qpsk,8,truth-params,qpsk,True,ok,0.8414,6e-08,True,0.0,True,False,True,,1,0.418,
+qpsk_8dB_8007,qpsk,8,s2-top,qpsk,True,ok,0.8414,6e-08,True,0.0,True,False,True,,1,0.399,
+qpsk_8dB_8007,qpsk,8,search,qpsk,True,ok,0.8414,6e-08,True,0.0,True,False,True,,1,0.461,
