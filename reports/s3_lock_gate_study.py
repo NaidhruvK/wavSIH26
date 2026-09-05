@@ -434,6 +434,23 @@ def _write_markdown(rows) -> None:
         "Quoting either number without the corpus size attached is how a "
         "24/24 becomes a claim about a receiver rather than about 36 files, "
         f"so: **{n_files} files**, seven seeds per (modulation, SNR) cell.", "",
+        "### Reproducing the before-column", "",
+        "This CSV is always the CURRENT build, so a before/after number needs "
+        "the old build re-measured rather than remembered. The 5 Sep "
+        "before-figures quoted in STATUS.md - `search` 203/252, `s2-top` "
+        "177/252 - come from running this same script against commit "
+        "`aed281b`, which is this branch's merge of `main` immediately before "
+        "the 5 Sep receiver changes:", "",
+        "```bash",
+        "git worktree add /tmp/s3-baseline aed281b",
+        "cd /tmp/s3-baseline && "
+        "<repo>/.venv/Scripts/python.exe reports/s3_lock_gate_study.py",
+        "```", "",
+        "It takes about eight minutes and reproduces 203 exactly. Written "
+        "down because the first version of the 5 Sep write-up quoted a "
+        "before-number whose CSV had already been overwritten by the "
+        "after-run, which makes it a memory rather than a measurement - and "
+        "this project does not keep those.", "",
         "## Every file that did not decode, `search` arm", "",
         f"All {n_files} rows are in `{OUT_CSV.name}`; this table is the "
         "complement, because it is the list the next day's work is drawn "

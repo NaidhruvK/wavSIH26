@@ -64,6 +64,20 @@ one for reasons that are a prior rather than a measurement, and a working
 number gets moved on no evidence. The report says explicitly where the sweep
 had no discriminating power.
 
+WHAT THIS SWEEP CANNOT SEE, AND IT COST A REAL DEFECT. Every run here uses the
+CORRECT plug-in for the file. So it measures how well a hypothesis that is
+already right performs, and it is blind to how well a hypothesis that is WRONG
+performs - which is the thing `lockcheck.alphabet_used` exists to refuse. On
+5 Sep this sweep recommended 8-PSK's carrier bandwidth go 0.02 -> 0.04 on a
+clean-identical, impaired-better, monotone reading. That change was shipped and
+then reverted, because a wider loop also smears a WRONG constellation into
+looking right: a QPSK capture through the 8-PSK plug-in went from alphabet
+entropy 0.691 (refused) to 0.947 (accepted), and the stage returned `status:
+ok` over a stream 48.4% wrong. See `REVERTED` below and
+`linear._CARRIER_LOOP_BW`. A recommendation from this file is evidence about
+the correct-hypothesis path only, and has to be checked against the
+cross-hypothesis study before it is taken.
+
 FSK IS ABSENT ON PURPOSE. `FSKDemod` is a non-coherent tone bank: no Costas
 loop, no Gardner loop, nothing here to tune. Its 5 Sep work is the low-SNR
 presence statistic, which is a different study.
@@ -132,6 +146,41 @@ DECODE_LIMIT = 0.01
 """Same definition as `s3_lock_gate_study.DECODE_LIMIT`, and deliberately the
 same number: two studies of one receiver that disagree about what counts as
 working are two studies nobody can put side by side."""
+
+REVERTED = {
+    ("carrier", "8psk"): (
+        0.04,
+        "Shipped 5 Sep and reverted the same evening. This sweep still "
+        "recommends it and this sweep is still wrong, for a reason it cannot "
+        "measure: it only ever runs the correct plug-in. A QPSK capture "
+        "through the 8-PSK plug-in reads alphabet entropy 0.691 at 0.02 "
+        "(refused) and 0.947 at 0.04 (accepted), so at 0.04 `qpsk_8dB_2007` "
+        "comes back `status: ok`, self-estimating 0.0035, over a stream that "
+        "is 48.4% wrong. One file gained on the impaired arm is not worth "
+        "blinding the subset-trap check. See `linear._CARRIER_LOOP_BW`."),
+    ("carrier", "16qam"): (
+        0.04,
+        "It reaches 13/28 on the impaired arm against 9/28, and "
+        "costs `16qam_10dB_4020` on the clean arm - raw BER 0.0029 -> 0.0299. "
+        "That is a 10 dB file, and >=10 dB is the region the day gate is "
+        "written on, so a measured corpus file is not traded for an injected "
+        "scenario. The acquisition gear-shift recovers most of the same gap "
+        "(1/28 -> 9/28) without costing anything."),
+    ("timing", "16qam"): (
+        0.002,
+        "The clean-arm grid reads 12/14/13/14/13 with median BER "
+        "0.020/0.009/0.015/0.009/0.019 - non-monotone across a 16x range. A "
+        "response that alternates is not an optimum at 0.002, it is a "
+        "response with no reliable signal in it, and the +1 sits inside that "
+        "scatter. Picking the best cell of an alternating sequence fits this "
+        "corpus rather than tuning a loop."),
+}
+"""Values this sweep recommends that were measured, tried and rejected.
+
+Kept as data rather than deleted from the grid, because a study that quietly
+stops reporting an option it once recommended is a study whose reader cannot
+tell the difference between "never considered" and "considered and refused".
+"""
 
 
 def _files() -> list[tuple[str, str, float]]:
@@ -299,7 +348,9 @@ def _write_markdown(rows) -> None:
         "clean files. That is an acquisition problem, not a tracking one, and "
         "`gardner_sync` had already solved the same problem years of "
         "convention earlier by gear-shifting. `costas_loop` now does too "
-        "(`carrier.ACQ_SYMBOLS`, 4x for 150 symbols, both numbers measured), "
+        "(`carrier.ACQ_SYMBOLS`, 4x for 100 symbols, both measured, and "
+        "the 100 chosen on a per-file regression check rather than a decode "
+        "count - see that constant), "
         "and with it the same 16-QAM cell reads **9/28 on the impaired arm "
         "with the clean arm unchanged at 14/28**. Re-running this study now "
         "would measure the gear-shifted loop; the tables below are kept as "
@@ -310,8 +361,7 @@ def _write_markdown(rows) -> None:
         "| scheme | bw | clean | offset |", "|---|---|---|---|",
         "| bpsk | 0.02 | 28/28 (28) | 28/28 (28) |",
         "| qpsk | 0.02 | 28/28 (28) | 28/28 (28) |",
-        "| 8psk | 0.02 | 21/28 (21) | 20/28 (18) |",
-        "| **8psk** | **0.04** | 21/28 (21) | **21/28** (21) |",
+        "| **8psk** | **0.02** | 21/28 (21) | 20/28 (18) |",
         "| **16qam** | **0.02** | **14/28** (14) | **9/28** (1) |",
         "| 16qam | 0.04 | 13/28 (13) | 13/28 (11) |", "",
         f"Each cell is `decodes/files` over {len(SNR_POINTS)} SNR points "
@@ -359,12 +409,23 @@ def _write_markdown(rows) -> None:
                 L.append(f"| {scheme} | {arm} | " + " | ".join(cells)
                          + f" | {tail} |")
         L += ["", "Changes this sweep asks for:", ""]
+        overridden = set()
+        for scheme in SCHEMES:
+            note = REVERTED.get((knob, scheme))
+            if note and picks[scheme] is not None and abs(picks[scheme] - note[0]) < 1e-12:
+                overridden.add(scheme)
+                L += [f"- **{scheme}: {note[0]:g} — recommended here, NOT "
+                      f"TAKEN.** {note[1]}", ""]
         changed = [s for s in SCHEMES
-                   if picks[s] is not None
+                   if s not in overridden and picks[s] is not None
                    and abs(picks[s] - incumbent.get(s, -1)) > 1e-12]
         if changed:
             for s in changed:
                 L.append(f"- **{s}**: {incumbent[s]:g} -> {picks[s]:g}")
+        elif overridden:
+            L.append("- none beyond the override(s) above. Every other "
+                     "scheme's incumbent value survived the sweep, which is a "
+                     "result and not a null one.")
         else:
             L.append("- none. Every scheme's incumbent value survived the "
                      "sweep, which is a result and not a null one: the "

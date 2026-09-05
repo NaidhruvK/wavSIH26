@@ -8,10 +8,10 @@
 
 | scheme | incumbent | admit: min / median | refuse: max / median | gap | chosen |
 |---|---|---|---|---|---|
-| bpsk | 0.60 | 0.857 / 0.979 | 0.060 / 0.017 | 14.36x | **0.23** |
-| qpsk | 0.60 | 0.636 / 0.924 | 0.328 / 0.034 | 1.94x | **0.46** |
-| 8psk | 0.60 | 0.488 / 0.803 | 0.184 / 0.129 | 2.65x | **0.30** |
-| 16qam | 0.55 | 0.784 / 0.936 | 0.437 / 0.047 | 1.79x | **0.59** |
+| bpsk | 0.60 | 0.857 / 0.979 | 0.059 / 0.017 | 14.61x | **0.22** |
+| qpsk | 0.60 | 0.636 / 0.924 | 0.328 / 0.025 | 1.94x | **0.46** |
+| 8psk | 0.60 | 0.488 / 0.803 | 0.184 / 0.041 | 2.65x | **0.30** |
+| 16qam | 0.55 | 0.784 / 0.936 | 0.437 / 0.056 | 1.79x | **0.59** |
 
 ## What the change costs and buys
 
@@ -19,7 +19,7 @@
 
 | scheme | before | after | at before | at after | false negatives recovered | false positives added |
 |---|---|---|---|---|---|---|
-| bpsk | 0.60 | **0.23** | 42 admitted, 0 missed, 0 wrong | 42 admitted, 0 missed, 0 wrong | **0** | 0 |
+| bpsk | 0.60 | **0.22** | 42 admitted, 0 missed, 0 wrong | 42 admitted, 0 missed, 0 wrong | **0** | 0 |
 | qpsk | 0.60 | **0.46** | 42 admitted, 0 missed, 0 wrong | 42 admitted, 0 missed, 0 wrong | **0** | 0 |
 | 8psk | 0.60 | **0.30** | 28 admitted, 7 missed, 0 wrong | 35 admitted, 0 missed, 0 wrong | **7** | 0 |
 | 16qam | 0.55 | **0.59** | 28 admitted, 0 missed, 0 wrong | 28 admitted, 0 missed, 0 wrong | **0** | 0 |
@@ -28,8 +28,8 @@
 
 ### bpsk
 
-- 42 admit, 38 refuse, 84 runs gave up before the carrier loop and are in neither.
-- admit >= 0.857, refuse <= 0.060, ratio 14.36x
+- 42 admit, 37 refuse, 84 runs gave up before the carrier loop and are in neither.
+- admit >= 0.857, refuse <= 0.059, ratio 14.61x
 
 | SNR | carrier lock, correct hypothesis (min .. max) |
 |---|---|
@@ -42,7 +42,7 @@
 
 ### qpsk
 
-- 42 admit, 77 refuse, 84 runs gave up before the carrier loop and are in neither.
+- 42 admit, 72 refuse, 84 runs gave up before the carrier loop and are in neither.
 - admit >= 0.636, refuse <= 0.328, ratio 1.94x
 
 | SNR | carrier lock, correct hypothesis (min .. max) |
@@ -61,7 +61,7 @@
 
 | SNR | carrier lock, correct hypothesis (min .. max) |
 |---|---|
-| 4 dB | 0.033 .. 0.163 |
+| 4 dB | 0.012 .. 0.163 |
 | 8 dB | 0.488 .. 0.515 |
 | 10 dB | 0.651 .. 0.672 |
 | 13 dB | 0.802 .. 0.818 |
@@ -70,14 +70,14 @@
 
 ### 16qam
 
-- 28 admit, 15 refuse, 84 runs gave up before the carrier loop and are in neither.
+- 28 admit, 14 refuse, 84 runs gave up before the carrier loop and are in neither.
 - admit >= 0.784, refuse <= 0.437, ratio 1.79x
 
-- **7 near-miss runs excluded from both**: carrier lock 0.680..0.788 at 0.0117..0.0124 raw BER, between the 1% decode line and the 2% genuine-failure line. At the chosen threshold they all pass.
+- **7 near-miss runs excluded from both**: carrier lock 0.680..0.788 at 0.0116..0.0130 raw BER, between the 1% decode line and the 2% genuine-failure line. At the chosen threshold they all pass.
 
 | SNR | carrier lock, correct hypothesis (min .. max) |
 |---|---|
-| 4 dB | 0.034 .. 0.329 |
+| 4 dB | 0.015 .. 0.071 |
 | 8 dB | 0.680 .. 0.788 |
 | 10 dB | 0.784 .. 0.848 |
 | 13 dB | 0.887 .. 0.956 |

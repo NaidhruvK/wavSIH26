@@ -66,32 +66,46 @@ sets steady-state noise, and the acquisition multiplier only has to be large
 enough to pull in an offset the alignment check would have passed.
 """
 
-ACQ_SYMBOLS = 150
-"""How long the acquisition phase lasts, in symbols. MEASURED, not copied.
+ACQ_SYMBOLS = 100
+"""How long the acquisition phase lasts, in symbols. MEASURED, and the way it
+had to be measured is the point.
 
-It was 400 for about an hour, because that is what `gardner_sync` uses, and
-400 is wrong here. 16-QAM at loop_bw 0.02 with a 0.02 x Rs residual offset,
-over 28 files at 4-13 dB, sweeping the two acquisition knobs:
+MEASURED over 8-PSK and 16-QAM, 4-13 dB, 56 files, two arms: a clean one and
+one carrying a residual carrier offset of 0.02 x Rs that
+`lockcheck.CARRIER_OFFSET_LIMIT` permits and therefore does reach this loop.
+A "regression" is a clean-arm file whose raw bit error rate more than doubles
+against the single-speed loop:
 
-    ratio  symbols   clean   offset
-      1.0        0    14/28    1/28   <- single speed, before 5 Sep
-      2.0      150    14/28    4/28
-      2.0      400    14/28    8/28
-      4.0      150    14/28    9/28   <- chosen
-      4.0      400    12/28   12/28
-      8.0      150    13/28   11/28
+    ratio x symbols   clean decodes   offset decodes   regressions
+      1.0 x   0           35/56            22/56            0        single speed
+      2.0 x 150           35/56            25/56            0
+      4.0 x  50           35/56            28/56            0
+      4.0 x 100           35/56            31/56            0        <- chosen
+      4.0 x 150           35/56            30/56            1        34x on one file
+      6.0 x  50           35/56            29/56            0
+      8.0 x  50           34/56            32/56            4        up to 8254x
 
-The bottom two rows are the trade this was supposed to remove: a longer or
-wider acquisition keeps pulling the offset in, and starts costing files that
-had no offset to pull. 150 symbols at 4x is the corner - the full clean-arm
-count, and nine times the offset-arm count of a single-speed loop.
+The last row is why the regression column exists at all. A wide acquisition on
+a decision-directed detector can slew the phase into a wrong rotation, and the
+narrow tracking loop that follows then holds it there - so "wider acquires
+better" stops being true well before the decode count notices.
 
-The asymmetry with `gardner_sync`'s 400 is not an inconsistency. That loop
-runs at sample rate on a stream that has not been equalised; this one runs at
-symbol rate on one that has, after `_EQ_WARMUP` has already spent 1200 symbols
-of the record, and its detector is decision-directed - so every extra
-wide-bandwidth symbol here is one more symbol of decision noise fed back as
-phase.
+THE COLUMN THAT MATTERS IS THE LAST ONE, AND IT IS NOT THE ONE THIS WAS FIRST
+CHOSEN ON. The first version of this constant was 150, picked from the clean
+and offset decode counts alone. Those two columns are identical at 100 and
+150. What they cannot see is `16qam_8dB_5019`, which sits at a raw BER of
+0.0119 - above the 1% line either way, so it is a non-decode before and after
+and contributes nothing to any count - and which at 4.0 x 150 loses carrier
+lock outright: metric 0.696 -> 0.023, raw BER 0.0119 -> 0.4093. A binary
+decode count is blind to a file that was already failing getting 34 times
+worse, and this loop's failure mode lives exactly there. 100 keeps that file
+at 0.0119 and decodes one MORE offset-arm file than 150 did.
+
+The asymmetry with `gardner_sync`'s 400 is not an inconsistency. That loop runs
+at sample rate on a stream that has not been equalised; this one runs at symbol
+rate on one that has, after `_EQ_WARMUP` has already spent 1200 symbols of the
+record, and its detector is decision-directed - so every extra wide-bandwidth
+symbol here is one more symbol of decision noise fed back as phase.
 """
 
 MAX_LOOP_BW = 0.25

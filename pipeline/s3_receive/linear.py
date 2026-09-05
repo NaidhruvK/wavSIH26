@@ -75,10 +75,17 @@ __all__ = ["LinearDemod"]
 # over 1008 runs (every corpus file through every linear plug-in):
 #
 #     scheme   worst that decodes   best that does not   ratio   chosen
-#     bpsk           0.857                0.060         14.36x    0.23
+#     bpsk           0.857                0.059         14.61x    0.23
 #     qpsk           0.636                0.328          1.94x    0.46
 #     8psk           0.488                0.184          2.65x    0.30
 #     16qam          0.784                0.437          1.79x    0.59
+#
+# Re-measured after the acquisition gear-shift landed, because these were first
+# taken against a loop that then changed underneath them - the study has to be
+# newer than the code it describes or it is describing something else. Every
+# gap survived. BPSK's geometric midpoint comes out at 0.226 on the current
+# loop against 0.227 before it; 0.23 is kept, since a thousandth is not an
+# improvement and the incumbent wins ties.
 #
 # "Best that does not" counts only genuine failures - runs at 2% raw bit error
 # rate or worse - and only runs that no OTHER check already vetoed, since a
@@ -125,20 +132,30 @@ _EQ_WARMUP = {"psk": 600, "qam": 1200}
 # detector's own noise back into the phase estimate, and past some point that
 # costs more than the tracking gains.
 #
-# Populated by `reports/s3_loop_bw_study.py`. Every entry that differs from the
-# old global carries its measurement below; entries equal to it are there
-# because the sweep found nothing better, which is also a result.
 # MEASURED 5 Sep, `reports/s3_loop_bw.md`: 112 files x 5 bandwidths x 2 arms
 # per knob, where the second arm carries the impairment the loop exists to
-# remove. Only 8-PSK's carrier bandwidth moved, and the reason the rest did not
-# is worth as much as the one that did:
+# remove. NOTHING MOVED. Every value below is the pre-5-Sep global, kept
+# because the sweep either found nothing better or found something that turned
+# out to be worse for a reason the sweep could not see. Both are results:
 #
 #   bpsk, qpsk    28/28 in all ten cells of both arms. The sweep has no
 #                 discriminating power here and the honest output is "no
 #                 change", not the smallest number in the grid.
-#   8psk          0.02 -> 0.04. Clean arm identical at 21/28, impaired arm
-#                 20/28 -> 21/28, and the impaired response is monotone across
-#                 the grid, so the direction is real rather than a tie-break.
+#   8psk          0.02 -> 0.04 was measured, shipped, and REVERTED the same
+#                 day. The sweep said clean arm identical at 21/28 and impaired
+#                 20/28 -> 21/28, monotone, so the direction looked real. What
+#                 the sweep could not see is that it only ever runs the CORRECT
+#                 plug-in. Run a QPSK capture through the 8-PSK plug-in - the
+#                 subset trap `alphabet_used` exists for - and the wider loop
+#                 smears the four-point cloud across all eight decision
+#                 regions: on `qpsk_8dB_2007`, normalised alphabet entropy goes
+#                 0.691 (fail, refused) at 0.02 to 0.947 (pass) at 0.04, and
+#                 the stage returns `status: ok` with a self-estimated output
+#                 BER of 0.0035 over a stream that is 48.4% wrong. That is the
+#                 4 Sep failure reintroduced through a different door, for one
+#                 file on an injected-offset arm. Not a trade worth making, and
+#                 a reminder that a per-scheme sweep over correct hypotheses
+#                 cannot see a check that only wrong hypotheses exercise.
 #   16qam         stays at 0.02. 0.04 reaches 13/28 on the impaired arm
 #                 against 9/28, and costs `16qam_10dB_4020` on the clean arm -
 #                 raw BER 0.0029 -> 0.0299. That is a 10 dB file, and >=10 dB
@@ -154,9 +171,10 @@ _EQ_WARMUP = {"psk": 600, "qam": 1200}
 # optimum at 0.002. Picking the best cell of an alternating sequence is fitting
 # this corpus, not tuning a loop.
 #
-# The largest carrier-loop result of the day is not in this table at all: it is
-# that `costas_loop` had no acquisition phase. See `carrier.ACQ_SYMBOLS`.
-_CARRIER_LOOP_BW = {"bpsk": 0.02, "qpsk": 0.02, "8psk": 0.04, "16qam": 0.02}
+# NO TRACKING BANDWIDTH CHANGED. The whole carrier-loop result of the day is
+# that `costas_loop` had no acquisition phase at all - see `carrier.ACQ_SYMBOLS`
+# - and that is a structural fix rather than a number in this table.
+_CARRIER_LOOP_BW = {"bpsk": 0.02, "qpsk": 0.02, "8psk": 0.02, "16qam": 0.02}
 _TIMING_LOOP_BW = {"bpsk": 0.004, "qpsk": 0.004, "8psk": 0.004, "16qam": 0.004}
 
 

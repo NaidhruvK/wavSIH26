@@ -259,7 +259,12 @@ def _write_markdown(rows: list[dict], truth=None) -> None:
 
     lines = [
         "# The S3 to S4 junction, measured", "",
-        "**Anvith, 3 Sep.** Real demodulator output into Stage 4 for the first "
+        "**Anvith, 3 Sep. Re-measured 5 Sep** after the lock-threshold, "
+        "acquisition and rate-rescue changes, because this is the boundary "
+        "Nehal's stages consume and a stale one is worse than none. **Every "
+        "number in the summary below is unchanged** - only per-rotation "
+        "intermediates in the CSV moved - so the S3 output S4 sees is the "
+        "same shape it was. Real demodulator output into Stage 4 for the first "
         "time. Every prior ceiling was measured against injected errors; this "
         "one is not.", "",
         "Stream: 120 000 source bits, rate 1/2 K=7, generators 0o171/0o133, no "

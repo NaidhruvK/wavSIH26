@@ -473,13 +473,13 @@ and zero offset. Every check refuses them, which is the right answer.
 
 | arm | decodes | mod correct | confidently wrong | median s |
 |---|---|---|---|---|
-| `truth-params` — the true rate, no offset | 231/252 | 252/252 | 0 | 0.29 |
-| `s2-top` — S2's top hypothesis only | 178/252 | 252/252 | 0 | 0.26 |
-| **`search` — S2's ranked hypotheses** | **230/252** | 238/252 | **0** | 0.36 |
+| `truth-params` — the true rate, no offset | 231/252 | 252/252 | 0 | 0.37 |
+| `s2-top` — S2's top hypothesis only | 178/252 | 252/252 | 0 | 0.31 |
+| **`search` — S2's ranked hypotheses** | **230/252** | 239/252 | **0** | 0.46 |
 
 **203/252 -> 230/252**, and the blind search is now within **one file** of what
 the receiver can do when handed perfect parameters. 2-FSK is 42/42 and 4-FSK
-41/42, both at every SNR including 4 dB. Modulation choice went 217 -> 238.
+41/42, both at every SNR including 4 dB. Modulation choice went 217 -> 239.
 
 **Nothing at >=10 dB moved: still 168/168 decode, 168/168 lock, 0 confidently
 wrong.** That was the thing to protect and it is intact.
@@ -497,9 +497,11 @@ claimed:
 | 7 | 8-PSK at 4 dB, raw BER ~0.48 | `low_confidence` |
 | 1 | `4fsk_8dB_7031`, chose QPSK at 0.48 | `low_confidence` |
 
-Cost: worst case 9.91 s against a 20 s budget, on `2fsk_4dB_8024` — a file that
+Cost: worst case 11.4 s against a 20 s budget, on `2fsk_4dB_8024` — a file that
 now decodes and used to return nothing, taking 10 chain runs to get there.
-Median is 0.36 s.
+Median 0.46 s. These are wall-clock and were taken with another study running
+on the same machine, so read them as an upper bound; the conclusion that the
+search sits well inside its budget holds either way.
 
 **One behaviour change to declare:** raising 16-QAM's threshold to 0.59 moves
 `16qam_8dB_2019` from `ok` to `low_confidence`. It has a raw BER of 0.011 and
@@ -550,13 +552,38 @@ QPSK's old margin was thinner than it looked: at 4 dB it reads 0.636 against a
 always carries the impairment the loop exists to remove, because a sweep that
 exercises only the clean side of a trade reports a straight line.
 
-**Only one tracking bandwidth moved: 8-PSK's carrier loop, 0.02 -> 0.04**
-(clean arm identical at 21/28, impaired 20/28 -> 21/28, monotone). BPSK and
-QPSK read 28/28 in all ten cells of both arms — no discriminating power, so no
-change. 16-QAM's timing grid reads 12/14/13/14/13 with median BER
-0.020/0.009/0.015/0.009/0.019: non-monotone across a 16x range, which is a
-response with no reliable signal in it rather than an optimum at 0.002.
-Picking the best cell of an alternating sequence is fitting this corpus.
+**No tracking bandwidth moved, in the end.** BPSK and QPSK read 28/28 in all
+ten cells of both arms — no discriminating power, so no change. 16-QAM's timing
+grid reads 12/14/13/14/13 with median BER 0.020/0.009/0.015/0.009/0.019:
+non-monotone across a 16x range, which is a response with no reliable signal in
+it rather than an optimum at 0.002.
+
+**8-PSK's carrier bandwidth went 0.02 -> 0.04, shipped, and was reverted the
+same evening. That reversal is the most important thing in this section.** The
+sweep supported it: clean arm identical at 21/28, impaired arm 20/28 -> 21/28,
+monotone across the grid. What the sweep cannot see is that **it only ever runs
+the correct plug-in.** Run a QPSK capture through the 8-PSK plug-in — the
+subset trap `alphabet_used` exists for — and the wider loop smears the
+four-point cloud across all eight decision regions:
+
+| 8-PSK carrier bw | `alphabet_used` | verdict | actual BER | self-estimate |
+|---|---|---|---|---|
+| 0.02 | 0.691 → **fail** | `low_confidence` | 0.484 | 0.0029 |
+| 0.04 | 0.947 → **pass** | **`ok`** | 0.484 | 0.0035 |
+
+On `qpsk_8dB_2007` the stage returned **`status: ok` with a self-estimated
+output BER of 0.0035 over a stream 48.4% wrong** — the 4 Sep failure walking
+back in through a different door, bought for one file on an injected-offset
+arm. Reverted.
+
+Two things I want on the record about it. It is **invisible to the lock-gate
+harness**, because that study only ever runs the correct plug-in on each file
+and the search picks QPSK for a QPSK capture — so `confidently wrong` stayed 0
+across all 252 files while this was live. It was found only by re-running the
+cross-hypothesis threshold study after changing the loop, which I did because
+the thresholds had been measured against a loop I then modified. And it means
+**a per-scheme sweep over correct hypotheses cannot see a check that only
+wrong hypotheses exercise** — which is now written into the constant.
 
 **What the sweep actually found was structural.** Handed a residual carrier
 offset of 0.02 x Rs — one `CARRIER_OFFSET_LIMIT` explicitly permits, so the
@@ -566,18 +593,45 @@ not a tracking one, and `costas_loop` had no acquisition phase: one bandwidth
 end to end, while its sibling `gardner_sync` has gear-shifted since it was
 written.
 
-It now gear-shifts too, 4x for 150 symbols (`carrier.ACQ_SYMBOLS`). **The 150
-is the measurement, not the copy:** 400, which is `gardner_sync`'s value,
-takes the impaired arm to 12/28 and costs two clean files. 150 gives
+It now gear-shifts too, 4x for 100 symbols (`carrier.ACQ_SYMBOLS`).
 
 | scheme | carrier bw | clean | impaired (before) |
 |---|---|---|---|
 | bpsk | 0.02 | 28/28 | 28/28 (28) |
 | qpsk | 0.02 | 28/28 | 28/28 (28) |
-| 8psk | **0.04** | 21/28 | 21/28 (21) |
+| 8psk | 0.02 | 21/28 | 20/28 (18) |
 | **16qam** | 0.02 | **14/28, unchanged** | **9/28 (1)** |
 
-— nine times the impaired-arm result at no clean-arm cost.
+**How the 100 was arrived at is the part worth reading, because I got it wrong
+first.** The constant shipped at 150, chosen from clean and offset decode
+counts. Those counts are identical at 100 and 150 — and blind to
+`16qam_8dB_5019`, which sits at raw BER 0.0119, above the 1% line either way,
+so it is a non-decode before and after and contributes nothing to any count.
+At 4x/150 that file loses carrier lock outright: metric 0.696 -> 0.023, raw
+BER **0.0119 -> 0.4093**. Caught on the end-of-day verification pass by
+diffing against a re-measured pre-change baseline, not by any test.
+
+Re-chosen on a per-file regression check — a clean-arm file whose BER more
+than doubles — over 8-PSK and 16-QAM, 4-13 dB, 56 files:
+
+| ratio x symbols | clean decodes | offset decodes | regressions |
+|---|---|---|---|
+| 1.0 x 0 (single speed) | 35/56 | 22/56 | 0 |
+| 4.0 x 50 | 35/56 | 28/56 | 0 |
+| **4.0 x 100** | **35/56** | **31/56** | **0** |
+| 4.0 x 150 (was shipped) | 35/56 | 30/56 | **1** — 34x |
+| 8.0 x 50 | 34/56 | 32/56 | **4** — up to 8254x |
+
+100 strictly dominates the 150 I first shipped: same clean count, one *more*
+impaired-arm file, and no regression. The 8x row is why the column exists — a
+wide acquisition on a decision-directed detector can slew the phase into a
+wrong rotation and the narrow tracking loop then holds it there, so "wider
+acquires better" stops being true well before a decode count notices.
+
+**This is the same mistake I flagged elsewhere today and then made anyway:**
+choosing on a binary count when the failure mode lives in a continuous
+quantity. It is the reason 16-QAM's timing bandwidth was left alone, and I
+should have applied it to my own new constant in the same hour.
 
 **The corpus cannot see this problem at all.** Every file in it has a true
 carrier offset of exactly zero, so the acquisition transient this fixes only
@@ -641,6 +695,47 @@ I found this by mis-designing a study: the timing-loop sweep's impaired arm
 used a 1% rate error and came back 0/28 in every cell of the grid. A sweep
 where every cell reads zero is not a measurement, and chasing why gave the
 number above.
+
+### End-of-day verification, and the two defects it found
+
+Ran the whole suite and re-ran every study against the code as it actually
+ships. **549 passed, 4 skipped, 1 xfailed** (13 min); targeted plus contract
+257 passed. Two defects in work I had already committed, both now fixed:
+
+**1. `_CARRIER_LOOP_BW["8psk"] = 0.04` blinded the subset-trap check. Reverted.**
+Detailed in Block B above. `status: ok` with a self-estimate of 0.0035 over a
+stream 48.4% wrong. **It was invisible to the harness I had used all day** —
+`reports/s3_lock_gate.md` runs only the correct plug-in per file, so
+`confidently wrong` read 0 across all 252 files while this was live. It
+surfaced only because I re-ran the *cross-hypothesis* threshold study, and I
+only did that because the thresholds had been measured against a loop I then
+modified. With 8-PSK back at 0.02 the populations separate again exactly as
+first measured — admit ≥ 0.488, refuse ≤ 0.184, 2.65x — so every shipped
+threshold is now validated against the loop that ships rather than one that
+no longer exists.
+
+**2. `ACQ_SYMBOLS = 150` cost one file 34x. Now 100.** I chose the acquisition
+length on clean and impaired *decode counts*, which are identical at 100 and
+150 and blind to `16qam_8dB_5019`: raw BER 0.0119, above the 1% line either
+way, so a non-decode before and after that contributes to no count — and at
+4x/150 it loses carrier lock outright, 0.696 → 0.023, BER 0.0119 → **0.4093**.
+Re-chosen on a per-file regression check: 100 gives the same clean count, one
+*more* impaired-arm file than 150, and zero regressions. Caught by diffing
+against a re-measured pre-change baseline, not by any test.
+
+**3. A number I could not reproduce.** The before-figure `search 203/252` came
+from a CSV the after-run had overwritten — a memory, not a measurement. Now
+re-measured from a worktree at `aed281b`; it reproduces 203 exactly, and
+`reports/s3_lock_gate.md` carries the command so nobody has to take my word.
+
+**4. `reports/s3_s4_junction.{csv,md}` re-measured** — Nehal's boundary, last
+taken 3 Sep. **Every summary number is unchanged**, so the S3 output S4 sees
+is the same shape it was; only per-rotation intermediates moved.
+
+The thread joining 1 and 2 is worth stating once: **both were chosen on a
+binary count when the failure lived in something continuous.** It is the same
+error I identified and avoided on 16-QAM's timing bandwidth, then made twice
+in the same hour on my own new constants.
 
 ### Open, mine
 

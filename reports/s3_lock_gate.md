@@ -8,9 +8,9 @@ Bit error rates are against the bits the zoo actually transmitted, regenerated f
 
 | arm | what S3 was told | decodes | mod correct | **confidently wrong** | *would have been, old rule* | median s |
 |---|---|---|---|---|---|---|
-| `truth-params` | the true symbol rate, no carrier offset | **231/252** | 252/252 | **0** | *0* | 0.29 |
-| `s2-top` | S2's top hypothesis on every field | **178/252** | 252/252 | **0** | *24* | 0.26 |
-| `search` | S2's *ranked* hypotheses, searched | **230/252** | 238/252 | **0** | *8* | 0.36 |
+| `truth-params` | the true symbol rate, no carrier offset | **231/252** | 252/252 | **0** | *0* | 0.37 |
+| `s2-top` | S2's top hypothesis on every field | **178/252** | 252/252 | **0** | *24* | 0.31 |
+| `search` | S2's *ranked* hypotheses, searched | **230/252** | 239/252 | **0** | *7* | 0.46 |
 
 ## The last column, and why it is the point
 
@@ -69,7 +69,7 @@ This is the one the day gate is written against. It is measured against the bits
 | bpsk | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | **42/42** |
 | qpsk | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | **42/42** |
 | 8psk | 0/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | **35/42** |
-| 16qam | 0/7 | 6/7 | 7/7 | 7/7 | 7/7 | 7/7 | **34/42** |
+| 16qam | 0/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | **35/42** |
 | 2fsk | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | **42/42** |
 | 4fsk | 7/7 | 6/7 | 7/7 | 7/7 | 7/7 | 7/7 | **41/42** |
 
@@ -108,38 +108,49 @@ The gate is written for the whole pipeline - at least 65% of corpus files at 10 
 
 Quoting either number without the corpus size attached is how a 24/24 becomes a claim about a receiver rather than about 36 files, so: **252 files**, seven seeds per (modulation, SNR) cell.
 
+### Reproducing the before-column
+
+This CSV is always the CURRENT build, so a before/after number needs the old build re-measured rather than remembered. The 5 Sep before-figures quoted in STATUS.md - `search` 203/252, `s2-top` 177/252 - come from running this same script against commit `aed281b`, which is this branch's merge of `main` immediately before the 5 Sep receiver changes:
+
+```bash
+git worktree add /tmp/s3-baseline aed281b
+cd /tmp/s3-baseline && <repo>/.venv/Scripts/python.exe reports/s3_lock_gate_study.py
+```
+
+It takes about eight minutes and reproduces 203 exactly. Written down because the first version of the 5 Sep write-up quoted a before-number whose CSV had already been overwritten by the after-run, which makes it a memory rather than a measurement - and this project does not keep those.
+
 ## Every file that did not decode, `search` arm
 
 All 252 rows are in `s3_lock_gate.csv`; this table is the complement, because it is the list the next day's work is drawn from. Sorted by SNR descending: a miss at 20 dB is a defect, a miss at 4 dB may be the operating envelope, and they should not be read in the same breath.
 
 | file | true | chosen | status | est BER | valid | measured BER | runs | s | why not |
 |---|---|---|---|---|---|---|---|---|---|
-| 16qam_8dB_2019 | 16qam | 16qam | `low_confidence` | 1.05e-02 | no | 0.01106 ⚠ | 12 | 1.98 | carrier lock 0.49 below 0.59 |
-| 16qam_8dB_3019 | 16qam | 16qam | `ok` | 1.07e-02 | yes | 0.01294 ⚠ | 1 | 0.25 |  |
-| 16qam_8dB_4019 | 16qam | 16qam | `ok` | 1.09e-02 | yes | 0.01239 ⚠ | 1 | 0.26 |  |
-| 16qam_8dB_5019 | 16qam | 16qam | `ok` | 1.26e-02 | yes | 0.01395 ⚠ | 2 | 0.52 |  |
-| 16qam_8dB_6019 | 16qam | 16qam | `ok` | 1.07e-02 | yes | 0.01229 ⚠ | 1 | 0.25 |  |
-| 16qam_8dB_7019 | 16qam | 16qam | `ok` | 1.06e-02 | yes | 0.01269 ⚠ | 1 | 0.25 |  |
-| 16qam_8dB_8019 | 16qam | 16qam | `ok` | 1.01e-02 | yes | 0.01217 ⚠ | 1 | 0.27 |  |
-| 4fsk_8dB_7031 | 4fsk | qpsk | `low_confidence` | 1.04e-01 | no | 0.48183 ⚠ | 12 | 1.83 | carrier lock 0.01 below 0.46; the receiver estimates its own output BER at 0.104, over the 0.05 a lock should produce -  |
-| 16qam_4dB_2018 | 16qam | bpsk | `low_confidence` | 1.25e-01 | no | 0.47852 ⚠ | 12 | 2.60 | carrier lock 0.03 below 0.23; the receiver estimates its own output BER at 0.125, over the 0.05 a lock should produce -  |
-| 16qam_4dB_3018 | 16qam | 4fsk | `low_confidence` | 3.66e-01 | no | 0.48326 ⚠ | 12 | 2.19 | the receiver estimates its own output BER at 0.366, over the 0.05 a lock should produce - it is describing a demodulatio |
-| 16qam_4dB_4018 | 16qam | 2fsk | `low_confidence` | 3.46e-01 | no | 0.47776 ⚠ | 12 | 2.41 | the receiver estimates its own output BER at 0.346, over the 0.05 a lock should produce - it is describing a demodulatio |
-| 16qam_4dB_5018 | 16qam | 2fsk | `low_confidence` | 2.86e-01 | no | 0.47913 ⚠ | 12 | 1.77 | the receiver estimates its own output BER at 0.286, over the 0.05 a lock should produce - it is describing a demodulatio |
-| 16qam_4dB_6018 | 16qam | 2fsk | `low_confidence` | 4.08e-01 | no | 0.47875 ⚠ | 12 | 1.79 | the receiver estimates its own output BER at 0.408, over the 0.05 a lock should produce - it is describing a demodulatio |
-| 16qam_4dB_7018 | 16qam | 2fsk | `low_confidence` | 3.07e-01 | no | 0.47968 ⚠ | 12 | 2.01 | the receiver estimates its own output BER at 0.307, over the 0.05 a lock should produce - it is describing a demodulatio |
-| 16qam_4dB_8018 | 16qam | 2fsk | `low_confidence` | 2.57e-01 | no | 0.47984 ⚠ | 12 | 1.78 | the receiver estimates its own output BER at 0.257, over the 0.05 a lock should produce - it is describing a demodulatio |
-| 8psk_4dB_2012 | 8psk | 2fsk | `low_confidence` | 3.57e-01 | no | 0.48232 ⚠ | 12 | 2.59 | the receiver estimates its own output BER at 0.357, over the 0.05 a lock should produce - it is describing a demodulatio |
-| 8psk_4dB_3012 | 8psk | 16qam | `low_confidence` | 4.85e-02 | no | 0.48457 ⚠ | 12 | 2.15 | carrier lock 0.04 below 0.59 |
-| 8psk_4dB_4012 | 8psk | 4fsk | `low_confidence` | 3.47e-01 | no | 0.48614 ⚠ | 12 | 2.30 | the receiver estimates its own output BER at 0.347, over the 0.05 a lock should produce - it is describing a demodulatio |
-| 8psk_4dB_5012 | 8psk | 2fsk | `low_confidence` | 3.02e-01 | no | 0.48155 ⚠ | 12 | 2.34 | the receiver estimates its own output BER at 0.302, over the 0.05 a lock should produce - it is describing a demodulatio |
-| 8psk_4dB_6012 | 8psk | 2fsk | `low_confidence` | 3.22e-01 | no | 0.48063 ⚠ | 12 | 2.31 | the receiver estimates its own output BER at 0.322, over the 0.05 a lock should produce - it is describing a demodulatio |
-| 8psk_4dB_7012 | 8psk | 8psk | `low_confidence` | 3.81e-02 | no | 0.48368 ⚠ | 12 | 2.31 | carrier lock 0.12 below 0.30 |
-| 8psk_4dB_8012 | 8psk | 2fsk | `low_confidence` | 2.81e-01 | no | 0.47975 ⚠ | 12 | 2.31 | the receiver estimates its own output BER at 0.281, over the 0.05 a lock should produce - it is describing a demodulatio |
+| 16qam_8dB_2019 | 16qam | 16qam | `ok` | 1.10e-02 | yes | 0.01159 ⚠ | 1 | 0.30 |  |
+| 16qam_8dB_3019 | 16qam | 16qam | `ok` | 1.07e-02 | yes | 0.01304 ⚠ | 1 | 0.32 |  |
+| 16qam_8dB_4019 | 16qam | 16qam | `ok` | 1.09e-02 | yes | 0.01239 ⚠ | 1 | 0.32 |  |
+| 16qam_8dB_5019 | 16qam | 16qam | `ok` | 1.06e-02 | yes | 0.01226 ⚠ | 1 | 0.29 |  |
+| 16qam_8dB_6019 | 16qam | 16qam | `ok` | 1.07e-02 | yes | 0.01239 ⚠ | 1 | 0.30 |  |
+| 16qam_8dB_7019 | 16qam | 16qam | `ok` | 1.06e-02 | yes | 0.01264 ⚠ | 1 | 0.29 |  |
+| 16qam_8dB_8019 | 16qam | 16qam | `ok` | 1.01e-02 | yes | 0.01227 ⚠ | 1 | 0.33 |  |
+| 4fsk_8dB_7031 | 4fsk | bpsk | `low_confidence` | 1.28e-01 | no | 0.47592 ⚠ | 12 | 2.69 | carrier lock 0.01 below 0.23; the receiver estimates its own output BER at 0.128, over the 0.05 a lock should produce -  |
+| 16qam_4dB_2018 | 16qam | 16qam | `low_confidence` | 5.59e-02 | no | 0.42492 ⚠ | 12 | 3.45 | carrier lock 0.03 below 0.59; the receiver estimates its own output BER at 0.0559, over the 0.05 a lock should produce - |
+| 16qam_4dB_3018 | 16qam | 4fsk | `low_confidence` | 3.66e-01 | no | 0.48326 ⚠ | 12 | 2.78 | the receiver estimates its own output BER at 0.366, over the 0.05 a lock should produce - it is describing a demodulatio |
+| 16qam_4dB_4018 | 16qam | 2fsk | `low_confidence` | 3.46e-01 | no | 0.47776 ⚠ | 12 | 3.17 | the receiver estimates its own output BER at 0.346, over the 0.05 a lock should produce - it is describing a demodulatio |
+| 16qam_4dB_5018 | 16qam | 2fsk | `low_confidence` | 2.86e-01 | no | 0.47913 ⚠ | 12 | 2.46 | the receiver estimates its own output BER at 0.286, over the 0.05 a lock should produce - it is describing a demodulatio |
+| 16qam_4dB_6018 | 16qam | 2fsk | `low_confidence` | 4.08e-01 | no | 0.47875 ⚠ | 12 | 2.39 | the receiver estimates its own output BER at 0.408, over the 0.05 a lock should produce - it is describing a demodulatio |
+| 16qam_4dB_7018 | 16qam | 2fsk | `low_confidence` | 3.07e-01 | no | 0.47968 ⚠ | 12 | 2.53 | the receiver estimates its own output BER at 0.307, over the 0.05 a lock should produce - it is describing a demodulatio |
+| 16qam_4dB_8018 | 16qam | 2fsk | `low_confidence` | 2.57e-01 | no | 0.47984 ⚠ | 12 | 2.15 | the receiver estimates its own output BER at 0.257, over the 0.05 a lock should produce - it is describing a demodulatio |
+| 8psk_4dB_2012 | 8psk | 8psk | `low_confidence` | 3.03e-02 | no | 0.24017 ⚠ | 12 | 3.41 | carrier lock 0.16 below 0.30 |
+| 8psk_4dB_3012 | 8psk | 16qam | `low_confidence` | 4.85e-02 | no | 0.48462 ⚠ | 12 | 2.80 | carrier lock 0.04 below 0.59 |
+| 8psk_4dB_4012 | 8psk | 4fsk | `low_confidence` | 3.47e-01 | no | 0.48614 ⚠ | 12 | 3.36 | the receiver estimates its own output BER at 0.347, over the 0.05 a lock should produce - it is describing a demodulatio |
+| 8psk_4dB_5012 | 8psk | 2fsk | `low_confidence` | 3.02e-01 | no | 0.48155 ⚠ | 12 | 3.18 | the receiver estimates its own output BER at 0.302, over the 0.05 a lock should produce - it is describing a demodulatio |
+| 8psk_4dB_6012 | 8psk | 2fsk | `low_confidence` | 3.22e-01 | no | 0.48063 ⚠ | 12 | 2.88 | the receiver estimates its own output BER at 0.322, over the 0.05 a lock should produce - it is describing a demodulatio |
+| 8psk_4dB_7012 | 8psk | 2fsk | `low_confidence` | 4.57e-01 | no | 0.48270 ⚠ | 12 | 3.04 | the receiver estimates its own output BER at 0.457, over the 0.05 a lock should produce - it is describing a demodulatio |
+| 8psk_4dB_8012 | 8psk | 2fsk | `low_confidence` | 2.81e-01 | no | 0.47975 ⚠ | 12 | 2.96 | the receiver estimates its own output BER at 0.281, over the 0.05 a lock should produce - it is describing a demodulatio |
 
 ## Cost
 
-The search considers up to 12 full receiver runs and rejects the rest with one FFT each. Median 0.36 s per file, worst 9.91 s, against a 20 s budget and a 90 s whole-pipeline window. The screen is what makes that true: without it the same candidate list is 6 modulations x 3 rates x 5 offsets of full chain runs.
+The search considers up to 12 full receiver runs and rejects the rest with one FFT each. Median 0.46 s per file, worst 11.39 s, against a 20 s budget and a 90 s whole-pipeline window. The screen is what makes that true: without it the same candidate list is 6 modulations x 3 rates x 5 offsets of full chain runs.
 
 ## Known gaps, stated - 5 Sep
 
