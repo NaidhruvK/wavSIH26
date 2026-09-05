@@ -64,11 +64,12 @@ def test_fsk_order_known_gap_at_low_snr():
 
 
 def test_estimate_never_reads_truth():
-    """Grep-style structural check: estimate() takes only iq and fs."""
+    """Grep-style structural check: estimate() takes only iq, fs and
+    behaviour toggles -- no truth parameter exists to leak through."""
     import inspect
     from pipeline.s2_estimate import estimate as est_fn
     params = list(inspect.signature(est_fn).parameters)
-    assert params == ["iq", "fs", "constant_envelope"]
+    assert params == ["iq", "fs", "constant_envelope", "classify"]
 
 
 def test_estimate_fails_cleanly_on_short_input():
@@ -94,10 +95,81 @@ def test_estimate_detects_non_constant_envelope_for_qam():
 def test_cfo_hypotheses_ranked_by_score():
     f = _corpus_files("qpsk_10dB_*.wav")[0]
     r = ingest(f)
-    cfo, order_m, score, hyps = estimate_cfo(r.iq, r.fs)
+    cfo, order_m, score, hyps, aliases = estimate_cfo(r.iq, r.fs)
     scores = [h[2] for h in hyps]
     assert scores == sorted(scores, reverse=True)
     assert (cfo, order_m, score) == hyps[0]
+
+
+@pytest.mark.parametrize("scheme", ["bpsk", "qpsk", "8psk", "16qam"])
+def test_cfo_zero_on_clean_files(scheme):
+    """Regression guard for the M-th power spectral-line trap: a teammate
+    found every clean (zero-CFO) file reporting a false CFO of Rs/M,
+    caused by demeaning the M-th power signal before the FFT -- which
+    nulls the DC bin, exactly where the true line sits when CFO is
+    genuinely 0. Every file in this corpus has cfo_norm=0.0 (see
+    zoo/rf.py), so this is checkable directly against truth, not just
+    plausibility. Tolerance is loose (100 Hz) because this is a spectral
+    peak estimate, not exact arithmetic."""
+    for f in _corpus_files(f"{scheme}_*dB_*.wav"):
+        truth = json.loads(f.with_suffix(".json").read_text())
+        if truth["snr_db"] < 10:
+            continue
+        r = ingest(f)
+        cfo, order_m, score, hyps, aliases = estimate_cfo(r.iq, r.fs)
+        assert abs(cfo) < 100, (
+            f"{f.name}: measured CFO {cfo:.1f} Hz, expected ~0 -- "
+            f"Rs/order_m would be {r.fs / truth['sps'] / order_m:.1f} Hz, "
+            "check for the demean-before-FFT regression"
+        )
+
+
+def test_cfo_true_peak_score_beats_false_alias():
+    """The root-cause check, not just the symptom: on a clean file, the
+    M matching the signal's own PSK order must win on SCORE (not just
+    happen to be picked), because its true DC line is intrinsically
+    stronger than any other order's symbol-rate artifact. This is what
+    makes the fix robust rather than coincidental."""
+    f = _corpus_files("qpsk_10dB_*.wav")[0]
+    r = ingest(f)
+    cfo, order_m, score, hyps, aliases = estimate_cfo(r.iq, r.fs)
+    assert order_m == 4
+    assert abs(cfo) < 100
+
+
+def test_cfo_alias_hypotheses_include_zero():
+    """Per the teammate's fix request: 0 Hz must always be an available
+    candidate in the full alias set, not just the top pick -- a safety
+    net for S3/S4 even if some future edge case makes the peak search
+    land elsewhere."""
+    f = _corpus_files("8psk_10dB_*.wav")[0]
+    r = ingest(f)
+    _cfo, _m, _score, _hyps, aliases = estimate_cfo(r.iq, r.fs)
+    assert any(abs(c) < 1.0 for c, _m, _s in aliases)
+
+
+def test_cfo_alias_hypotheses_cover_every_alias_per_order():
+    """The alias set must expose all `m` roots per order, not just the
+    single closest-to-zero pick `hyps` keeps for backward compatibility.
+    Total may be m+1 if none of the m roots landed near zero and the
+    explicit 0Hz safety net had to be appended on top -- that's correct,
+    not a bug (see test_cfo_alias_hypotheses_include_zero). Distinguish
+    the m real roots from the safety net by score: every real root
+    shares the SAME FFT-peak score (they're aliases of one measurement),
+    while the safety net's score is always 0.0."""
+    f = _corpus_files("8psk_10dB_*.wav")[0]
+    r = ingest(f)
+    _cfo, _m, _score, hyps, aliases = estimate_cfo(r.iq, r.fs, orders=(4,))
+    real_roots = [a for a in aliases if a[2] > 0.0]
+    assert len(real_roots) == 4, "all 4 roots for order 4 should be present, none collapsed away"
+
+
+def test_estimate_result_carries_cfo_alias_hypotheses():
+    f = _corpus_files("qpsk_10dB_*.wav")[0]
+    r = ingest(f)
+    result = estimate(r.iq, r.fs)
+    assert result.cfo_alias_hypotheses
+    assert any(abs(c) < 1.0 for c, _m, _s in result.cfo_alias_hypotheses)
 
 
 def test_result_hypotheses_are_ranked_descending():

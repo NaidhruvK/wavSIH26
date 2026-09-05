@@ -82,7 +82,25 @@ def if_histogram_features(x: np.ndarray, fs: float, bins: int = 60,
     of it separable from 2fsk/4fsk's real 2/4. Gating on envelope
     constancy first fixes it -- non-constant-envelope signals report
     peak_count=1 by definition rather than running a peak-finder on a
-    signal it was never meaningful for."""
+    signal it was never meaningful for.
+
+    5 Sep: tried removing this gate to fix 2fsk/4fsk sitting at 0%
+    live-classification accuracy below 10dB (see reports/s2_envelope.md),
+    on the theory that envelope_variance is already its own feature so
+    the classifier could learn the right cutoff contextually instead of a
+    fixed one. Measured, not assumed, and reverted: ungated,
+    test_if_hist_peak_count_matches_scheme started failing at 15dB
+    (qpsk/8psk/16qam picking up spurious peaks even well above the
+    original gate's design point), test_baseline_macro_f1_on_training_set
+    dropped below its regression floor, and the retrained classifier
+    regressed a previously-solid 4fsk-at-15dB case to 2fsk. Root cause is
+    the same crossover proven for s2_estimate's own 0.25 threshold in
+    reports/s2_envelope_study.py: FSK's noise-induced envelope variance at
+    4dB is numerically closer to "non-constant" than clean 20dB PSK/QAM's
+    is, so no single fixed threshold -- including "no threshold" -- can
+    get both ends of the SNR range right off this one statistic. Gate
+    restored; the 4-8dB gap stays open and documented rather than traded
+    for a >=10dB regression the night before CORE LOCK."""
     inst = _instantaneous_freq_hz(x, fs, med_k=1 if x.size < 32 else 11)
     if inst.size < 4 or np.allclose(inst, inst[0]):
         return 0.0, 1

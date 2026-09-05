@@ -1,0 +1,14 @@
+# core.autocrlf=true (repo default) corrupted models/classifier.txt on
+# checkout: it's a plain-text LightGBM model dump, git's heuristics see
+# "text" and apply LF->CRLF conversion, which mangled the line-based
+# format badly enough that LightGBM's parser read garbage ("Model format
+# error, expect a tree here" on load) -- even though the committed blob
+# itself was byte-for-byte fine (confirmed via `git show <rev>:<path>`,
+# which bypasses checkout filters). Marked -text/binary below so this
+# can't happen again, for anyone on the team, on any future clone or
+# checkout -- not just a local workaround. See STATUS.md.
+models/classifier.txt -text
+models/dataset_train.csv -text
+models/dataset_holdout.csv -text
+*.wav binary
+*.npy binary

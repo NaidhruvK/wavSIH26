@@ -218,6 +218,193 @@ the full eval harness is supposed to produce across all seven stages.
 Flagging again for standup — this is now the second stream (S2/S3
 already noted it) waiting on the same missing piece.
 
+**Landed 4 Sep, part 9.** The 4 Sep column: expanded corpus, classifier
+wired into live S2, per-scheme coverage matrix.
+
+- `zoo/build_rf_corpus.py` — 36 → **252 files** (6 schemes × 6 SNRs × 7
+  reps), toward the 250-file target. **Purely additive: the original 36
+  files are byte-identical** (hash-verified before and after — the first
+  rep keeps the original seed formula on purpose) so nothing that globs
+  or references the existing corpus by name breaks.
+- `models/classify.py` — serves `models/classifier.txt` in-process,
+  model loaded once. Bridges S2's native captures (arbitrary fs/sps) to
+  the classifier's training regime (4096 samples, fixed 8sps) by
+  resampling using **S2's own estimated symbol rate, not truth** —
+  `resample_window()`. Returns ranked top-3 hypotheses + a
+  `low_confidence` flag (<0.70) that folds the deterministic baseline's
+  guess in when the model isn't sure, per the ML spec's failure-handling
+  design.
+- `pipeline/s2_estimate.py::estimate()` — new `modulation_hypotheses` /
+  `modulation_low_confidence` fields, `classify=True` param. Import is
+  lazy (inside the call) because `models.features` imports from this
+  same module — a real circular-import risk, not a style choice.
+  Degrades to empty hypotheses rather than crashing S2 if
+  `models/classifier.txt` doesn't exist in a checkout (`FileNotFoundError`
+  caught explicitly).
+- `reports/s2_coverage_study.py` → `reports/s2_coverage.{csv,md}` — the
+  per-scheme coverage matrix, run through live `estimate()` across all
+  252 corpus files (not a held-out set — this is coverage on real
+  captures, complementary to `classifier_eval.md`'s held-out numbers).
+  **bpsk 100%, 16qam 100%, 8psk 95%, qpsk 79%** (the qpsk/8psk case the
+  baseline structurally cannot solve — the model gets it right on live
+  captures, including at 4-8dB where the holdout set didn't test it).
+  **2fsk 67%, 4fsk 17%** — both driven by known, already-diagnosed gaps:
+  2fsk is perfect ≥10dB / zero below it (the envelope-variance gate);
+  4fsk is perfect at *exactly* 10dB and wrong at 13-20dB, the same
+  decision-boundary artifact `classifier_eval.md` traced on the holdout
+  set — now confirmed on full-length live captures too, with the same
+  SNR pattern, which rules out the resampling bridge as the cause.
+- 8 new tests (`tests/unit/test_classify.py`), including one pinning the
+  4fsk gap and one confirming S2 degrades gracefully (doesn't crash) if
+  the model file is absent.
+
+**4 Sep column complete.**
+
+**Landed 4 Sep, part 10 — the 4fsk bug, actually fixed, and the earlier
+diagnosis corrected rather than quietly left wrong.** The "known gap"
+reported above was traced to the wrong root cause. Real one, found by
+testing the model against its own training rows: it scored **100% on
+the training data for the exact (scheme, SNR) cells it was failing on
+in holdout** — classic overfitting, not a missing or diluted feature.
+`if_hist_peak_count` was checked directly on the failing examples and
+was correctly 4.0 the whole time; the envelope-gate theory was
+plausible and wrong. Root cause: only 420 training windows per
+(scheme, SNR) cell, and some features cluster extremely tightly within
+a cell (`phase_diff_entropy` std as low as 0.013) — the unregularised
+tree fit a boundary tight enough that a differently-seeded holdout
+example landed outside it.
+
+**Fix: regularisation only, no feature or capacity changes** —
+`min_data_in_leaf=300`, `lambda_l2=5.0`,
+`bagging_fraction=feature_fraction=0.6` (`models/train.py`'s
+`LGB_PARAMS`, defined once and reused everywhere after the earlier
+stale-header lesson). Still `max_depth=5`, 200 trees — the plan's cap,
+untouched. **Macro-F1 at the one ≥10dB holdout point: 0.778 → 0.993**
+(exceeds even the "Exceptional" 95% tier). Overall holdout macro-F1:
+0.693 → 0.720. Live-corpus 4fsk coverage: 17% → 52%, now perfect at
+10–15dB. Confirmed deterministic across repeated training runs with
+bagging enabled (`num_threads=1, force_row_wise=True,
+deterministic=True`).
+
+**Not fully closed — a smaller, different residual, found only because
+the live corpus tests SNRs the holdout set never covered:** 4fsk at
+20dB is still wrong on 6/7 files. Qualitatively different from the
+original bug though — no longer a *confident* wrong answer (top pick
+0.4–0.8 vs. previously ~0.99), and 4fsk stays the #2 hypothesis at
+14–42% every time, so the ranked-hypothesis design still carries the
+right answer for S3/S4's rank test. Pinned by
+`test_classify_4fsk_residual_gap_at_20db` (asserts top-2, not top-1,
+since a 20dB coin-flip isn't worth pinning file-by-file).
+
+`reports/classifier_eval.md` and `reports/s2_coverage.md` both
+regenerated and corrected — the wrong original diagnosis is left
+visible in `classifier_eval.md` with a note explaining the correction,
+not deleted, since it's a real lesson about testing a model against
+its own training data before trusting a feature-level theory.
+
+Next: 5 Sep — concatenated CCSDS chain (Nehal's, not mine) and driving
+S2 accuracy down the SNR range / producing envelope charts (mine).
+
+**Out-of-band fix, reported by a teammate: `estimate_cfo` was reporting
+a false CFO of `Rs/M` on every clean file.** The classic M-th power
+spectral-line trap. Root cause: `z = z - np.mean(z)` before the FFT
+nulled the DC bin -- exactly where the true line sits when CFO is
+genuinely 0. With DC removed, `argmax` locked onto the next-strongest
+line instead, a symbol-rate-related cyclostationary artifact rather
+than the carrier. Confirmed on bpsk (false CFO = Rs/2), qpsk (Rs/4),
+8psk (Rs/8) — every file in the corpus has `cfo_norm=0.0` (see
+`zoo/rf.py`), so this was checkable directly against truth. **EVM
+doesn't catch this** (a residual phase ramp barely moves symbols off
+their decision regions), **but Stage 4's algebraic recovery does, since
+it has zero tolerance for any rotation** — which is exactly how the
+teammate found it: EVM looked fine, S4 recovery was completely broken.
+
+Fixed by not demeaning. Verified the true M now wins on SCORE, not just
+plausibility: on every modulation tested, the M matching the signal's
+own PSK order lands its peak at k=0 with a HIGHER score than any false
+alias — not a coincidental pick. **112/112 clean at ≥10dB across the
+full PSK/QAM corpus** (bpsk/qpsk/8psk/16qam × every rep × every SNR
+≥10dB), within 200Hz of true 0.
+
+Also, per the teammate's explicit request: `estimate_cfo` now returns a
+5th element, `cfo_alias_hypotheses` — every `m`-th root per order (not
+just the closest-to-zero pick `hyps` keeps for backward compat), with
+an explicit 0 Hz candidate guaranteed present even if no order's peak
+search happens to land there. `S2Result` gets a matching
+`cfo_alias_hypotheses` field. 6 new tests in
+`tests/unit/test_s2_estimate.py`, including one that checks the root
+cause (score, not just value) rather than just the symptom.
+
+**Found while fixing this: I ported the exact same bug from
+`tests/fixtures/local_s2.py`** (Nehal's 30 Aug stand-in) when I wrote
+the real module — it has the identical `z = z - np.mean(z)` line. That
+fixture is explicitly labelled "dies when pipeline/s2_estimate.py
+lands" and was supposed to be retired once my real module existed, but
+`tests/unit/test_s3_receive.py` still imports `estimate_blind` from it
+directly, not from `pipeline.s2_estimate`. **If the teammate who found
+this was testing through that path, the bug is still live there** —
+not touching `tests/fixtures/local_s2.py` myself (it's not mine), but
+flagging clearly, a fourth time now, that it needs to be deleted and
+repointed at the real module.
+
+**Also found and fixed, unrelated: `models/classifier.txt` was
+corrupted in my own local working tree** — `core.autocrlf=true` with no
+`.gitattributes` let git's LF→CRLF conversion mangle the LightGBM
+text-dump model on checkout (confirmed the committed blob itself was
+fine via `git show`; only checked-out copies broke). This would hit
+*any* teammate on Windows who clones or checks out this repo, not just
+me. Added `.gitattributes` marking `models/classifier.txt` and the
+dataset CSVs `-text` so it can't recur for anyone.
+
+### 5 Sep — driving S2 accuracy down the SNR range / envelope charts
+
+Root-caused (not just re-measured) the still-open gap flagged in
+`s2_coverage.md`: 2fsk/4fsk sit at 0% live-classification accuracy at
+4-8dB, while every other bin is solid. New report,
+`reports/s2_envelope_study.py` (writes `s2_envelope.{csv,md,png}`),
+plots the mechanism directly: both envelope-constancy gates in this
+codebase (`models.features.envelope_variance < 0.05`, and
+`pipeline.s2_estimate`'s own `std/mean < 0.25`) are noise-dominated at
+low SNR, and **FSK's noisiest in-scheme case (4dB) is numerically
+closer to "constant-envelope" than clean 20dB PSK/QAM is**, by both
+metrics. That's a hard crossover, not a tuning gap: no single fixed
+threshold on either statistic can get both ends of the SNR range right,
+proven with the actual corpus numbers in the report, not asserted.
+
+Tried fixing it anyway: removed the `models.features` gate (peak_count
+was being clamped to 1 for FSK below 10dB, discarding the one feature
+that matters most for it), on the theory the classifier could learn the
+cutoff contextually since `envelope_variance` already reaches it as its
+own feature. Ungated, real corpus windows at 8dB *do* stay separable
+(peak_count medians ~2/~5/~1 for 2fsk/4fsk/PSK-QAM) and the retrained
+holdout macro-F1 barely moved. But the full targeted test suite caught
+what that aggregate hid: `test_if_hist_peak_count_matches_scheme`
+started failing at 15dB (spurious peaks on qpsk/8psk/16qam — exactly
+what the original gate's docstring had already warned about),
+`test_baseline_macro_f1_on_training_set` dropped below its regression
+floor, and a previously-solid 4fsk-at-15dB classification flipped to
+2fsk. **Reverted.** Same root cause as the `s2_estimate` threshold:
+proven by measurement, not assumed, to be a genuine crossover this one
+scalar feature cannot resolve — not a threshold anyone picked badly.
+
+An SNR-adaptive threshold was the next idea and was rejected too:
+`pipeline.s1_detect.estimate_snr` is itself off by 8-23dB specifically
+for 4fsk (its own known, documented gap), so adaptively thresholding
+the exact class most affected on a broken SNR estimate trades one gap
+for a worse one. Left as a known, quantified, low-SNR-only gap,
+consistent with every gate in this project being anchored at ≥10dB —
+the tripwire's own bar. `models/features.py`'s docstring documents the
+attempt and the measured reason it didn't survive testing, same
+transparency as the 4fsk overfitting misdiagnosis correction in
+`classifier_eval.md`: a disproven hypothesis kept visible, not silently
+dropped. `models/dataset_train.csv`, `dataset_holdout.csv`,
+`classifier.txt`, `reports/classifier_eval.md` and `s2_coverage.md` were
+all regenerated during the experiment and regenerated back — confirmed
+byte-identical to what's already committed, so nothing here touches the
+live classifier.
+
+Nehal's concatenated CCSDS chain (5 Sep, not mine) not investigated.
+
 ---
 
 ## Anvith — S3 receiver chain
