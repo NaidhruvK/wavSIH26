@@ -57,7 +57,7 @@ try:
     from fastapi.responses import FileResponse as RealFileResponse, JSONResponse as RealJSONResponse
     try:
         from fastapi.testclient import TestClient as RealTestClient
-    except ImportError:
+    except (ImportError, RuntimeError):
         RealTestClient = None
     HAS_FASTAPI = True
 except ImportError:
@@ -141,6 +141,9 @@ class FallbackApp:
     def add_middleware(self, middleware_cls: Any, **options: Any) -> None:
         self.middlewares.append((middleware_cls, options))
 
+    def mount(self, path: str, app: Any, name: Optional[str] = None) -> None:
+        pass
+
     def get(self, path: str, status_code: int = 200, **kwargs: Any) -> Callable[..., Any]:
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             self.routes.append(("GET", path, fn, status_code))
@@ -183,7 +186,7 @@ if HAS_FASTAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -191,7 +194,7 @@ else:
     app.add_middleware(
         None,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -424,7 +427,14 @@ def get_run_report(run_id: str) -> dict[str, Any]:
             "bits_count": v.get("n_bytes", 0) * 8,
         }
 
-    status_val = job.status if job else (run_record.get("status", "completed") if run_record else "unknown")
+    db_status = run_record.get("status") if run_record else None
+    if db_status in ("completed", "failed"):
+        status_val = db_status
+    elif job:
+        status_val = job.status
+    else:
+        status_val = db_status or "completed"
+
     verdict_val = run_record.get("envelope_verdict", "pending") if run_record else "pending"
 
     return {
@@ -530,6 +540,25 @@ def get_artifact(run_id: str, artifact_name: str) -> Any:
 
 
 # =============================================================================
+# Frontend UI Static Files Mount
+# =============================================================================
+
+WEB_DIST_DIR = Path(__file__).resolve().parents[1] / "web" / "dist"
+
+if WEB_DIST_DIR.is_dir():
+    if HAS_FASTAPI:
+        try:
+            from fastapi.staticfiles import StaticFiles
+
+            app.mount("/", StaticFiles(directory=str(WEB_DIST_DIR), html=True), name="frontend")
+            logger.info("Mounted static frontend UI from %s", WEB_DIST_DIR)
+        except Exception as exc:
+            logger.warning("Failed to mount static frontend UI: %s", exc)
+    else:
+        app.mount("/", None, name="frontend")
+
+
+# =============================================================================
 # Universal Test Client
 # =============================================================================
 
@@ -559,6 +588,12 @@ class FallbackTestClient:
 
         fn, path_params, default_status = self._match_route("GET", url)
         if fn is None:
+            if WEB_DIST_DIR.is_dir():
+                clean_path = url.split("?")[0].lstrip("/")
+                target = WEB_DIST_DIR / ("index.html" if clean_path == "" else clean_path)
+                if target.is_file() and is_safe_artifact_path(WEB_DIST_DIR, target):
+                    media_type = "text/html" if target.suffix in (".html", "") else "application/octet-stream"
+                    return FallbackFileResponse(path=str(target), media_type=media_type, status_code=200)
             return FallbackResponse(content={"detail": "Not Found"}, status_code=404)
 
         try:

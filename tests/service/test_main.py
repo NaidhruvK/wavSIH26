@@ -244,6 +244,26 @@ class TestRestAPI(unittest.TestCase):
         resp_traversal2 = self.client.get(f"/runs/{run_id}/artifacts/../../etc/passwd")
         self.assertIn(resp_traversal2.status_code, (400, 403, 404))
 
+    def test_cors_configuration(self):
+        cors_found = False
+        if hasattr(app, "user_middleware"):
+            for m in app.user_middleware:
+                if "CORS" in getattr(m.cls, "__name__", ""):
+                    cors_found = True
+                    self.assertFalse(m.options.get("allow_credentials", False))
+        elif hasattr(app, "middlewares"):
+            for cls, opts in app.middlewares:
+                if cls is None or "CORS" in getattr(cls, "__name__", ""):
+                    cors_found = True
+                    self.assertFalse(opts.get("allow_credentials", False))
+        self.assertTrue(cors_found)
+
+    def test_static_files_served_at_root(self):
+        dist_index = Path(__file__).resolve().parents[2] / "web" / "dist" / "index.html"
+        if dist_index.is_file():
+            resp = self.client.get("/")
+            self.assertEqual(resp.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

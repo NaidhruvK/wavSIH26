@@ -22,6 +22,8 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.max_workers, 4)
         self.assertEqual(config.stage_timeout_seconds, 15.0)
         self.assertEqual(config.total_timeout_seconds, 90.0)
+        self.assertEqual(config.host, "0.0.0.0")
+        self.assertEqual(config.port, 8000)
 
     def test_ensure_directories(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -43,16 +45,34 @@ class TestConfig(unittest.TestCase):
             self.assertTrue(custom_config.db_path.parent.is_dir())
 
     def test_environment_override(self):
-        old_env = os.environ.get("RAAYA_STAGE_TIMEOUT")
+        old_stage = os.environ.get("RAAYA_STAGE_TIMEOUT")
+        old_host = os.environ.get("RAAYA_HOST")
+        old_port = os.environ.get("RAAYA_PORT")
         try:
             os.environ["RAAYA_STAGE_TIMEOUT"] = "25.5"
-            cfg = AppConfig(stage_timeout_seconds=float(os.environ["RAAYA_STAGE_TIMEOUT"]))
+            os.environ["RAAYA_HOST"] = "127.0.0.1"
+            os.environ["RAAYA_PORT"] = "9090"
+            cfg = AppConfig(
+                stage_timeout_seconds=float(os.environ["RAAYA_STAGE_TIMEOUT"]),
+                host=os.environ["RAAYA_HOST"],
+                port=int(os.environ["RAAYA_PORT"]),
+            )
             self.assertEqual(cfg.stage_timeout_seconds, 25.5)
+            self.assertEqual(cfg.host, "127.0.0.1")
+            self.assertEqual(cfg.port, 9090)
         finally:
-            if old_env is not None:
-                os.environ["RAAYA_STAGE_TIMEOUT"] = old_env
+            if old_stage is not None:
+                os.environ["RAAYA_STAGE_TIMEOUT"] = old_stage
             else:
                 os.environ.pop("RAAYA_STAGE_TIMEOUT", None)
+            if old_host is not None:
+                os.environ["RAAYA_HOST"] = old_host
+            else:
+                os.environ.pop("RAAYA_HOST", None)
+            if old_port is not None:
+                os.environ["RAAYA_PORT"] = old_port
+            else:
+                os.environ.pop("RAAYA_PORT", None)
 
 
 if __name__ == "__main__":

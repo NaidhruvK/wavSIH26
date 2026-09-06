@@ -45,7 +45,7 @@ def check_status() -> dict:
         except Exception:
             pass
 
-    service_files = ["config.py", "db.py", "mocks.py", "job_runner.py", "orchestrator.py", "main.py"]
+    service_files = ["config.py", "db.py", "mocks.py", "job_runner.py", "orchestrator.py", "main.py", "cli.py"]
     service_ok = all((REPO_ROOT / "service" / f).is_file() for f in service_files)
 
     pipeline_stages = {
@@ -62,6 +62,25 @@ def check_status() -> dict:
     docker_ok = (REPO_ROOT / "Dockerfile").is_file()
 
     test_files = list(REPO_ROOT.glob("tests/**/test_*.py"))
+
+    # Prevent re-entrant test execution if already running within a test runner
+    if os.environ.get("RAAYA_IN_TEST"):
+        return {
+            "branch": get_git_branch(),
+            "python_version": sys.version.split()[0],
+            "contracts_layer": contracts_ok,
+            "registry_layer": registry_ok,
+            "registry_counts": registry_details,
+            "service_layer": service_ok,
+            "pipeline_stages": pipeline_stages,
+            "web_layer": web_ok,
+            "docker_layer": docker_ok,
+            "total_test_files": len(test_files),
+            "runnable_tests_count": 0,
+            "runnable_tests_passed": True,
+            "failures_count": 0,
+            "errors_count": 0,
+        }
 
     # Discover and run runnable test suite (contracts + service)
     loader = unittest.TestLoader()
@@ -92,10 +111,14 @@ def check_status() -> dict:
     import logging
     prev_level = logging.root.manager.disable
     logging.disable(logging.CRITICAL)
+    os.environ["RAAYA_IN_TEST"] = "1"
+    devnull_stream = open(os.devnull, "w")
     try:
-        runner = unittest.TextTestRunner(stream=open(os.devnull, "w"))
+        runner = unittest.TextTestRunner(stream=devnull_stream)
         result = runner.run(suite)
     finally:
+        devnull_stream.close()
+        os.environ.pop("RAAYA_IN_TEST", None)
         logging.disable(prev_level)
 
     return {

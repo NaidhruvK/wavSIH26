@@ -26,6 +26,8 @@ class AppConfig:
     max_workers: int = int(os.environ.get("RAAYA_MAX_WORKERS", "4"))
     stage_timeout_seconds: float = float(os.environ.get("RAAYA_STAGE_TIMEOUT", "15.0"))
     total_timeout_seconds: float = float(os.environ.get("RAAYA_TOTAL_TIMEOUT", "90.0"))
+    host: str = os.environ.get("RAAYA_HOST", "0.0.0.0")
+    port: int = int(os.environ.get("RAAYA_PORT", "8000"))
 
     def ensure_directories(self) -> None:
         """Create required runtime directories safely."""

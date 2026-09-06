@@ -270,8 +270,7 @@ class TestE2EPipeline(unittest.TestCase):
             if resp.status_code == 200:
                 data = resp.json()
                 st = data.get("status", "").lower()
-                verdict = data.get("envelope_verdict", "").lower()
-                if st in ("completed", "failed") or verdict in ("in_envelope", "out_of_envelope", "failed"):
+                if st in ("completed", "failed"):
                     return data
             time.sleep(0.02)
         self.fail(f"Job {run_id} did not complete within {timeout_sec}s")
