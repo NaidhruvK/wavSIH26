@@ -45,7 +45,7 @@ def check_status() -> dict:
         except Exception:
             pass
 
-    service_files = ["config.py", "db.py", "mocks.py", "job_runner.py"]
+    service_files = ["config.py", "db.py", "mocks.py", "job_runner.py", "orchestrator.py"]
     service_ok = all((REPO_ROOT / "service" / f).is_file() for f in service_files)
 
     pipeline_stages = {
@@ -84,8 +84,14 @@ def check_status() -> dict:
                 except Exception:
                     pass
 
-    runner = unittest.TextTestRunner(stream=open(os.devnull, "w"))
-    result = runner.run(suite)
+    import logging
+    prev_level = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
+    try:
+        runner = unittest.TextTestRunner(stream=open(os.devnull, "w"))
+        result = runner.run(suite)
+    finally:
+        logging.disable(prev_level)
 
     return {
         "branch": get_git_branch(),

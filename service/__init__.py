@@ -27,6 +27,13 @@ from .job_runner import (
     submit_job,
 )
 from .mocks import make_mock_report, make_mock_stage_result
+from .orchestrator import (
+    compute_file_meta,
+    log_event,
+    orchestrate,
+    save_stage_artifact,
+    submit_analysis_job,
+)
 
 __all__ = [
     "AppConfig",
@@ -49,4 +56,9 @@ __all__ = [
     "run_stage_with_timeout",
     "make_mock_report",
     "make_mock_stage_result",
+    "orchestrate",
+    "submit_analysis_job",
+    "compute_file_meta",
+    "save_stage_artifact",
+    "log_event",
 ]
