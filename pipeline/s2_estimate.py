@@ -23,7 +23,7 @@ import numpy as np
 from scipy.signal import find_peaks, medfilt
 
 __all__ = ["S2Result", "estimate_symbol_rate", "estimate_symbol_rate_fsk",
-           "estimate_cfo", "estimate_fsk_order", "estimate"]
+           "estimate_cfo", "estimate_cfo_fsk", "estimate_fsk_order", "estimate"]
 
 
 def _next_pow2(n: int) -> int:
@@ -140,10 +140,110 @@ def estimate_symbol_rate_fsk(x: np.ndarray, fs: float,
     return rate, score, hyps
 
 
+def _instantaneous_freq_hz(x: np.ndarray, fs: float, med_k: int = 11) -> np.ndarray:
+    inst = np.diff(np.unwrap(np.angle(x))) / (2 * np.pi) * fs
+    return medfilt(inst, kernel_size=med_k)
+
+
+def _fsk_tone_peaks(inst: np.ndarray, bins: int = 60, smooth_k: int = 7,
+                     height_frac: float = 0.3
+                     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(peak bin indices, bin centres, smoothed histogram) of the
+    instantaneous-frequency histogram -- shared by estimate_fsk_order (peak
+    count -> order) and estimate_cfo_fsk (peak positions -> CFO), so the
+    two never see a different notion of "how many tones are there"."""
+    hist, edges = np.histogram(inst, bins=bins)
+    kernel = np.ones(smooth_k) / smooth_k
+    smooth = np.convolve(hist, kernel, mode="same")
+    peaks, _ = find_peaks(smooth, height=smooth.max() * height_frac,
+                           distance=max(2, bins // 15))
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    return peaks, centers, smooth
+
+
+def estimate_cfo_fsk(x: np.ndarray, fs: float, candidates: tuple[int, ...] = (2, 4),
+                      med_k: int = 11, bins: int = 60, smooth_k: int = 7,
+                      height_frac: float = 0.3
+                      ) -> tuple[float, int, float, list[tuple[float, int, float]],
+                                 list[tuple[float, int, float]]]:
+    """Carrier offset for constant-envelope (FSK) signals, by IF-tone centroid.
+
+    5 Sep, reported by a teammate: estimate_cfo's M-th-power line search
+    was being run on FSK signals too (estimate() called it unconditionally,
+    regardless of constant_envelope), and it is the wrong tool there -- an
+    M-FSK signal has no suppressed carrier for x**M to expose; it has M
+    discrete tones, and raising it to a power just mixes tone-spacing
+    products together. The result was every clean FSK file reporting
+    ~symbol_rate/2, the exact same alias-trap shape as the bug fixed in
+    426a780, but from an estimator that was never applicable to this
+    signal class in the first place, not a demeaning bug in an applicable
+    one. Measured effect, not just theory: this cost 4-FSK recovery
+    outright (correct without the CFO estimate applied, wrong with it) at
+    both 13 and 20dB, while 2-FSK happened to tolerate it.
+
+    Fix: an M-FSK signal's tones are, by construction, an evenly-spaced
+    ladder centred on zero IF (that centring is what "zero CFO" means for
+    FSK) -- so a real CFO shifts every tone by the same amount, and the
+    MEAN of the tone centres recovers exactly that shift, independent of
+    how many bits landed on each tone in this particular window. Reuses
+    _fsk_tone_peaks (same histogram estimate_fsk_order already computes,
+    so the two never disagree on how many tones are present), then refines
+    each coarse histogram-bin peak to the mean of the raw instantaneous-
+    frequency samples nearest it -- the coarse bin alone is too wide
+    (~fs/bins) to hit the sub-100Hz tolerance every other S2 gate uses.
+
+    Measured on the real RF corpus (tests/unit/test_s2_estimate.py): worst
+    case 85Hz across every 2fsk/4fsk file at >=10dB (was ~25000Hz, i.e.
+    symbol_rate/2, before this fix)."""
+    inst = _instantaneous_freq_hz(x, fs, med_k)
+    peaks, centers, smooth = _fsk_tone_peaks(inst, bins, smooth_k, height_frac)
+    default_order = candidates[0]
+
+    if peaks.size == 0:
+        return 0.0, default_order, 0.0, [], [(0.0, default_order, 0.0)]
+
+    coarse = np.sort(centers[peaks])
+    if coarse.size > 1:
+        boundaries = (coarse[:-1] + coarse[1:]) / 2.0
+        bucket = np.searchsorted(boundaries, inst)
+        refined = np.array([
+            float(inst[bucket == i].mean()) if np.any(bucket == i) else float(coarse[i])
+            for i in range(coarse.size)
+        ])
+    else:
+        refined = coarse
+
+    cfo = float(np.mean(refined))
+    n_peaks = int(peaks.size)
+    order_hyps = sorted(
+        ((c, 1.0 / (1.0 + abs(n_peaks - c))) for c in candidates),
+        key=lambda h: h[1], reverse=True,
+    )
+    order_m = order_hyps[0][0]
+    score = float(np.mean(smooth[peaks]) / (np.median(smooth) + 1e-30))
+
+    hyps = [(cfo, order_m, score)]
+    all_aliases = list(hyps)
+    if abs(cfo) >= 1.0:
+        all_aliases.append((0.0, order_m, 0.0))
+    return cfo, order_m, score, hyps, all_aliases
+
+
 def estimate_cfo(x: np.ndarray, fs: float, orders: tuple[int, ...] = (2, 4, 8)
                   ) -> tuple[float, int, float, list[tuple[float, int, float]],
                              list[tuple[float, int, float]]]:
     """Carrier offset by M-th power line search, ranked over every M tried.
+
+    LINEAR (non-constant-envelope) modulations only -- see estimate_cfo_fsk
+    for FSK. 5 Sep, reported by a teammate: estimate() was calling this
+    unconditionally, on FSK captures too. It does not apply there: raising
+    an M-FSK signal to the M-th power has no suppressed carrier to expose
+    (FSK has M discrete tones, not one x**M-invariant carrier under a
+    memoryless nonlinearity), so it locks onto a tone-spacing artifact
+    instead -- every clean FSK file reported ~symbol_rate/2, the exact
+    alias shape the 426a780 fix solved for PSK/QAM, but from an estimator
+    that was never the right tool for this signal class to begin with.
+    Now routed by constant_envelope in estimate() instead.
 
     Raising an M-PSK signal to the M-th power strips the data modulation
     and leaves a tone at M times the carrier offset. Whichever M produces
@@ -226,13 +326,8 @@ def estimate_fsk_order(x: np.ndarray, fs: float, candidates: tuple[int, ...] = (
     tuned by sweeping against this corpus, not guessed.
     """
     x = np.asarray(x, dtype=np.complex128)
-    inst = np.diff(np.unwrap(np.angle(x))) / (2 * np.pi) * fs
-    inst = medfilt(inst, kernel_size=med_k)
-    hist, edges = np.histogram(inst, bins=bins)
-    kernel = np.ones(smooth_k) / smooth_k
-    smooth = np.convolve(hist, kernel, mode="same")
-    peaks, _ = find_peaks(smooth, height=smooth.max() * height_frac,
-                           distance=max(2, bins // 15))
+    inst = _instantaneous_freq_hz(x, fs, med_k)
+    peaks, _centers, _smooth = _fsk_tone_peaks(inst, bins, smooth_k, height_frac)
     n_peaks = max(len(peaks), 1)
 
     hyps = sorted(
@@ -271,10 +366,10 @@ def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None,
 
         if constant_envelope:
             rate, rate_score, rate_hyps = estimate_symbol_rate_fsk(iq, fs)
+            cfo, order_m, cfo_score, cfo_hyps, cfo_alias_hyps = estimate_cfo_fsk(iq, fs)
         else:
             rate, rate_score, rate_hyps = estimate_symbol_rate(iq, fs)
-
-        cfo, order_m, cfo_score, cfo_hyps, cfo_alias_hyps = estimate_cfo(iq, fs)
+            cfo, order_m, cfo_score, cfo_hyps, cfo_alias_hyps = estimate_cfo(iq, fs)
 
         fsk_order = fsk_order_score = None
         fsk_order_hyps: list = []

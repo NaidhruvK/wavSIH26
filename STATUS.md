@@ -405,6 +405,63 @@ live classifier.
 
 Nehal's concatenated CCSDS chain (5 Sep, not mine) not investigated.
 
+### 5 Sep, later — second CFO bug from the same teammate: FSK was never fixed
+
+The teammate who found the 426a780 M-th-power alias bug came back with a
+sharper finding: `estimate_cfo`'s fix was correct, but `estimate()` was
+calling it unconditionally — on FSK captures too, which it was never
+meant for. Measured independently by the teammate across the corpus:
+
+| scheme | files | \|CFO err\| ≥ 100 Hz |
+|---|---|---|
+| bpsk/qpsk/8psk/16qam | 112 | 0 |
+| 2fsk | 28 | 28 |
+| 4fsk | 28 | 28 |
+
+**My own "112/112" claim in the 426a780 writeup was exactly this —
+4 of 6 modulation families, silently reported as if it were all six.**
+The 56 FSK files were never in that count and were still reporting the
+same ~symbol_rate/2 false CFO the whole time. Same mistake shape as the
+qpsk/8psk-only test list catching me out earlier this session with the
+envelope gate, and worth naming plainly rather than letting "112/112"
+stand uncorrected in the historical record above.
+
+Root cause, confirmed by reading the code the teammate pointed at: an
+M-FSK signal has no suppressed carrier for `x**M` to expose — it has M
+discrete tones — so `estimate_cfo`'s M-th-power line search locks onto a
+tone-spacing artifact instead of anything carrier-related. Not a bug in
+an applicable estimator (that was 426a780); an inapplicable estimator
+being run at all. **Measured downstream cost, not just theory:** the
+teammate ran 4-FSK recovery with and without the CFO estimate applied —
+succeeds without it, fails with it, at both 13dB and 20dB.
+
+Fix: new `estimate_cfo_fsk`, an IF-tone centroid estimator. An M-FSK
+tone ladder is symmetric about zero IF by construction (that symmetry
+*is* what zero CFO means for FSK), so the mean of the M tone centres
+recovers a real CFO shift directly, independent of which tones a given
+window's bits happened to visit. Refines each coarse histogram-bin peak
+(too wide alone, ~fs/60) to the mean of the raw instantaneous-frequency
+samples nearest it. Shares its tone-detection step
+(`_fsk_tone_peaks`) with `estimate_fsk_order` so the two can never
+disagree on tone count. `estimate()` now routes to it by
+`constant_envelope`, same pattern already used for symbol-rate
+selection.
+
+**Validated per scheme, not pooled — the exact fix the teammate asked
+for:** all six modulation families now report \|CFO\| < 100Hz at ≥10dB
+through the real `estimate()` entry point: bpsk/qpsk/8psk/16qam exact
+(0.0Hz — the M-th-power line lands precisely at k=0), 2fsk worst-case
+54.9Hz, 4fsk worst-case 84.5Hz (was ~25000Hz for both, unconditionally,
+before this fix). New tests assert per-scheme, including one that runs
+`estimate()` itself rather than either estimator directly, specifically
+so a future partial fix can't be miscounted as complete again.
+
+Teammate's second, smaller ask — a zoo corpus file for the full
+concatenated CCSDS profile (RS outer → byte-level interleaver, depth
+I∈1..8 → randomiser → convolutional inner, in the real standard's order,
+not `tests/fixtures/local_zoo.make_ccsds_stream`'s bit-level stand-in) —
+not started yet, next up.
+
 ---
 
 ## Anvith — S3 receiver chain
