@@ -1,0 +1,39 @@
+{
+  "scheme": "qpsk",
+  "fs": 200000.0,
+  "sps": 4,
+  "beta": 0.35,
+  "snr_db": 10.0,
+  "cfo_norm": 0.0,
+  "phase_rad": 0.0,
+  "timing_offset_sym": 0.0,
+  "seed": 9004,
+  "n_bits_used": 130572,
+  "payload_n_bytes": 7136,
+  "rs": {
+    "n": 255,
+    "k": 223
+  },
+  "interleave_depth": 4,
+  "scrambler": {
+    "family": "lfsr",
+    "poly_octal": 285,
+    "seed_state": 255
+  },
+  "code": {
+    "family": "conv",
+    "rate": "1/2",
+    "K": 7,
+    "polys_octal": [
+      121,
+      91
+    ],
+    "poly_notation": "octal"
+  },
+  "pipeline_order": [
+    "rs_encode",
+    "byte_interleave",
+    "randomise",
+    "conv_encode"
+  ]
+}

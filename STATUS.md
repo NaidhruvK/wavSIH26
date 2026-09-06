@@ -405,6 +405,155 @@ live classifier.
 
 Nehal's concatenated CCSDS chain (5 Sep, not mine) not investigated.
 
+### 5 Sep, later — second CFO bug from the same teammate: FSK was never fixed
+
+The teammate who found the 426a780 M-th-power alias bug came back with a
+sharper finding: `estimate_cfo`'s fix was correct, but `estimate()` was
+calling it unconditionally — on FSK captures too, which it was never
+meant for. Measured independently by the teammate across the corpus:
+
+| scheme | files | \|CFO err\| ≥ 100 Hz |
+|---|---|---|
+| bpsk/qpsk/8psk/16qam | 112 | 0 |
+| 2fsk | 28 | 28 |
+| 4fsk | 28 | 28 |
+
+**My own "112/112" claim in the 426a780 writeup was exactly this —
+4 of 6 modulation families, silently reported as if it were all six.**
+The 56 FSK files were never in that count and were still reporting the
+same ~symbol_rate/2 false CFO the whole time. Same mistake shape as the
+qpsk/8psk-only test list catching me out earlier this session with the
+envelope gate, and worth naming plainly rather than letting "112/112"
+stand uncorrected in the historical record above.
+
+Root cause, confirmed by reading the code the teammate pointed at: an
+M-FSK signal has no suppressed carrier for `x**M` to expose — it has M
+discrete tones — so `estimate_cfo`'s M-th-power line search locks onto a
+tone-spacing artifact instead of anything carrier-related. Not a bug in
+an applicable estimator (that was 426a780); an inapplicable estimator
+being run at all. **Measured downstream cost, not just theory:** the
+teammate ran 4-FSK recovery with and without the CFO estimate applied —
+succeeds without it, fails with it, at both 13dB and 20dB.
+
+Fix: new `estimate_cfo_fsk`, an IF-tone centroid estimator. An M-FSK
+tone ladder is symmetric about zero IF by construction (that symmetry
+*is* what zero CFO means for FSK), so the mean of the M tone centres
+recovers a real CFO shift directly, independent of which tones a given
+window's bits happened to visit. Refines each coarse histogram-bin peak
+(too wide alone, ~fs/60) to the mean of the raw instantaneous-frequency
+samples nearest it. Shares its tone-detection step
+(`_fsk_tone_peaks`) with `estimate_fsk_order` so the two can never
+disagree on tone count. `estimate()` now routes to it by
+`constant_envelope`, same pattern already used for symbol-rate
+selection.
+
+**Validated per scheme, not pooled — the exact fix the teammate asked
+for:** all six modulation families now report \|CFO\| < 100Hz at ≥10dB
+through the real `estimate()` entry point: bpsk/qpsk/8psk/16qam exact
+(0.0Hz — the M-th-power line lands precisely at k=0), 2fsk worst-case
+54.9Hz, 4fsk worst-case 84.5Hz (was ~25000Hz for both, unconditionally,
+before this fix). New tests assert per-scheme, including one that runs
+`estimate()` itself rather than either estimator directly, specifically
+so a future partial fix can't be miscounted as complete again.
+
+Teammate's second, smaller ask — a zoo corpus file for the full
+concatenated CCSDS profile (RS outer → byte-level interleaver, depth
+I∈1..8 → randomiser → convolutional inner, in the real standard's order,
+not `tests/fixtures/local_zoo.make_ccsds_stream`'s bit-level stand-in) —
+not started yet, next up.
+
+### 6 Sep, CORE LOCK — the third finding from the same teammate, a real CCSDS corpus file, and the system envelope
+
+**Third finding, same teammate, same file, restated three times across the
+morning** (the earlier fix had already shipped — 55cb628 — each time; the
+last two messages were the identical bug report, verified against a repo
+state that already had the fix). Confirmed on the current `origin` tip
+both times: 56/56 FSK + 112/112 linear = 168/168, no drift.
+
+**Their second ask: a real CCSDS corpus file.** `zoo/ccsds.py` implements
+the actual CCSDS 131.0-B transmit order — RS(255,223) outer → BYTE-level
+interleaving across `depth` consecutive codewords (a real transpose of
+the codeword matrix, not `tests/fixtures/local_zoo.make_ccsds_stream`'s
+bit-level interleave-then-randomise-after, which that file's own
+docstring already flags as non-standard) → the CCSDS pseudo-randomiser →
+the rate-1/2 K=7 convolutional inner code. Verified correct in isolation
+before any WAV file was built on top of it: `tests/unit/test_ccsds.py`
+round-trips the full chain over a clean channel for interleave depths
+1/4/8, plus a dedicated test that a contiguous transmitted burst really
+does spread across `depth` different codewords (the entire reason to
+interleave a burst channel ahead of a block code).
+
+Written to `zoo/corpus/ccsds/`, deliberately **not** `zoo/corpus/rf/`:
+every existing corpus-wide test (including today's own
+`reports/envelope_study.py`) globs `rf/*dB_*.wav` and regenerates ground
+truth via `zoo.bits_only.make_stream`'s single-code schema — dropping a
+differently-coded file in there would silently corrupt every one of
+those measurements, without any of them having been wrong to assume what
+they assumed about that directory. 8 files across 4 modulations, 3
+SNRs, 3 interleave depths; `zoo/build_ccsds_corpus.py` regenerates them.
+
+**Verified through the real RF channel, not just abstractly:** on the
+cleanest file (qpsk, 20dB, depth 1), S2 estimates the exact symbol rate
+and CFO=0.0 blind, S3 demodulates to a bitstream that matches the true
+coded stream **128344/128344** bits exactly once aligned, and Viterbi-
+decoding S3's real output matches Viterbi-decoding the true reference
+bits **64166/64166** exactly. What is *not* done: full RS-decode through
+the real channel, which needs a byte-alignment search across a
+non-conv-encoder-aligned bit offset from RRC filter edge transients —
+that is a frame-synchronization problem, which is Nehal's/Anvith's
+blind-recovery territory (S3/S4-S6), not something folded into the
+corpus generator. The corpus file's validity and decodability are
+proven; wiring a blind receiver to actually find that alignment is the
+next person's job, same ownership boundary as everywhere else in this
+project.
+
+**`reports/envelope.md` drafted, per the 6 Sep plan's block B/C/D** ("SNR
+floor and BER ceiling per modulation, stated as numbers", "commit the
+report and its charts together"). `reports/envelope_study.py` is the
+first measurement in this project to run S0→S1→S2 (mine, truly blind —
+S2's own `estimate()`, not the channel's true parameters) into S3
+(Anvith's, via the registry, exactly the way a real orchestrator would
+call it) across all six modulations and the full 252-file corpus, and
+score raw BER against the exact source bits each file's seed reproduces
+deterministically. Every prior cross-stage number (`s3_s4_junction.md`)
+fed S3 the channel's TRUE symbol rate directly, by design, to isolate
+the S3/S4 junction from S2 error — a fine choice for that question, but
+it meant no report on record said what S2's *actual* estimate costs
+end-to-end. This one does:
+
+| scheme | SNR floor (zero raw BER) |
+|---|---|
+| bpsk | 8 dB |
+| qpsk | 8 dB |
+| 8psk | 13 dB |
+| 16qam | 20 dB |
+| 2fsk | 10 dB |
+| 4fsk | 10 dB |
+
+Caught and fixed a bug in my own measurement script before trusting these
+numbers: `low_confidence` S3 results (a real LLR output, just an
+unlocked-carrier flag) were being scored identically to a hard failure
+(sentinel BER of 1.0) — findable because it's the same "distinguish a
+real answer from a can't-answer" mistake this project keeps having to
+correct itself on (the `test_cfo_alias_hypotheses_cover_every_alias_per_order`
+scoring mixup, 5 Sep; the 4fsk overfitting misdiagnosis, 3 Sep). Fixed
+to score `low_confidence` for real and use `NaN` (not a fake `1.0`) for
+genuine non-measurements, which also surfaced a second thing worth
+stating plainly rather than treating as noise: **2fsk/4fsk below 10dB
+report raw BER ≈0.48-0.63 (chance), not because today's CFO fix
+regressed** — confirmed directly (`estimate('4fsk_4dB_...')` still
+returns `constant_envelope=False`) — **but because the SAME envelope-gate
+crossover documented in `reports/s2_envelope.md` yesterday misroutes
+those files to the linear CFO estimator below 10dB, so they never reach
+`estimate_cfo_fsk` at all below that line.** One root cause, two
+symptoms (classifier accuracy yesterday, raw BER today), left open both
+times for the same measured reason: no fixed threshold on that statistic
+can get both ends of the SNR range right, and this project's targets are
+anchored at ≥10dB everywhere else too.
+
+`models/classifier.txt` frozen this morning per the 6 Sep plan, config
+hash `132fc1d21777` unchanged since 3 Sep — no retraining today.
+
 ---
 
 ## Anvith — S3 receiver chain

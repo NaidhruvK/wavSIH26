@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from pipeline.s0_ingest import ingest
-from pipeline.s2_estimate import estimate, estimate_cfo, estimate_fsk_order
+from pipeline.s2_estimate import estimate, estimate_cfo, estimate_cfo_fsk, estimate_fsk_order
 
 CORPUS = Path(__file__).resolve().parents[2] / "zoo" / "corpus" / "rf"
 
@@ -110,7 +110,12 @@ def test_cfo_zero_on_clean_files(scheme):
     genuinely 0. Every file in this corpus has cfo_norm=0.0 (see
     zoo/rf.py), so this is checkable directly against truth, not just
     plausibility. Tolerance is loose (100 Hz) because this is a spectral
-    peak estimate, not exact arithmetic."""
+    peak estimate, not exact arithmetic.
+
+    LINEAR modulations only -- estimate_cfo is the M-th-power-line
+    estimator, which has no meaning for FSK (see
+    test_cfo_fsk_zero_on_clean_files and estimate_cfo_fsk's docstring for
+    the FSK path and the second bug found in this same area)."""
     for f in _corpus_files(f"{scheme}_*dB_*.wav"):
         truth = json.loads(f.with_suffix(".json").read_text())
         if truth["snr_db"] < 10:
@@ -122,6 +127,56 @@ def test_cfo_zero_on_clean_files(scheme):
             f"Rs/order_m would be {r.fs / truth['sps'] / order_m:.1f} Hz, "
             "check for the demean-before-FFT regression"
         )
+
+
+@pytest.mark.parametrize("scheme", ["2fsk", "4fsk"])
+def test_cfo_fsk_zero_on_clean_files(scheme):
+    """5 Sep, reported by a teammate: estimate() ran the M-th-power line
+    search (estimate_cfo) on FSK captures too, unconditionally. That
+    estimator has no meaning for FSK -- there is no suppressed carrier
+    for x**M to expose, only M discrete tones -- and it locked onto a
+    tone-spacing artifact instead: every clean 2fsk/4fsk file reported
+    ~symbol_rate/2 (e.g. 25000 Hz on this corpus's 50000 Hz-symbol-rate
+    files), identical in shape to the bug 426a780 fixed for PSK/QAM but
+    from an inapplicable estimator, not a demeaning bug in an applicable
+    one. The teammate also measured real downstream cost: 4-FSK recovery
+    succeeded WITHOUT this CFO estimate applied and failed WITH it, at
+    both 13 and 20dB.
+
+    estimate_cfo_fsk (IF-tone centroid) is the fix, verified against the
+    same 100Hz tolerance every other S2 CFO gate in this project uses."""
+    for f in _corpus_files(f"{scheme}_*dB_*.wav"):
+        truth = json.loads(f.with_suffix(".json").read_text())
+        if truth["snr_db"] < 10:
+            continue
+        r = ingest(f)
+        cfo, order_m, score, hyps, aliases = estimate_cfo_fsk(r.iq, r.fs)
+        assert abs(cfo) < 100, (
+            f"{f.name}: measured CFO {cfo:.1f} Hz, expected ~0 -- "
+            f"symbol_rate/2 would be {r.fs / truth['sps'] / 2:.1f} Hz, "
+            "check estimate_cfo_fsk's tone-centroid refinement"
+        )
+
+
+@pytest.mark.parametrize("scheme", ["bpsk", "qpsk", "8psk", "16qam", "2fsk", "4fsk"])
+def test_estimate_cfo_zero_on_clean_files_all_six_schemes(scheme):
+    """Per the teammate's explicit ask: validate through the actual
+    estimate() entry point, reported per scheme, so a fix covering 4 of 6
+    modulation families is never again reported as if it covered all six
+    -- that is exactly the shape of the mistake in this fix's own first
+    round (426a780's "112/112" was 4 linear schemes only; the 56 FSK
+    files were never in that count, and still failed with the false
+    Rs/2 CFO). This test runs estimate() itself (constant_envelope=None,
+    the real routing decision), not either estimator directly, so it
+    would have caught the original miscount."""
+    for f in _corpus_files(f"{scheme}_*dB_*.wav"):
+        truth = json.loads(f.with_suffix(".json").read_text())
+        if truth["snr_db"] < 10:
+            continue
+        r = ingest(f)
+        result = estimate(r.iq, r.fs, classify=False)
+        assert result.status == "ok"
+        assert abs(result.cfo_hz) < 100, f"{f.name}: measured CFO {result.cfo_hz:.1f} Hz"
 
 
 def test_cfo_true_peak_score_beats_false_alias():
@@ -162,6 +217,46 @@ def test_cfo_alias_hypotheses_cover_every_alias_per_order():
     _cfo, _m, _score, hyps, aliases = estimate_cfo(r.iq, r.fs, orders=(4,))
     real_roots = [a for a in aliases if a[2] > 0.0]
     assert len(real_roots) == 4, "all 4 roots for order 4 should be present, none collapsed away"
+
+
+def test_cfo_fsk_order_matches_fsk_order_hint():
+    """estimate_cfo_fsk and estimate_fsk_order share the same tone-peak
+    detector (_fsk_tone_peaks) precisely so they can never disagree on
+    how many tones are present -- check that shared assumption holds,
+    not just that each function works in isolation."""
+    for scheme, expected in [("2fsk", 2), ("4fsk", 4)]:
+        f = _corpus_files(f"{scheme}_15dB_*.wav")[0]
+        r = ingest(f)
+        _cfo, order_m, _score, _hyps, _aliases = estimate_cfo_fsk(r.iq, r.fs)
+        fsk_order, _s, _h = estimate_fsk_order(r.iq, r.fs)
+        assert order_m == fsk_order == expected
+
+
+def test_cfo_fsk_alias_hypotheses_include_zero():
+    """Same defensive guarantee as the linear-modulation path
+    (test_cfo_alias_hypotheses_include_zero): 0 Hz must always be an
+    available candidate, even if the tone-centroid estimate itself lands
+    away from zero on some future edge case."""
+    f = _corpus_files("2fsk_15dB_*.wav")[0]
+    r = ingest(f)
+    _cfo, _m, _score, _hyps, aliases = estimate_cfo_fsk(r.iq, r.fs)
+    assert any(abs(c) < 1.0 for c, _m, _s in aliases)
+
+
+def test_estimate_routes_fsk_to_estimate_cfo_fsk():
+    """The actual bug: estimate() used to call estimate_cfo unconditionally.
+    Confirm the routing by constant_envelope now happens -- an FSK file's
+    result.cfo_hz must come from the tone-centroid path (small residual),
+    not the M-th-power path (which would report ~symbol_rate/2 here)."""
+    f = _corpus_files("4fsk_15dB_*.wav")[0]
+    truth = json.loads(f.with_suffix(".json").read_text())
+    r = ingest(f)
+    result = estimate(r.iq, r.fs, classify=False)
+    assert result.constant_envelope is True
+    false_alias_hz = r.fs / truth["sps"] / 2
+    assert abs(result.cfo_hz) < 100
+    assert abs(result.cfo_hz - false_alias_hz) > 1000, \
+        "result.cfo_hz looks like it came from the M-th-power path, not estimate_cfo_fsk"
 
 
 def test_estimate_result_carries_cfo_alias_hypotheses():
