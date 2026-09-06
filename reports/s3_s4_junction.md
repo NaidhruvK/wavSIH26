@@ -1,6 +1,6 @@
 # The S3 to S4 junction, measured
 
-**Anvith, 3 Sep.** Real demodulator output into Stage 4 for the first time. Every prior ceiling was measured against injected errors; this one is not.
+**Anvith, 3 Sep. Re-measured 5 Sep** after the lock-threshold, acquisition and rate-rescue changes, because this is the boundary Nehal's stages consume and a stale one is worse than none. **Every number in the summary below is unchanged** - only per-rotation intermediates in the CSV moved - so the S3 output S4 sees is the same shape it was. Real demodulator output into Stage 4 for the first time. Every prior ceiling was measured against injected errors; this one is not.
 
 Stream: 120 000 source bits, rate 1/2 K=7, generators 0o171/0o133, no scrambler, and **no injected errors** - every error below was made by the receiver. Two arms, identical but for the interleaver: one block interleaved 8x12 (period 96), one with none at all, so a failure can be attributed to the interleaver or to the code rather than to the junction as a whole.
 
@@ -15,11 +15,11 @@ Stream: 120 000 source bits, rate 1/2 K=7, generators 0o171/0o133, no scrambler,
 | interleaved | bpsk | 1 dB | 0.754 | 0.00078 | 0.00116 | 1.00 | 0/2 | 0 |
 | interleaved | qpsk | 10 dB | 0.898 | 0.00000 | 0.00000 | 0.00 | 2/4 | 0 |
 | interleaved | qpsk | 6 dB | 0.761 | 0.00012 | 0.00005 | 1.00 | 0/4 | 0 |
-| interleaved | qpsk | 5 dB | 0.707 | 0.00025 | 0.00024 | 1.00 | 0/4 | 0 |
-| interleaved | qpsk | 4 dB | 0.644 | 0.00097 | 0.00097 | 1.00 | 0/4 | 0 |
+| interleaved | qpsk | 5 dB | 0.707 | 0.00025 | 0.00025 | 1.00 | 0/4 | 0 |
+| interleaved | qpsk | 4 dB | 0.644 | 0.00098 | 0.00096 | 1.00 | 0/4 | 0 |
 | no-interleaver | qpsk | 10 dB | 0.894 | 0.00000 | 0.00000 | 0.00 | 2/4 | 2 |
-| no-interleaver | qpsk | 5 dB | 0.699 | 0.00022 | 0.00026 | 1.00 | 2/4 | 2 |
-| no-interleaver | qpsk | 3 dB | 0.562 | 0.00293 | 0.00282 | 1.00 | 2/4 | 2 |
+| no-interleaver | qpsk | 5 dB | 0.699 | 0.00020 | 0.00026 | 1.00 | 2/4 | 2 |
+| no-interleaver | qpsk | 3 dB | 0.562 | 0.00297 | 0.00282 | 1.00 | 2/4 | 2 |
 
 ## What this says
 
@@ -27,7 +27,7 @@ Stream: 120 000 source bits, rate 1/2 K=7, generators 0o171/0o133, no scrambler,
 
 With the 8x12 interleaver, the highest raw BER from which recovery still succeeded was **0.00000** - which is to say it needs the stream to be exact. The first errors that appear, at 1.2e-4, take it to zero.
 
-Without the interleaver, on the same bits through the same receiver, the code comes back correctly at a raw BER of **0.00293**, via the statistical fallback. That is close to the 0.30 % independent-error ceiling `ber_ceiling.md` already records - reached here with real demodulator errors rather than injected ones.
+Without the interleaver, on the same bits through the same receiver, the code comes back correctly at a raw BER of **0.00297**, via the statistical fallback. That is close to the 0.30 % independent-error ceiling `ber_ceiling.md` already records - reached here with real demodulator errors rather than injected ones.
 
 This confirms Nehal's documented open problem (recovering the interleaver's depth x width fails at any non-zero BER) from the other side of the junction. **The consequence for the demo envelope: the full chain needs an SNR high enough for ZERO raw bit errors, not merely a low BER.** For QPSK on this stream that is about 8-10 dB.
 
@@ -55,6 +55,6 @@ A rotation carrying no recoverable structure is the expensive case: the statisti
 
 ## Method
 
-`tests/fixtures/rf_channel.py` takes Nehal's `local_zoo.make_stream()` output, modulates it, and puts it through noise, a carrier offset and a fractional timing offset. S3 demodulates blind, from S2-shaped parameters only. The resulting LLRs go to `blind_recover()` unchanged. Regenerate with `python reports/s3_s4_junction_study.py`; re-render this file from the CSV with `--render-only`.
+`zoo.rf.through_channel` takes coded bits, modulates them, and puts them through noise, a carrier offset and a fractional timing offset (4 Sep: this was `tests/fixtures/rf_channel.py`, a stand-in, now deleted in favour of Dheeraj's real modulator). S3 demodulates blind, from S2-shaped parameters only. The resulting LLRs go to `blind_recover()` unchanged. Regenerate with `python reports/s3_s4_junction_study.py`; re-render this file from the CSV with `--render-only`.
 
 Measured on Python 3.12 with scipy 1.18.0, **not** the pinned 3.11.9 / 1.17.1. Nehal's 225 tests pass on this interpreter, but these numbers are not yet byte-comparable with the S4 reports.

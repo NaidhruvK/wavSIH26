@@ -21,7 +21,36 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
-__all__ = ["S2Params", "ModulationPlugin"]
+__all__ = ["S2Params", "ModulationPlugin", "unusable_reason"]
+
+
+def unusable_reason(p: "S2Params") -> str | None:
+    """Why these parameters cannot be used, or None if they can.
+
+    4 Sep. `estimate_symbol_rate` returns `float("nan")` when it finds no
+    in-band peak, so NaN is a value S2 really produces and really hands over -
+    it is not a synthetic case. It used to travel all the way to
+    `rrc_taps`, where `int(round(span * sps))` raised
+    `ValueError: cannot convert float NaN to integer`. The catch-all in
+    `receive()` turned that into a `failed` with the exception text as its
+    reason, so nothing crashed and nobody could tell what had happened either.
+
+    A comparison against NaN is False, which is why none of the ordinary bounds
+    caught it: `nan <= 0`, `nan < 2.0` and `nan > x` are all False, so an
+    unusable number walks through every guard written as an inequality. Non-
+    finite values have to be excluded by name.
+    """
+    if not np.isfinite(p.fs) or p.fs <= 0:
+        return f"sample rate {p.fs} is not a usable number"
+    if not np.isfinite(p.symbol_rate) or p.symbol_rate <= 0:
+        return (f"S2 reports a symbol rate of {p.symbol_rate}, which is not a "
+                "usable number - it had no in-band peak to report")
+    if not np.isfinite(p.cfo_hz):
+        return f"S2 reports a carrier offset of {p.cfo_hz}"
+    if p.beta is not None and (not np.isfinite(p.beta)
+                               or not 0.0 < p.beta <= 1.0):
+        return f"roll-off {p.beta} is outside (0, 1]"
+    return None
 
 
 @dataclass

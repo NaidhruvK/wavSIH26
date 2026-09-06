@@ -22,6 +22,19 @@ The output contract, which S4 and S5 depend on:
 
 `receive()` returns the same LLRs inside an S3Result with the diagnostics
 attached. See result.py for why there are two entry points.
+
+4 Sep adds a third, above both:
+
+    receive_best(iq, params) -> S3Result   (search.py)
+
+`receive()` answers "here is what happened when I tried the hypothesis you gave
+me". `receive_best()` answers "here is the best I could do across the ranked
+hypotheses S2 actually produced", which is a different question and the one an
+orchestrator wants. It screens candidates with `lockcheck` before spending a
+chain run on them, so trying the whole registry product stays bounded.
+
+Also 4 Sep: `status` is no longer one threshold on one number. `lockcheck.py`
+has the measurement that made that necessary.
 """
 from __future__ import annotations
 
@@ -40,16 +53,22 @@ from .filters import (estimate_occupied_band, estimate_rolloff, matched_filter,
 from .fsk import FSKResult, estimate_tones, fsk_demod_noncoherent
 from .fsk_plugin import FSKDemod
 from .linear import LinearDemod
+from .lockcheck import (Check, LockReport, carrier_alignment, carrier_offset,
+                        signal_presence, symbol_rate_line)
 from .metrics import evm_percent, hard_decisions, magnitude_dispersion
-from .result import Hypothesis, S3Result
+from .result import REQUIRED_VALUES, STATUSES, Hypothesis, S3Result
 from .schemes import SCHEMES, Scheme, psk_constellation, scheme
+from .search import Candidate, params_from_s2, receive_best
 from .softmap import (estimate_noise_variance, estimated_ber, llr_health,
                       llr_to_bits, max_log_llr, noncoherent_llr, windowed_llr)
 from .timing import GardnerResult, gardner_sync, smoothed_error
 
 __all__ = [
     "LinearDemod", "FSKDemod", "S2Params", "ModulationPlugin",
-    "S3Result", "Hypothesis",
+    "S3Result", "Hypothesis", "REQUIRED_VALUES", "STATUSES",
+    "receive_best", "params_from_s2", "Candidate",
+    "LockReport", "Check", "signal_presence", "carrier_alignment",
+    "symbol_rate_line", "carrier_offset",
     "Scheme", "SCHEMES", "scheme", "psk_constellation",
     "rrc_taps", "matched_filter", "estimate_rolloff", "estimate_occupied_band",
     "gardner_sync", "GardnerResult", "smoothed_error",
