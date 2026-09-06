@@ -66,6 +66,17 @@ class DummyS2Estimate:
         self.cfo_score = 8.0
 
 
+class RealS2EstimateResult:
+    """Simulates Dheeraj's S2 stage result exposing symbol_rate_hz."""
+    def __init__(self, symbol_rate_hz=32000.0, fs=200000.0, cfo_hz=75.0, order_hint=4):
+        self.symbol_rate_hz = symbol_rate_hz
+        self.fs = fs
+        self.cfo_hz = cfo_hz
+        self.order_hint = order_hint
+        self.symbol_rate_score = 9.8
+        self.cfo_score = 8.5
+
+
 class DummyS3Result:
     def __init__(self, status="ok", llrs=None):
         self.status = status
@@ -203,10 +214,19 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(s1.stage, "s1_detect")
         self.assertEqual(s1.values["snr_db"], 15.0)
 
-        # S2
+        # S2 (local_s2 fallback with symbol_rate)
         s2 = adapt_s2(DummyS2Estimate(), 20.0)
         self.assertEqual(s2.stage, "s2_estimate")
         self.assertEqual(s2.values["symbol_rate"], 25000.0)
+        self.assertEqual(s2.values["symbol_rate_hz"], 25000.0)
+
+        # S2 (Dheeraj's real S2 result with symbol_rate_hz)
+        s2_real = adapt_s2(RealS2EstimateResult(symbol_rate_hz=32000.0, fs=200000.0), 20.0)
+        self.assertEqual(s2_real.stage, "s2_estimate")
+        self.assertEqual(s2_real.status, StageStatus.OK)
+        self.assertEqual(s2_real.values["symbol_rate"], 32000.0)
+        self.assertEqual(s2_real.values["symbol_rate_hz"], 32000.0)
+        self.assertEqual(s2_real.values["sps"], 200000.0 / 32000.0)
 
         # S3
         s3 = adapt_s3(DummyS3Result(), 25.0, "run-adapt")
@@ -363,6 +383,37 @@ class TestOrchestrator(unittest.TestCase):
         self.assertIsInstance(report, AnalysisReport)
         self.assertEqual(job.status, "completed")
         self.assertEqual(report.envelope_verdict, "in_envelope")
+
+    def test_s2_symbol_rate_hz_integration(self):
+        """Verify pipeline execution when S2 returns a result exposing symbol_rate_hz."""
+        overrides = make_clean_overrides()
+        captured_s2_params = {}
+
+        overrides["s2_estimate"] = lambda iq, fs: RealS2EstimateResult(
+            symbol_rate_hz=40000.0, fs=200000.0, cfo_hz=25.0
+        )
+
+        def s3_spy(iq, s2_params):
+            captured_s2_params.update(s2_params)
+            return DummyS3Result()
+
+        overrides["s3_receive"] = s3_spy
+
+        report = orchestrate(
+            run_id="run-s2-rate-hz",
+            file_path=self.test_file,
+            runner=self.runner,
+            stage_overrides=overrides,
+            db_path=self.db_path,
+        )
+
+        self.assertEqual(report.envelope_verdict, "in_envelope")
+        s2_stage = next(s for s in report.stages if s.stage == "s2_estimate")
+        self.assertEqual(s2_stage.status, StageStatus.OK)
+        self.assertEqual(s2_stage.values["symbol_rate"], 40000.0)
+        self.assertEqual(s2_stage.values["symbol_rate_hz"], 40000.0)
+        self.assertEqual(s2_stage.values["sps"], 5.0)
+        self.assertEqual(captured_s2_params.get("symbol_rate"), 40000.0)
 
 
 if __name__ == "__main__":

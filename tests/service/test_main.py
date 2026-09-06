@@ -57,7 +57,10 @@ class TestRestAPI(unittest.TestCase):
         object.__setattr__(config, "db_path", self.orig_db_path)
         object.__setattr__(config, "upload_dir", self.orig_upload_dir)
         object.__setattr__(config, "artifact_dir", self.orig_artifact_dir)
-        self.tmp_dir.cleanup()
+        try:
+            self.tmp_dir.cleanup()
+        except OSError:
+            pass
 
     def test_health_endpoint(self):
         resp = self.client.get("/health")

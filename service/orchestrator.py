@@ -233,14 +233,27 @@ def adapt_s2(raw: Any, elapsed_ms: float) -> StageResult:
         raw.elapsed_ms = elapsed_ms
         return raw
 
-    rate = getattr(raw, "symbol_rate", 0.0)
-    fs = getattr(raw, "fs", 1.0)
+    rate = getattr(raw, "symbol_rate_hz", None)
+    if rate is None:
+        if isinstance(raw, dict):
+            rate = raw.get("symbol_rate_hz", raw.get("symbol_rate", 0.0))
+        else:
+            rate = getattr(raw, "symbol_rate", 0.0)
+
+    fs = getattr(raw, "fs", 1.0) if not isinstance(raw, dict) else raw.get("fs", 1.0)
+    cfo_hz = getattr(raw, "cfo_hz", 0.0) if not isinstance(raw, dict) else raw.get("cfo_hz", 0.0)
+    order_hint = getattr(raw, "order_hint", 0) if not isinstance(raw, dict) else raw.get("order_hint", 0)
+    symbol_rate_score = (
+        getattr(raw, "symbol_rate_score", 0.0) if not isinstance(raw, dict) else raw.get("symbol_rate_score", 0.0)
+    )
+
     values = {
         "symbol_rate": rate,
+        "symbol_rate_hz": rate,
         "sps": (fs / rate) if rate > 0 else 0.0,
-        "cfo_hz": getattr(raw, "cfo_hz", 0.0),
-        "order_hint": getattr(raw, "order_hint", 0),
-        "symbol_rate_score": getattr(raw, "symbol_rate_score", 0.0),
+        "cfo_hz": cfo_hz,
+        "order_hint": order_hint,
+        "symbol_rate_score": symbol_rate_score,
     }
 
     status = StageStatus.OK if rate > 0 else StageStatus.LOW_CONFIDENCE
@@ -654,7 +667,11 @@ def orchestrate(
         )
 
     # Resolve S2 parameters for receiver
-    symbol_rate = getattr(s2_raw, "symbol_rate", 0.0) or s2_res.values.get("symbol_rate", 25000.0)
+    symbol_rate = (
+        getattr(s2_raw, "symbol_rate_hz", None)
+        or getattr(s2_raw, "symbol_rate", None)
+        or s2_res.values.get("symbol_rate", 25000.0)
+    )
     cfo_hz = getattr(s2_raw, "cfo_hz", 0.0) or s2_res.values.get("cfo_hz", 0.0)
     s2_params = {"fs": sample_rate, "symbol_rate": symbol_rate, "cfo_hz": cfo_hz}
 
