@@ -8,4 +8,5 @@ uploads/
 .pytest_cache/
 reports/*.log
 docs/stack_*.log
+dist/
 .DS_Store
