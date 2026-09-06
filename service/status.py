@@ -45,7 +45,7 @@ def check_status() -> dict:
         except Exception:
             pass
 
-    service_files = ["config.py", "db.py", "mocks.py", "job_runner.py", "orchestrator.py"]
+    service_files = ["config.py", "db.py", "mocks.py", "job_runner.py", "orchestrator.py", "main.py"]
     service_ok = all((REPO_ROOT / "service" / f).is_file() for f in service_files)
 
     pipeline_stages = {

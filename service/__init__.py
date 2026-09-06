@@ -26,6 +26,7 @@ from .job_runner import (
     run_stage_with_timeout,
     submit_job,
 )
+from .main import TestClient, app
 from .mocks import make_mock_report, make_mock_stage_result
 from .orchestrator import (
     compute_file_meta,
@@ -61,4 +62,6 @@ __all__ = [
     "compute_file_meta",
     "save_stage_artifact",
     "log_event",
+    "app",
+    "TestClient",
 ]
