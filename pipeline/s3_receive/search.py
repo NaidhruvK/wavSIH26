@@ -55,6 +55,7 @@ so a plug-in registered tomorrow is searched tomorrow with no edit here.
 """
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
@@ -78,6 +79,28 @@ search already reserves its own. 20 s leaves S3 room for roughly twenty full
 chain runs at the corpus's worst measured 1.0 s, which is far more than the
 screen ever lets through, while capping what an adversarial input can cost.
 The result says when the clock, rather than the evidence, ended the search.
+
+THE VALUE HAS NOT MOVED; THE REASONING ABOVE WAS INCOMPLETE, and 7 Sep is where
+that showed. "Twenty runs at 1.0 s" is measured on the corpus, whose files are
+80 000 samples. A chain run costs time roughly in proportion to the capture, so
+a capture three times longer costs about three times as much per run - 1.5-1.6 s
+each on the 240 000-sample signal in the blind-estimates test - while this
+number stays 20 s. The budget is therefore a fixed clock over a variable amount
+of work, and its real unit is "how many runs on THIS input", not "how many runs".
+
+What that cost, before the 7 Sep fixes: that test signal needed eight chain runs
+to reach its answer and 12.1 s to do it here, 21.5 s on Nehal's machine, and the
+whole failure was that a search which overruns does not slow down - it returns
+the best of what it had run, which was a different modulation. The fixes took it
+to three runs and 3.4 s, and the corpus's worst file from 11.12 s to 6.97 s.
+Widening the budget instead would have bought the same test a pass and left the
+mechanism in place. See `reports/s3_search_cost.md`.
+
+Quote the worst-case margin as a RANGE, not a number. Two independent runs of
+the same 252 files on the same idle machine put the worst file at 6.97 s and at
+8.46 s, and disagreed about which file it was - so the honest reading is 7-8.5 s
+against this 20 s, a margin of roughly 2.4-2.9x. A single worst-case second is
+the kind of figure this whole finding is a warning about.
 """
 
 MAX_CANDIDATES = 96
@@ -87,6 +110,9 @@ intended - the sort of thing that turns into a five-minute stage without a
 single line of it looking wrong."""
 
 MAX_CHAIN_RUNS = 12
+"""Ceiling on full receiver runs, after screening. The screen is what is
+supposed to keep this small; this is the backstop for an input the screen finds
+plausible everywhere, which is a thing noise-shaped signals do."""
 
 RESCUE_PRIOR = 0.5
 """How far a rate-rescued candidate sorts below the S2-derived one it replaces.
@@ -98,9 +124,24 @@ this exists for, every S2 rate has already been refused and the rescued
 candidates are the only survivors, so the factor decides nothing - which is
 the point. It must never reorder a search that was working.
 """
-"""Ceiling on full receiver runs, after screening. The screen is what is
-supposed to keep this small; this is the backstop for an input the screen finds
-plausible everywhere, which is a thing noise-shaped signals do."""
+
+RATE_DEDUP_REL = 1.5e-5
+"""Relative grid the rate axis of `Candidate.key()` de-duplicates on.
+
+It is one bin of the line search that proposes these rates. `_LINE_NFFT` is
+2**18 and the corpus runs 4 samples/symbol, so a bin is `sps / _LINE_NFFT` =
+1.53e-05 of the symbol rate - 0.76 Hz at 50 kHz. Two rates inside one bin are
+one reading of one spectrum, and `_line_score_at` already takes the maximum
+over the bin either side, so no cheap check in this stage can separate them.
+
+Measured either side of that on 7 Sep, one corpus file per modulation at
+20 dB, in `reports/s3_search_cost.md`: every file returns an identical
+status and an identical raw bit error rate out to 5e-05 of relative rate
+error, and the tightest two - 2-FSK and BPSK - first diverge at 1e-04, where
+they turn `failed` rather than wrong. So this grid sits 3.3x inside the
+largest error measured to change nothing, and 6.7x inside the smallest
+measured to change anything.
+"""
 
 
 @dataclass
@@ -121,7 +162,7 @@ class Candidate:
         return p
 
     def key(self) -> tuple:
-        """Identity for de-duplication, with the offset quantised.
+        """Identity for de-duplication: both axes on what a check can resolve.
 
         Two offsets closer together than a quarter of what
         `lockcheck.CARRIER_OFFSET_LIMIT` will even notice are the same
@@ -129,11 +170,36 @@ class Candidate:
         of a second thrown away per pair. It happens constantly: correcting
         S2's 12500 Hz by the measured -12402 Hz lands on 97.7 Hz, which is the
         `cfo = 0` candidate that was already in the queue.
+
+        THE RATE AXIS HAD THE SAME PROBLEM AND NONE OF THE SAME CARE until
+        7 Sep, when it was `round(rate, 3)` - a fixed 1 mHz grid, an ABSOLUTE
+        tolerance on a quantity whose error is relative, and 300x finer than
+        the FFT bin any of these rates is read out of. The rescue proposes a
+        rate off the line search while S2 reports an interpolated one, so the
+        two arrive at the same rate by different routes and disagree in the
+        eighth digit. On the blind-search test signal they were 50000.000000
+        and 50000.002618 Hz - 5.2e-08 apart, 1/300th of one bin - and the
+        search paid THREE full chain runs, 5.0 s of a 12.1 s search, to find
+        out they demodulate identically. See `RATE_DEDUP_REL` for the grid and
+        the measurement behind it.
+
+        The rate grid is logarithmic because a relative grid has to be.
+        Dividing a rate by a grid defined as a fraction OF that rate yields
+        `round(1 / RATE_DEDUP_REL)` for every rate there has ever been, which
+        collapses the axis to a single cell and merges 27 kHz with 50 kHz; the
+        logarithm is what turns "within a factor of 1 + rel" into "within one
+        cell" without that trap.
+
+        Quantising is a hash and not a comparison, so a pair that straddles a
+        cell boundary still costs one extra run. That is exactly the guarantee
+        the offset axis has always given, and the cost of a miss is one run
+        rather than a wrong answer.
         """
         from .lockcheck import CARRIER_OFFSET_LIMIT
+        cell = round(math.log(max(self.symbol_rate, 1e-9))
+                     / math.log1p(RATE_DEDUP_REL))
         grid = max(CARRIER_OFFSET_LIMIT * self.symbol_rate / 4.0, 1e-6)
-        return (self.modulation, round(self.symbol_rate, 3),
-                round(self.cfo_hz / grid))
+        return (self.modulation, cell, round(self.cfo_hz / grid))
 
     def label(self) -> dict[str, Any]:
         return {"modulation": self.modulation,
@@ -324,6 +390,46 @@ def _build_candidates(base: dict[str, Any],
     return deduped[:MAX_CANDIDATES]
 
 
+def _breadth_first(survivors: Sequence[Candidate]) -> list[Candidate]:
+    """One run per modulation before any modulation gets a second.
+
+    7 Sep. The classifier's ranking is a prior over MODULATIONS, but the queue
+    it orders is a list of (modulation, rate, offset) triples, so a single
+    confident verdict buys every offset under it before any other modulation is
+    reached at all. That is a category error, and it is what turns a wrong
+    classifier call into a clock problem instead of a ranking problem.
+
+    Measured, on the signal in
+    `test_s3_runs_on_blind_estimates_with_no_labels_in_the_path`: the
+    classifier reads a QPSK capture as 8-PSK at probability 0.999, so 8-PSK's
+    three surviving offsets ran first, at 1.5-1.6 s each, and QPSK - ranked
+    third at 0.000141 - was not reached until 5.0 s of chain time had gone.
+    Interleaving reaches it after 8-PSK's best and 2-FSK's best, at 1.6 s.
+
+    WHAT THIS DOES NOT CHANGE, which is the part that had to be argued before
+    it could be written: the FIRST candidate run is identical either way. It is
+    still the top-ranked modulation at its most conservative offset, because
+    round one is taken in the order the modulations first appear and that order
+    is the prior order. Every candidate still runs, in the same set, under the
+    same ceilings. Only the order of everything after the first failure moves,
+    and it moves from "exhaust this modulation" to "ask the next one".
+
+    That reordering is visible to `stop_on_clean_lock`, so it was not assumed
+    to be safe - it was measured across all 252 corpus files and the full
+    cross-hypothesis sweep before it was kept. See `reports/s3_search_cost.md`.
+    """
+    first_seen: dict[str, int] = {}
+    depth: dict[str, int] = {}
+    ordered: list[tuple[int, int, Candidate]] = []
+    for c in survivors:                      # already in prior order
+        first_seen.setdefault(c.modulation, len(first_seen))
+        d = depth.get(c.modulation, 0)
+        depth[c.modulation] = d + 1
+        ordered.append((d, first_seen[c.modulation], c))
+    ordered.sort(key=lambda t: (t[0], t[1]))
+    return [c for _, _, c in ordered]
+
+
 def _quality(res: S3Result, cand: "Candidate") -> tuple:
     """Sort key for a completed run. Higher is better.
 
@@ -477,6 +583,7 @@ def receive_best(iq: np.ndarray, params: dict[str, Any],
     # the most conservative offset first means the early exit lands on the
     # hypothesis that claimed least, rather than on whichever one S2 liked.
     survivors.sort(key=lambda c: (-c.prior, abs(c.cfo_hz) / max(c.symbol_rate, 1e-9)))
+    survivors = _breadth_first(survivors)
 
     # --- the expensive pass, on what survived
     best: tuple[tuple, Candidate, S3Result] | None = None
@@ -522,6 +629,34 @@ def receive_best(iq: np.ndarray, params: dict[str, Any],
         "symbol_rate_used": float(chosen.symbol_rate),
         "cfo_hz_used": float(chosen.cfo_hz),
     })
+
+    # House rule: a check that cannot see must say so. A search the clock cut
+    # short has NOT seen the candidates it never reached, and until 7 Sep it
+    # said that only in `search_budget_exhausted`, a key nothing was obliged to
+    # read, while `status` and `reason` looked exactly like a finished search
+    # that had weighed the field and come back unsure. Those are different
+    # claims and a consumer has to be able to tell them apart: the first is a
+    # verdict, the second is a partial result that a faster machine would have
+    # improved on. Nehal hit precisely this from the other side - the same file
+    # returning `ok`/QPSK unloaded and `low_confidence`/8-PSK under load.
+    #
+    # The result itself is kept, not downgraded. It is the best of what was
+    # actually run, and throwing it away would lose files to a slow machine
+    # rather than merely mislabelling them.
+    # Name the bound that actually applied. `exhausted` is set by EITHER the
+    # clock or `max_chain_runs`, and blaming the clock for a run-ceiling stop
+    # would be the same species of false claim this note exists to prevent: 11
+    # of the 252 corpus files run to the ceiling, several of them flagged
+    # exhausted at about 2 s, where 20 s was never the constraint.
+    unreached = max(len(survivors) - runs, 0)
+    if exhausted and unreached:
+        bound = (f"a ceiling of {max_chain_runs} chain runs"
+                 if runs >= max_chain_runs else f"a {budget_s:g} s budget")
+        note = (f"search truncated by {bound}: {runs} of {len(survivors)} "
+                f"surviving candidates were run and {unreached} never reached "
+                "- this is the best of what ran, not a survey of the field")
+        res.reason = f"{res.reason}; {note}" if res.reason else note
+
     res.hypotheses = trail + list(res.hypotheses)
     res.elapsed_ms = elapsed
     return res

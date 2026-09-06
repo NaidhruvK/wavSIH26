@@ -27,7 +27,8 @@ from pipeline.s3_receive.lockcheck import (FAIL, LINE_ABSENT_LIMIT,  # noqa: E40
                                            carrier_alignment, signal_presence,
                                            strongest_line, symbol_rate_line)
 from pipeline.s3_receive.result import REQUIRED_VALUES  # noqa: E402
-from pipeline.s3_receive.search import (params_from_s2,  # noqa: E402
+from pipeline.s3_receive.search import (RATE_DEDUP_REL,  # noqa: E402
+                                        Candidate, params_from_s2,
                                         receive_best)
 from registry import MODULATIONS  # noqa: E402
 from tests.fixtures import corpus  # noqa: E402
@@ -646,6 +647,182 @@ def test_the_rate_rescue_stays_out_of_the_way_when_s2_is_right():
                            "cfo_hypotheses": [(0.0, 4, 50.0)]})
     assert res.status == "ok", res.reason
     assert res.values["search_chosen"]["origin"] != "rate-rescued"
+
+
+# --- the search's cost, 7 Sep ----------------------------------------------
+#
+# Nehal found `test_s3_runs_on_blind_estimates_with_no_labels_in_the_path`
+# passing alone and failing inside the full suite, and reproduced the mechanism
+# before handing it over: `receive_best` stops at a deadline and returns the
+# best of what it had run by then, so under load it does not slow down, it
+# ANSWERS DIFFERENTLY - `ok`/QPSK unloaded, `low_confidence`/8-PSK at 8 s.
+#
+# Every assertion below is therefore on WORK DONE - keys, ordering, chain runs -
+# and not on seconds. A wall-clock assertion is the instrument that produced the
+# flake in the first place, and it would fail on a loaded machine while the code
+# it guards was correct.
+
+
+def test_two_rates_the_receiver_cannot_separate_are_one_candidate():
+    """The rate axis of `Candidate.key()`, which until 7 Sep was `round(r, 3)`.
+
+    The measured pair, straight from the blind-search signal: the rate rescue
+    reads 50000.000000 Hz off the line search while S2 reports an interpolated
+    50000.002618 Hz. They are 5.2e-08 apart - 1/300th of the FFT bin either was
+    read out of, and 2000x finer than the 1e-04 relative error at which any
+    corpus file's answer changes at all. One hypothesis, and it used to buy a
+    full pass through the receiver at every carrier offset under it.
+    """
+    a = Candidate("qpsk", 50000.002618, 300.0, prior=1.0)
+    b = Candidate("qpsk", 50000.000000, 300.0, prior=0.5, origin="rate-rescued")
+    assert a.key() == b.key(), "paid two chain runs for one hypothesis"
+
+
+def test_rates_the_receiver_can_separate_stay_two_candidates():
+    """The other half, and the one that stops the fix becoming a new bug.
+
+    A grid wide enough to merge genuinely different rates would quietly delete
+    hypotheses. `RATE_DEDUP_REL` is relative, so this is checked at both ends of
+    the corpus's range rather than at one rate where an absolute grid would also
+    have passed.
+    """
+    for rate in (27040.0, 50000.0):
+        far = rate * (1.0 + 40.0 * RATE_DEDUP_REL)
+        assert (Candidate("qpsk", rate, 0.0, prior=1.0).key()
+                != Candidate("qpsk", far, 0.0, prior=1.0).key()), \
+            f"merged {rate:.0f} Hz with {far:.0f} Hz"
+
+    # and the trap the logarithm exists to avoid: a grid taken as a fraction OF
+    # the rate being quantised is the same cell for every rate there has ever
+    # been, which would collapse the whole axis into one hypothesis.
+    assert (Candidate("qpsk", 27040.0, 0.0, prior=1.0).key()
+            != Candidate("qpsk", 50000.0, 0.0, prior=1.0).key())
+
+
+def test_the_search_tries_every_modulation_before_repeating_one():
+    """A confident classifier must not buy the whole budget for one modulation.
+
+    The ranking is a prior over MODULATIONS; the queue is a list of
+    (modulation, rate, offset) triples. Sorting the triples by the prior alone
+    spends every offset under the top modulation before any other modulation is
+    reached, so one wrong verdict becomes a clock problem rather than a ranking
+    problem.
+
+    Tested against `_breadth_first` directly rather than through a run, for two
+    reasons. The audit trail records WHICH candidates were demodulated but is
+    built by walking the screening order, so it cannot report the order they ran
+    in. And the two properties that made this change safe to keep are properties
+    of the permutation itself, so they are worth asserting as such.
+    """
+    from pipeline.s3_receive.search import _breadth_first
+
+    # eight candidates, in the prior order the sort above would have produced:
+    # a confident modulation with four offsets, then two others.
+    ordered = [Candidate("8psk", 50000.0, c, prior=1.0 - i * 0.01)
+               for i, c in enumerate((0.0, 300.0, 800.0, 1200.0))]
+    ordered += [Candidate("2fsk", 50000.0, c, prior=0.5 - i * 0.01)
+                for i, c in enumerate((0.0, 300.0))]
+    ordered += [Candidate("qpsk", 50000.0, c, prior=0.1 - i * 0.01)
+                for i, c in enumerate((0.0, 300.0))]
+
+    got = _breadth_first(ordered)
+    mods = [c.modulation for c in got]
+
+    # round one is one candidate per modulation, so the answer is reachable in
+    # as many runs as there are modulations rather than as many as there are
+    # combinations
+    distinct = len(set(mods))
+    assert len(set(mods[:distinct])) == distinct, \
+        f"a modulation repeated before every one had been tried: {mods}"
+
+    # the first candidate run is IDENTICAL either way - still the top-ranked
+    # modulation at its most conservative offset. This is what keeps the
+    # `stop_on_clean_lock` argument intact for the common case.
+    assert got[0] is ordered[0]
+
+    # nothing is dropped and nothing is invented: same candidates, new order
+    assert sorted(map(id, got)) == sorted(map(id, ordered))
+
+    # and within one modulation the prior order is preserved
+    eightpsk = [c.cfo_hz for c in got if c.modulation == "8psk"]
+    assert eightpsk == [0.0, 300.0, 800.0, 1200.0]
+
+
+def test_a_wrong_classifier_call_does_not_cost_the_whole_budget():
+    """Nehal's file, asserted on chain runs so a loaded machine reads the same.
+
+    S2's classifier calls this QPSK capture 8-PSK at probability 0.999. Before
+    7 Sep the search reached QPSK on its EIGHTH chain run - three duplicate
+    8-PSK rates and every offset under them first - which is 12 s on this
+    machine and 21.5 s on Nehal's, against a 20 s budget.
+    """
+    x, fs, rs, _ = synth("qpsk", n_bits=120000, snr_db=16.0, sps=4,
+                         cfo_norm=0.0015, timing_offset_sym=0.42, seed=11)
+    s2 = estimate(x, fs)
+    res = receive_best(x, params_from_s2(s2, fs))
+    assert res.status == "ok", res.reason
+    assert res.values["modulation"] == "qpsk"
+    assert res.values["search_chain_runs"] <= 4, (
+        f"reached the answer on run {res.values['search_chain_runs']}; it was "
+        "8 before the de-duplication and interleaving fixes")
+    assert not res.values["search_budget_exhausted"]
+
+
+def test_a_search_the_clock_cut_short_says_so():
+    """House rule: a check that cannot see must say so.
+
+    A truncated search has not seen the candidates it never reached. It said so
+    only in `search_budget_exhausted`, a key nothing was obliged to read, while
+    `status` and `reason` looked exactly like a finished search that had weighed
+    the field and come back unsure. Those are different claims.
+    """
+    x, fs, rs, _ = synth("qpsk", n_bits=120000, snr_db=16.0, sps=4,
+                         cfo_norm=0.0015, timing_offset_sym=0.42, seed=11)
+    s2 = estimate(x, fs)
+    res = receive_best(x, params_from_s2(s2, fs), budget_s=0.9)
+    assert res.values["search_budget_exhausted"] is True
+    assert "truncated" in (res.reason or "").lower(), (
+        f"a search that ran out of clock reported {res.reason!r}, which reads "
+        "like a verdict over the whole field")
+    # and it names the bound that actually applied, because `exhausted` is set
+    # by EITHER the clock or the run ceiling and they are different facts
+    assert "0.9 s budget" in (res.reason or "")
+    # the result it does return is still the best of what actually ran
+    assert res.values["search_chain_runs"] >= 1
+
+
+def test_a_search_stopped_by_the_run_ceiling_does_not_blame_the_clock():
+    """The other bound, and the reason this is asserted separately.
+
+    `search_budget_exhausted` is raised by the clock OR by `max_chain_runs`.
+    Reporting a run-ceiling stop as a budget stop would be the same species of
+    false claim the note exists to prevent, and it is not hypothetical: 11 of
+    the 252 corpus files run to the ceiling, several of them flagged exhausted
+    at about 2 s, where the 20 s budget was never the constraint.
+    """
+    x, fs, rs, _ = synth("qpsk", n_bits=120000, snr_db=16.0, sps=4,
+                         cfo_norm=0.0015, timing_offset_sym=0.42, seed=11)
+    s2 = estimate(x, fs)
+    res = receive_best(x, params_from_s2(s2, fs), budget_s=600.0,
+                       max_chain_runs=1, stop_on_clean_lock=False)
+    assert res.values["search_budget_exhausted"] is True
+    assert res.values["search_chain_runs"] == 1
+    reason = res.reason or ""
+    assert "ceiling of 1 chain runs" in reason, reason
+    assert "600 s budget" not in reason, \
+        f"blamed the clock for a run-ceiling stop: {reason!r}"
+
+
+def test_a_completed_search_does_not_claim_it_was_truncated():
+    """The other direction, so the note above cannot become boilerplate that
+    every result carries and nobody reads."""
+    x, fs, rs, _ = synth("qpsk", n_bits=60000, snr_db=18.0, sps=4)
+    res = receive_best(x, {"fs": fs, "symbol_rate": rs,
+                           "symbol_rate_hypotheses": [(rs, 90.0)],
+                           "cfo_hypotheses": [(0.0, 4, 50.0)]})
+    assert res.status == "ok", res.reason
+    assert not res.values["search_budget_exhausted"]
+    assert "truncated" not in (res.reason or "").lower()
 
 
 # --- against the real corpus ----------------------------------------------
