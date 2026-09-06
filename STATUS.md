@@ -554,6 +554,66 @@ anchored at ≥10dB everywhere else too.
 `models/classifier.txt` frozen this morning per the 6 Sep plan, config
 hash `132fc1d21777` unchanged since 3 Sep — no retraining today.
 
+### 7 Sep — Nehal's review of yesterday's work: one documentation ask, one real bug, one gap closed
+
+Nehal independently re-verified the FSK CFO fix (168/168 at ≥10dB,
+worst cases reproduced exactly) and, separately, pressure-tested
+`zoo/ccsds.py` against his own S4-S6 chain — three findings, all
+addressed:
+
+**1. The 10dB CFO floor was a silent routing artifact, now stated as a
+number.** He measured that `estimate()`'s `constant_envelope` check
+(`std/mean < 0.25`) tracks `1/sqrt(2·SNR_linear)` almost exactly for
+FSK — it is measuring SNR, not envelope structure, and the modulation
+contributes nothing to it. Below ~9dB it silently misroutes to the
+linear CFO path with no failure signal (`status="ok"`, confidently
+wrong). Not a defect chasable by a threshold tweak — `s2_envelope.md`
+already proved that crossover can't be widened without breaking clean
+high-SNR PSK/QAM. Fixed by documentation, per his explicit ask: added
+to `reports/envelope_study.py` / `envelope.md` §3, stating plainly that
+S2's declared CFO floor for FSK is 10dB and `cfo_hz` shouldn't be
+trusted below it regardless of `status`.
+
+**2. `CCSDS_SCRAMBLER` was mislabelled — a real bug, now fixed.**
+`zoo/bits_only.py`'s `CCSDS_SCRAMBLER = 0o435` was actually 0x11D, the
+GF(256) Reed-Solomon field polynomial, not the CCSDS 131.0-B randomiser
+(0o651 = 0x1A9 = x^8+x^7+x^5+x^3+1) its own comment and name describe —
+an easy constant to reach for while writing an RS-and-randomiser
+generator in the same file. Both are primitive degree-8 (period 255
+either way), so nothing was corrupted — the corpus was a valid,
+self-consistent scrambler between this generator and Nehal's receiver
+checking against the same constant — but the label was wrong. Fixed
+the constant (not just the comment), matching the whole point of
+`zoo/ccsds.py` being the *standards-accurate* alternative to the
+existing fixture. `zoo/corpus/ccsds/` regenerated with the corrected
+polynomial; `tests/unit/test_bits_only.py` pins the fix (checks the
+exact tap positions match h(x), and that the sequence has period
+exactly 255, not some smaller divisor that would also have satisfied
+"primitive of degree 8").
+
+**3. `.gitattributes` had a gap Nehal caught before it bit anyone:**
+`*.payload.bin` (the new CCSDS corpus's raw payload bytes) had no
+`-text`/`binary` marking, the exact autocrlf hole that corrupted
+`models/classifier.txt` before. Today's eight files are pure ASCII
+with no newline bytes, so the heuristic's "text" guess happened to be
+a no-op — the first `payload_text` containing a newline would have
+been silently mangled on any Windows checkout otherwise. Added
+`*.bin binary`.
+
+**Also landed: `payload_text` and `mean_burst` on `zoo.bits_only.make_stream`**,
+the two remaining things `tests/fixtures/local_zoo.py` could do that
+the real zoo couldn't — the reason Nehal still had 12 test files, 7
+report studies, and `pipeline/s4_recover/cli.py` importing from
+`tests/`. Ported `gilbert_elliott_mask`/`inject_burst_errors` from that
+fixture (his own description of the model, unchanged) rather than
+reimplementing the physics differently. `payload_text` repeats real
+text to fill `n_source_bits`, same construction as the fixture's
+version, so a caller switching from one to the other sees identical
+bits. This doesn't retire the fixture itself — that's Nehal's call, on
+his own files — but the blocker on his side is gone.
+
+Full regression suite re-run after all of the above.
+
 ---
 
 ## Anvith — S3 receiver chain

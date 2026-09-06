@@ -40,6 +40,18 @@ Full breakdown: `reports/classifier_eval.md`, `reports/baseline_classifier.md`. 
 
 Per-scheme classifier coverage against S2's own live estimate (not truth): `reports/s2_coverage.md`. CFO: as of today, all six modulation families report |CFO| < 100Hz on every clean file at >=10dB (168/168) -- linear modulations via the M-th-power line search (`estimate_cfo`, fixed 426a780), FSK via a new IF-tone centroid estimator (`estimate_cfo_fsk`, fixed today, 55cb628) after a teammate found the M-th-power path was never applicable to FSK and was costing 4-FSK recovery outright.
 
+**The 10dB CFO floor is a declared limit, stated here explicitly -- not a routing statistic enforcing it silently.** Nehal independently re-verified 55cb628 through `estimate()` itself, per scheme, against `cfo_norm * fs`, all 252 files: 168/168 confirmed at >=10dB, worst cases reproduced exactly (54.9Hz 2fsk, 84.5Hz 4fsk). He then measured what `estimate()`'s `constant_envelope` routing check (`std(|x|)/mean(|x|) < 0.25`) actually is, per file:
+
+| SNR (dB) | 4 | 8 | 10 | 13 | 15 | 20 |
+|---|---|---|---|---|---|---|
+| FSK envelope CV (measured) | 0.377 | 0.264 | 0.215 | 0.155 | 0.125 | 0.070 |
+| 1/sqrt(2\*SNR_linear) (predicted) | -- | 0.281 | 0.224 | -- | -- | 0.071 |
+| routed as | linear | linear | constant-env. | c-e | c-e | c-e |
+
+**The modulation contributes nothing to this statistic -- it is measuring SNR, not envelope structure.** The predicted-vs-measured match (0.224 vs 0.215 at 10dB, 0.071 vs 0.070 at 20dB) is close enough that `constant_envelope < 0.25` is, in effect, "SNR > ~9dB" for FSK. Below the flip point there is no failure signal -- `estimate()` returns `status="ok"` with a confident, wrong ~25000Hz. `reports/s2_envelope.md` (5 Sep) already proved this threshold has a genuine crossover and cannot be widened without breaking clean high-SNR PSK/QAM; today's finding is that it should not be trusted as a silent SNR gate either.
+
+**Consequence, stated as a number rather than left implicit: S2's declared CFO floor for FSK is 10dB.** Below it, `cfo_hz` should not be trusted regardless of `status`. This is not a defect in S2 chasable by a threshold tweak (see `s2_envelope.md`'s crossover proof) -- it is a genuine, stated limit of a single scalar statistic standing in for a decision the trained classifier (which has real evidence about modulation family, not a noise-confounded proxy for it) is better positioned to make. Not changed today: `constant_envelope` stays a raw statistic in `s2_estimate.py`'s own signature, but every consumer of `S2Result` should read `cfo_hz` at face value only at >=10dB, exactly like every other number in this report.
+
 ## 4. Known, stated limits (not chased today)
 
 - 2fsk/4fsk classifier accuracy below 10dB: 0%, root-caused as an unfixable single-feature crossover (`reports/s2_envelope.md`).

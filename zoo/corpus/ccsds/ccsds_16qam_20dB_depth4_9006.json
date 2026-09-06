@@ -17,7 +17,7 @@
   "interleave_depth": 4,
   "scrambler": {
     "family": "lfsr",
-    "poly_octal": 285,
+    "poly_octal": 425,
     "seed_state": 255
   },
   "code": {
