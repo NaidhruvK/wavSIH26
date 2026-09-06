@@ -15,6 +15,17 @@ from .db import (
     record_stage_result,
     update_run,
 )
+from .job_runner import (
+    Job,
+    JobCancelledError,
+    JobRunner,
+    StageTimeoutError,
+    cancel_job,
+    get_job,
+    job_runner,
+    run_stage_with_timeout,
+    submit_job,
+)
 from .mocks import make_mock_report, make_mock_stage_result
 
 __all__ = [
@@ -27,6 +38,15 @@ __all__ = [
     "record_stage_result",
     "get_stage_result",
     "get_all_stage_results",
+    "Job",
+    "JobRunner",
+    "job_runner",
+    "StageTimeoutError",
+    "JobCancelledError",
+    "submit_job",
+    "get_job",
+    "cancel_job",
+    "run_stage_with_timeout",
     "make_mock_report",
     "make_mock_stage_result",
 ]

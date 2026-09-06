@@ -11,7 +11,7 @@ test:
 	@if command -v pytest >/dev/null 2>&1; then \
 		pytest tests/contract/test_stage_contract.py tests/contract/test_registry_contract.py tests/service/ -v; \
 	else \
-		$(PYTHON) -m unittest tests/contract/test_stage_contract.py tests/contract/test_registry_contract.py tests/service/test_config.py tests/service/test_db.py tests/service/test_mocks.py; \
+		$(PYTHON) -m unittest tests/contract/test_stage_contract.py tests/contract/test_registry_contract.py tests/service/test_config.py tests/service/test_db.py tests/service/test_mocks.py tests/service/test_job_runner.py; \
 	fi
 
 run:
