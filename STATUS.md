@@ -405,9 +405,729 @@ live classifier.
 
 Nehal's concatenated CCSDS chain (5 Sep, not mine) not investigated.
 
+### 5 Sep, later — second CFO bug from the same teammate: FSK was never fixed
+
+The teammate who found the 426a780 M-th-power alias bug came back with a
+sharper finding: `estimate_cfo`'s fix was correct, but `estimate()` was
+calling it unconditionally — on FSK captures too, which it was never
+meant for. Measured independently by the teammate across the corpus:
+
+| scheme | files | \|CFO err\| ≥ 100 Hz |
+|---|---|---|
+| bpsk/qpsk/8psk/16qam | 112 | 0 |
+| 2fsk | 28 | 28 |
+| 4fsk | 28 | 28 |
+
+**My own "112/112" claim in the 426a780 writeup was exactly this —
+4 of 6 modulation families, silently reported as if it were all six.**
+The 56 FSK files were never in that count and were still reporting the
+same ~symbol_rate/2 false CFO the whole time. Same mistake shape as the
+qpsk/8psk-only test list catching me out earlier this session with the
+envelope gate, and worth naming plainly rather than letting "112/112"
+stand uncorrected in the historical record above.
+
+Root cause, confirmed by reading the code the teammate pointed at: an
+M-FSK signal has no suppressed carrier for `x**M` to expose — it has M
+discrete tones — so `estimate_cfo`'s M-th-power line search locks onto a
+tone-spacing artifact instead of anything carrier-related. Not a bug in
+an applicable estimator (that was 426a780); an inapplicable estimator
+being run at all. **Measured downstream cost, not just theory:** the
+teammate ran 4-FSK recovery with and without the CFO estimate applied —
+succeeds without it, fails with it, at both 13dB and 20dB.
+
+Fix: new `estimate_cfo_fsk`, an IF-tone centroid estimator. An M-FSK
+tone ladder is symmetric about zero IF by construction (that symmetry
+*is* what zero CFO means for FSK), so the mean of the M tone centres
+recovers a real CFO shift directly, independent of which tones a given
+window's bits happened to visit. Refines each coarse histogram-bin peak
+(too wide alone, ~fs/60) to the mean of the raw instantaneous-frequency
+samples nearest it. Shares its tone-detection step
+(`_fsk_tone_peaks`) with `estimate_fsk_order` so the two can never
+disagree on tone count. `estimate()` now routes to it by
+`constant_envelope`, same pattern already used for symbol-rate
+selection.
+
+**Validated per scheme, not pooled — the exact fix the teammate asked
+for:** all six modulation families now report \|CFO\| < 100Hz at ≥10dB
+through the real `estimate()` entry point: bpsk/qpsk/8psk/16qam exact
+(0.0Hz — the M-th-power line lands precisely at k=0), 2fsk worst-case
+54.9Hz, 4fsk worst-case 84.5Hz (was ~25000Hz for both, unconditionally,
+before this fix). New tests assert per-scheme, including one that runs
+`estimate()` itself rather than either estimator directly, specifically
+so a future partial fix can't be miscounted as complete again.
+
+Teammate's second, smaller ask — a zoo corpus file for the full
+concatenated CCSDS profile (RS outer → byte-level interleaver, depth
+I∈1..8 → randomiser → convolutional inner, in the real standard's order,
+not `tests/fixtures/local_zoo.make_ccsds_stream`'s bit-level stand-in) —
+not started yet, next up.
+
+### 6 Sep, CORE LOCK — the third finding from the same teammate, a real CCSDS corpus file, and the system envelope
+
+**Third finding, same teammate, same file, restated three times across the
+morning** (the earlier fix had already shipped — 55cb628 — each time; the
+last two messages were the identical bug report, verified against a repo
+state that already had the fix). Confirmed on the current `origin` tip
+both times: 56/56 FSK + 112/112 linear = 168/168, no drift.
+
+**Their second ask: a real CCSDS corpus file.** `zoo/ccsds.py` implements
+the actual CCSDS 131.0-B transmit order — RS(255,223) outer → BYTE-level
+interleaving across `depth` consecutive codewords (a real transpose of
+the codeword matrix, not `tests/fixtures/local_zoo.make_ccsds_stream`'s
+bit-level interleave-then-randomise-after, which that file's own
+docstring already flags as non-standard) → the CCSDS pseudo-randomiser →
+the rate-1/2 K=7 convolutional inner code. Verified correct in isolation
+before any WAV file was built on top of it: `tests/unit/test_ccsds.py`
+round-trips the full chain over a clean channel for interleave depths
+1/4/8, plus a dedicated test that a contiguous transmitted burst really
+does spread across `depth` different codewords (the entire reason to
+interleave a burst channel ahead of a block code).
+
+Written to `zoo/corpus/ccsds/`, deliberately **not** `zoo/corpus/rf/`:
+every existing corpus-wide test (including today's own
+`reports/envelope_study.py`) globs `rf/*dB_*.wav` and regenerates ground
+truth via `zoo.bits_only.make_stream`'s single-code schema — dropping a
+differently-coded file in there would silently corrupt every one of
+those measurements, without any of them having been wrong to assume what
+they assumed about that directory. 8 files across 4 modulations, 3
+SNRs, 3 interleave depths; `zoo/build_ccsds_corpus.py` regenerates them.
+
+**Verified through the real RF channel, not just abstractly:** on the
+cleanest file (qpsk, 20dB, depth 1), S2 estimates the exact symbol rate
+and CFO=0.0 blind, S3 demodulates to a bitstream that matches the true
+coded stream **128344/128344** bits exactly once aligned, and Viterbi-
+decoding S3's real output matches Viterbi-decoding the true reference
+bits **64166/64166** exactly. What is *not* done: full RS-decode through
+the real channel, which needs a byte-alignment search across a
+non-conv-encoder-aligned bit offset from RRC filter edge transients —
+that is a frame-synchronization problem, which is Nehal's/Anvith's
+blind-recovery territory (S3/S4-S6), not something folded into the
+corpus generator. The corpus file's validity and decodability are
+proven; wiring a blind receiver to actually find that alignment is the
+next person's job, same ownership boundary as everywhere else in this
+project.
+
+**`reports/envelope.md` drafted, per the 6 Sep plan's block B/C/D** ("SNR
+floor and BER ceiling per modulation, stated as numbers", "commit the
+report and its charts together"). `reports/envelope_study.py` is the
+first measurement in this project to run S0→S1→S2 (mine, truly blind —
+S2's own `estimate()`, not the channel's true parameters) into S3
+(Anvith's, via the registry, exactly the way a real orchestrator would
+call it) across all six modulations and the full 252-file corpus, and
+score raw BER against the exact source bits each file's seed reproduces
+deterministically. Every prior cross-stage number (`s3_s4_junction.md`)
+fed S3 the channel's TRUE symbol rate directly, by design, to isolate
+the S3/S4 junction from S2 error — a fine choice for that question, but
+it meant no report on record said what S2's *actual* estimate costs
+end-to-end. This one does:
+
+| scheme | SNR floor (zero raw BER) |
+|---|---|
+| bpsk | 8 dB |
+| qpsk | 8 dB |
+| 8psk | 13 dB |
+| 16qam | 20 dB |
+| 2fsk | 10 dB |
+| 4fsk | 10 dB |
+
+Caught and fixed a bug in my own measurement script before trusting these
+numbers: `low_confidence` S3 results (a real LLR output, just an
+unlocked-carrier flag) were being scored identically to a hard failure
+(sentinel BER of 1.0) — findable because it's the same "distinguish a
+real answer from a can't-answer" mistake this project keeps having to
+correct itself on (the `test_cfo_alias_hypotheses_cover_every_alias_per_order`
+scoring mixup, 5 Sep; the 4fsk overfitting misdiagnosis, 3 Sep). Fixed
+to score `low_confidence` for real and use `NaN` (not a fake `1.0`) for
+genuine non-measurements, which also surfaced a second thing worth
+stating plainly rather than treating as noise: **2fsk/4fsk below 10dB
+report raw BER ≈0.48-0.63 (chance), not because today's CFO fix
+regressed** — confirmed directly (`estimate('4fsk_4dB_...')` still
+returns `constant_envelope=False`) — **but because the SAME envelope-gate
+crossover documented in `reports/s2_envelope.md` yesterday misroutes
+those files to the linear CFO estimator below 10dB, so they never reach
+`estimate_cfo_fsk` at all below that line.** One root cause, two
+symptoms (classifier accuracy yesterday, raw BER today), left open both
+times for the same measured reason: no fixed threshold on that statistic
+can get both ends of the SNR range right, and this project's targets are
+anchored at ≥10dB everywhere else too.
+
+`models/classifier.txt` frozen this morning per the 6 Sep plan, config
+hash `132fc1d21777` unchanged since 3 Sep — no retraining today.
+
 ---
 
 ## Anvith — S3 receiver chain
+
+### 5 Sep — the row's target was already met; the work was the 4-8 dB half
+
+**Branch `anvith/s3-robustness`**, merged with `main` at `116dc6b`. Reports:
+`reports/s3_lock_gate.md` (the harness), `s3_lock_threshold.md`,
+`s3_rate_rescue.md`, `s3_loop_bw.md`.
+
+**Read the first number with the corpus size attached.** Everything below is
+on Dheeraj's **252-file** corpus — seven seeds per (modulation, SNR) cell.
+The 4 Sep write-up in the section under this one is on 36 files, one seed per
+cell, and several of its numbers were a single noise draw.
+
+**Today's verify line passed before I touched anything.** The row asks for a
+lock rate of 90%+ at ≥10 dB for PSK and FSK. Measured on 252 files at the
+start of the day: **168/168 files at ≥10 dB decode, 168/168 lock, 0
+confidently wrong, across all 6 modulations** — 100%, not 90%. 16-QAM is
+reliable at 10 dB, not the 13 dB the row asks for. So the day's real work was
+where the row said it wasn't: 4 and 8 dB, where 49 of 252 files were missing.
+
+### Where the 49 misses actually were
+
+| miss | files | owner | state |
+|---|---|---|---|
+| 2FSK/4FSK at 4 and 8 dB | 28 | **upstream (S2)** — receiver already perfect | worked around in S3 today |
+| 16-QAM at 8 dB | 7 | nobody — see below | not a defect |
+| 8-PSK and 16-QAM at 4 dB | 14 | operating envelope | out of reach |
+| 8-PSK at 8 dB reported `low_confidence` while decoding | 7 | **mine** | fixed today |
+
+**1. The 28 FSK files were never a receiver problem, and that is the finding
+worth carrying to standup.** Handed the true symbol rate, S3 demodulates every
+one of them: **28/28 decode at a median raw BER of 0.004**, at both 4 and 8 dB.
+Handed S2's parameters it produced *no LLRs at all* — the search returned
+`failed` with `chain_runs = 0` on 21 of them.
+
+The cause is upstream and Dheeraj has already documented it in
+`reports/s2_envelope.md` as a deliberate, quantified, low-SNR-only gap: the
+envelope predicate reads low-SNR FSK captures as non-constant-envelope, so they
+go to the *linear* symbol-rate estimator. Measured this morning across 252
+files: **S2's symbol rate is exact on 224 of 252**, and the 28 exceptions are
+exactly the 2FSK/4FSK files at 4 and 8 dB, wrong by up to **81%**.
+`fsk_order_hypotheses` is empty on exactly those 28 — **not on all files**,
+which is what my 4 Sep report claimed and is now corrected.
+
+**Dheeraj — what your write-up could not know is what the gap costs**, because
+it is measured downstream: 28 files, 11% of the corpus, on a receiver that
+handles all of them correctly the moment the rate is right. That is the largest
+single item I can see on the board. It is still worth fixing at source, because
+every stage below S2 inherits the wrong rate and only S3 now works around it.
+
+**2. 16-QAM at 8 dB is not a defect and should not be treated as one.** Seven
+files, raw BER **0.0117-0.0124**, against a 1% line this study draws. The
+receiver's own estimate is 0.0100-0.0109 — right to within 13% — and it
+returns `ok`, correctly. 1.2% is well inside the **3% ceiling Nehal measured**
+for statistical code recovery, so these decode in the pipeline sense and count
+as misses only in mine. Moving the decode line to claim them would be changing
+the definition of the gate in order to pass it.
+
+**3. 8-PSK and 16-QAM at 4 dB are the operating envelope.** `truth-params`
+does not decode them either — median raw BER 0.23 and 0.31 with the true rate
+and zero offset. Every check refuses them, which is the right answer.
+
+### What that came to, measured the same way at the end of the day
+
+| arm | decodes | mod correct | confidently wrong | median s |
+|---|---|---|---|---|
+| `truth-params` — the true rate, no offset | 231/252 | 252/252 | 0 | 0.37 |
+| `s2-top` — S2's top hypothesis only | 178/252 | 252/252 | 0 | 0.31 |
+| **`search` — S2's ranked hypotheses** | **230/252** | 239/252 | **0** | 0.46 |
+
+**203/252 -> 230/252**, and the blind search is now within **one file** of what
+the receiver can do when handed perfect parameters. 2-FSK is 42/42 and 4-FSK
+41/42, both at every SNR including 4 dB. Modulation choice went 217 -> 239.
+
+**Nothing at >=10 dB moved: still 168/168 decode, 168/168 lock, 0 confidently
+wrong.** That was the thing to protect and it is intact.
+
+**Confidently wrong is 0 on all 252 files on all three arms**, which is the
+number that matters most and the one every change today was constrained by.
+
+The 22 remaining misses, and every one of them is *refused* rather than
+claimed:
+
+| files | what | status |
+|---|---|---|
+| 7 | 16-QAM at 8 dB, raw BER 0.011-0.014 | `ok`, honestly — inside Nehal's 3% ceiling |
+| 7 | 16-QAM at 4 dB, raw BER ~0.48 | `low_confidence` |
+| 7 | 8-PSK at 4 dB, raw BER ~0.48 | `low_confidence` |
+| 1 | `4fsk_8dB_7031`, chose QPSK at 0.48 | `low_confidence` |
+
+Cost: worst case 11.4 s against a 20 s budget, on `2fsk_4dB_8024` — a file that
+now decodes and used to return nothing, taking 10 chain runs to get there.
+Median 0.46 s. These are wall-clock and were taken with another study running
+on the same machine, so read them as an upper bound; the conclusion that the
+search sits well inside its budget holds either way.
+
+**One behaviour change to declare:** raising 16-QAM's threshold to 0.59 moves
+`16qam_8dB_2019` from `ok` to `low_confidence`. It has a raw BER of 0.011 and
+does not cross the decode line either way, so this is the threshold being more
+honest rather than less useful — but it is a file that used to say `ok` and now
+does not, and that belongs in writing rather than in a diff.
+
+### Block A — the lock thresholds, per scheme instead of per family
+
+`_LOCK_THRESHOLD` was keyed by family: `{"psk": 0.60, "qam": 0.55}`. One key
+too coarse. The metric is `|E[u^S]|` with S the constellation's rotational
+symmetry, so raising a noisy symbol to the S-th power raises its phase error
+with it, and at a fixed symbol-error rate the metric falls as S rises.
+**Measured at 8 dB, correct hypothesis, 252 files: bpsk 0.950, qpsk 0.837,
+8psk 0.488, 16qam 0.680.** BPSK and 8-PSK cannot share a number, and 0.60 was
+refusing every working 8-PSK file at 8 dB.
+
+Set from the geometric midpoint of the gap between the two populations this
+threshold is responsible for — 1008 runs, every corpus file through every
+linear plug-in (`reports/s3_lock_threshold.md`):
+
+| scheme | before | after | worst that decodes | best genuine failure | gap |
+|---|---|---|---|---|---|
+| bpsk | 0.60 | **0.23** | 0.857 | 0.060 | 14.36x |
+| qpsk | 0.60 | **0.46** | 0.636 | 0.328 | 1.94x |
+| 8psk | 0.60 | **0.30** | 0.488 | 0.184 | 2.65x |
+| 16qam | 0.55 | **0.59** | 0.784 | 0.437 | 1.79x |
+
+**7 false negatives recovered, 0 false positives added.** Two things worth
+stating rather than burying:
+
+- **16-QAM goes up.** The row says lower the thresholds; three of four come
+  down hard and the measurement says this one was slightly loose. Reported as
+  measured.
+- **The one judgement in that table** is that runs between the 1% decode line
+  and a 2% genuine failure are in neither population. On this corpus that band
+  holds exactly the seven 16-QAM files above. Include them and 16-QAM does not
+  separate at all — its worst decoding file reads 0.784 and its best
+  non-decoding one 0.788.
+
+QPSK's old margin was thinner than it looked: at 4 dB it reads 0.636 against a
+0.60 threshold, a 6% margin. At 0.46 it is 1.39x either way.
+
+### Block B — loop bandwidths, and the thing the sweep actually found
+
+112 files x 5 bandwidths x 2 arms per knob, driving the real chain through
+`LinearDemod`'s constructor rather than a copy of the loops. The second arm
+always carries the impairment the loop exists to remove, because a sweep that
+exercises only the clean side of a trade reports a straight line.
+
+**No tracking bandwidth moved, in the end.** BPSK and QPSK read 28/28 in all
+ten cells of both arms — no discriminating power, so no change. 16-QAM's timing
+grid reads 12/14/13/14/13 with median BER 0.020/0.009/0.015/0.009/0.019:
+non-monotone across a 16x range, which is a response with no reliable signal in
+it rather than an optimum at 0.002.
+
+**8-PSK's carrier bandwidth went 0.02 -> 0.04, shipped, and was reverted the
+same evening. That reversal is the most important thing in this section.** The
+sweep supported it: clean arm identical at 21/28, impaired arm 20/28 -> 21/28,
+monotone across the grid. What the sweep cannot see is that **it only ever runs
+the correct plug-in.** Run a QPSK capture through the 8-PSK plug-in — the
+subset trap `alphabet_used` exists for — and the wider loop smears the
+four-point cloud across all eight decision regions:
+
+| 8-PSK carrier bw | `alphabet_used` | verdict | actual BER | self-estimate |
+|---|---|---|---|---|
+| 0.02 | 0.691 → **fail** | `low_confidence` | 0.484 | 0.0029 |
+| 0.04 | 0.947 → **pass** | **`ok`** | 0.484 | 0.0035 |
+
+On `qpsk_8dB_2007` the stage returned **`status: ok` with a self-estimated
+output BER of 0.0035 over a stream 48.4% wrong** — the 4 Sep failure walking
+back in through a different door, bought for one file on an injected-offset
+arm. Reverted.
+
+Two things I want on the record about it. It is **invisible to the lock-gate
+harness**, because that study only ever runs the correct plug-in on each file
+and the search picks QPSK for a QPSK capture — so `confidently wrong` stayed 0
+across all 252 files while this was live. It was found only by re-running the
+cross-hypothesis threshold study after changing the loop, which I did because
+the thresholds had been measured against a loop I then modified. And it means
+**a per-scheme sweep over correct hypotheses cannot see a check that only
+wrong hypotheses exercise** — which is now written into the constant.
+
+**What the sweep actually found was structural.** Handed a residual carrier
+offset of 0.02 x Rs — one `CARRIER_OFFSET_LIMIT` explicitly permits, so the
+pipeline really does hand it over — 16-QAM decoded **1 of 28** files at every
+bandwidth that did not also cost clean files. That is an acquisition problem,
+not a tracking one, and `costas_loop` had no acquisition phase: one bandwidth
+end to end, while its sibling `gardner_sync` has gear-shifted since it was
+written.
+
+It now gear-shifts too, 4x for 100 symbols (`carrier.ACQ_SYMBOLS`).
+
+| scheme | carrier bw | clean | impaired (before) |
+|---|---|---|---|
+| bpsk | 0.02 | 28/28 | 28/28 (28) |
+| qpsk | 0.02 | 28/28 | 28/28 (28) |
+| 8psk | 0.02 | 21/28 | 20/28 (18) |
+| **16qam** | 0.02 | **14/28, unchanged** | **9/28 (1)** |
+
+**How the 100 was arrived at is the part worth reading, because I got it wrong
+first.** The constant shipped at 150, chosen from clean and offset decode
+counts. Those counts are identical at 100 and 150 — and blind to
+`16qam_8dB_5019`, which sits at raw BER 0.0119, above the 1% line either way,
+so it is a non-decode before and after and contributes nothing to any count.
+At 4x/150 that file loses carrier lock outright: metric 0.696 -> 0.023, raw
+BER **0.0119 -> 0.4093**. Caught on the end-of-day verification pass by
+diffing against a re-measured pre-change baseline, not by any test.
+
+Re-chosen on a per-file regression check — a clean-arm file whose BER more
+than doubles — over 8-PSK and 16-QAM, 4-13 dB, 56 files:
+
+| ratio x symbols | clean decodes | offset decodes | regressions |
+|---|---|---|---|
+| 1.0 x 0 (single speed) | 35/56 | 22/56 | 0 |
+| 4.0 x 50 | 35/56 | 28/56 | 0 |
+| **4.0 x 100** | **35/56** | **31/56** | **0** |
+| 4.0 x 150 (was shipped) | 35/56 | 30/56 | **1** — 34x |
+| 8.0 x 50 | 34/56 | 32/56 | **4** — up to 8254x |
+
+100 strictly dominates the 150 I first shipped: same clean count, one *more*
+impaired-arm file, and no regression. The 8x row is why the column exists — a
+wide acquisition on a decision-directed detector can slew the phase into a
+wrong rotation and the narrow tracking loop then holds it there, so "wider
+acquires better" stops being true well before a decode count notices.
+
+**This is the same mistake I flagged elsewhere today and then made anyway:**
+choosing on a binary count when the failure mode lives in a continuous
+quantity. It is the reason 16-QAM's timing bandwidth was left alone, and I
+should have applied it to my own new constant in the same hour.
+
+**The corpus cannot see this problem at all.** Every file in it has a true
+carrier offset of exactly zero, so the acquisition transient this fixes only
+exists on a real capture or an injected one. It is the single thing done today
+that no corpus number can verify, and a field capture would have found it the
+expensive way.
+
+**Stated rather than quietly taken:** 16-QAM at 0.04 reaches 13/28 impaired,
+four better, and loses `16qam_10dB_4020` on the clean arm — raw BER 0.0029 ->
+0.0299. That is a 10 dB file and >=10 dB is the region the day gate is written
+on, so I did not trade a measured corpus file for an injected scenario. The
+remaining exposure is 9/28 rather than 1/28, and choosing the last four is a
+core-lock decision, not a quiet one.
+
+
+### The rate rescue — `lockcheck.strongest_line`
+
+The screen already computed the evidence and threw it away. `symbol_rate_line`
+asks "how strong is the line at the rate I was given"; its new twin asks
+"where is the line", off the **same statistic and the same averaged
+spectrum**. When every candidate has been refused for absence, the search now
+proposes that rate — exactly as it already proposed a corrected carrier offset
+when a candidate was refused for misalignment. Same pattern, other axis.
+
+Measured (`reports/s3_rate_rescue.md`), FFTs only, no chain:
+
+- **252/252 corpus files: the proposed rate is the true one.** Worst relative
+  error **0.0000%**; line score 19.7-196.9 against a present-limit of 8.0.
+- **384 noise draws at three record lengths: the screen passes the proposal
+  0 times.** 369 outright `fail`, 15 in the abstain band, 0 `pass`. Worst
+  noise score 4.85 against the 8.0 needed to declare a line present.
+
+It is deliberately not a symbol-rate estimator and must not become one: one
+rate per family, only after S2's have all been refused, and the proposal
+re-enters the same screen as any other candidate. Estimation is S2's stage.
+
+### A correction to what I wrote on 4 Sep
+
+I reported `2fsk_4dB_2024` as a presence-threshold near miss — line score 4.4
+against a limit of 4.5 — and concluded that 4 dB needed **a better statistic,
+not a looser number**. The statistic was fine. The 4.4 was scored at **48 479
+Hz, the rate S2 offered**; at the true 50 000 Hz the same statistic on the same
+file scores **45.2**, five times the limit. The threshold was never what stood
+in the way. Had I taken that row at face value this morning I would have spent
+the day tuning a number that was already right.
+
+### New, and it belongs to everyone: the symbol rate is binary
+
+**S3 tolerates a symbol-rate error of about 0.01% and fails at 0.05%.**
+Measured on `qpsk_20dB_2011` and `16qam_20dB_2023`: 0.01% error decodes at BER
+0.00000; 0.05% returns `failed`, and so does everything above it.
+
+The mechanism is `signal_presence` looking for the line at the rate it was
+given, on a 2^18-point spectrum whose bins are 0.76 Hz apart at fs = 200 kHz —
+0.05% off is ~33 bins away and reads the noise floor. This is the right
+behaviour: a clean refusal, never a confident lie. But it means a rate that is
+3% wrong is not "slightly worse", it is nothing at all, and it is why the 28
+FSK files produced no output rather than poor output.
+
+I found this by mis-designing a study: the timing-loop sweep's impaired arm
+used a 1% rate error and came back 0/28 in every cell of the grid. A sweep
+where every cell reads zero is not a measurement, and chasing why gave the
+number above.
+
+### End-of-day verification, and the two defects it found
+
+Ran the whole suite and re-ran every study against the code as it actually
+ships. **549 passed, 4 skipped, 1 xfailed** (13 min); targeted plus contract
+257 passed. Two defects in work I had already committed, both now fixed:
+
+**1. `_CARRIER_LOOP_BW["8psk"] = 0.04` blinded the subset-trap check. Reverted.**
+Detailed in Block B above. `status: ok` with a self-estimate of 0.0035 over a
+stream 48.4% wrong. **It was invisible to the harness I had used all day** —
+`reports/s3_lock_gate.md` runs only the correct plug-in per file, so
+`confidently wrong` read 0 across all 252 files while this was live. It
+surfaced only because I re-ran the *cross-hypothesis* threshold study, and I
+only did that because the thresholds had been measured against a loop I then
+modified. With 8-PSK back at 0.02 the populations separate again exactly as
+first measured — admit ≥ 0.488, refuse ≤ 0.184, 2.65x — so every shipped
+threshold is now validated against the loop that ships rather than one that
+no longer exists.
+
+**2. `ACQ_SYMBOLS = 150` cost one file 34x. Now 100.** I chose the acquisition
+length on clean and impaired *decode counts*, which are identical at 100 and
+150 and blind to `16qam_8dB_5019`: raw BER 0.0119, above the 1% line either
+way, so a non-decode before and after that contributes to no count — and at
+4x/150 it loses carrier lock outright, 0.696 → 0.023, BER 0.0119 → **0.4093**.
+Re-chosen on a per-file regression check: 100 gives the same clean count, one
+*more* impaired-arm file than 150, and zero regressions. Caught by diffing
+against a re-measured pre-change baseline, not by any test.
+
+**3. A number I could not reproduce.** The before-figure `search 203/252` came
+from a CSV the after-run had overwritten — a memory, not a measurement. Now
+re-measured from a worktree at `aed281b`; it reproduces 203 exactly, and
+`reports/s3_lock_gate.md` carries the command so nobody has to take my word.
+
+**4. `reports/s3_s4_junction.{csv,md}` re-measured** — Nehal's boundary, last
+taken 3 Sep. **Every summary number is unchanged**, so the S3 output S4 sees
+is the same shape it was; only per-rotation intermediates moved.
+
+The thread joining 1 and 2 is worth stating once: **both were chosen on a
+binary count when the failure lived in something continuous.** It is the same
+error I identified and avoided on 16-QAM's timing bandwidth, then made twice
+in the same hour on my own new constants.
+
+### Open, mine
+
+- Non-coherent FSK LLRs still carry a **measured** calibration constant of 2.0
+  rather than a derived one (`softmap._NONCOHERENT_CALIBRATION`).
+- `equaliser_converged` still records UNKNOWN and does not vote:
+  `CMAResult.converged` asks whether modulus error improved, which is
+  meaningless with nothing to equalise. Becomes a vote when the zoo grows a
+  multipath channel.
+- Soft-vs-hard coding gain still unmeasured.
+- 8-PSK and 16-QAM at 4 dB are unreached by anything in S3.
+
+### Needs
+
+- **Nehal** — the rate rescue changes what S3 returns on low-SNR FSK: files
+  that used to come back `failed` with no LLRs now return `ok` with a full
+  soft stream. Worth re-running `zoo_gate_study.py`; the population it sees
+  has grown.
+- **Naidhruv** — `contracts/`, `service/`, `web/`, `eval/` are still zero
+  entries on `main` and your STATUS section still reads "(not started here)".
+  The **3 Sep integration gate has still not closed** — a file in through a
+  browser and out as decoded bits through seven real stages. 4 Sep was its
+  overflow. Raising it rather than absorbing it quietly, as the plan asks.
+
+### 4 Sep — lock-failure detection, hypothesis retry, clean give-up
+
+**Branch `anvith/s3-robustness`.** Full write-up and every number:
+`reports/s3_lock_gate.md`. New code: `pipeline/s3_receive/lockcheck.py` and
+`search.py`; `tests/unit/test_s3_lockcheck.py` (85 tests).
+
+**The headline, and it is not a good one.** Run blind against Dheeraj's real RF
+corpus, S3 was **reporting a clean lock over a coin flip on 19 of the 36
+files** — `status: ok`, `confidence: 0.985`, `estimated_output_ber: 0.000000`,
+actual bit error rate **0.485**. It had been doing that since the moment S2
+landed and nothing in the build could see it.
+
+**The mechanism, because it is a two-stage bug and the second half is mine.**
+`s2_estimate.estimate_cfo` raises the signal to the M-th power and takes the
+strongest line. On a pulse-shaped stream the strongest line is the **symbol
+rate**, not `M × cfo`, so the reported offset comes back near `Rs / M`.
+De-rotating by `Rs / M` advances the constellation by exactly one symmetry step
+per symbol — 90° for QPSK, 180° for BPSK, 45° for 8-PSK — and my lock metric
+`|E[u^S]|` is *invariant* under precisely that, by construction rather than by
+accident. Neither stage was checkable against the other, because the only
+number either one produced said everything was fine.
+
+**Dheeraj — the S2 half is yours and worth fixing at source.** The CFO search
+should exclude the symbol-rate line, or rank M-th power peaks by something
+other than height. The corpus makes it a five-minute check: every file has a
+true offset of exactly **zero**, and S2 reports a non-zero one on **33 of 36**.
+
+**What closed it: lock is no longer one number.** Seven independent checks
+against different evidence, any of which can veto (`lockcheck.py`). Checks are
+three-valued — pass, fail, or *unknown* — because a check with no evidence that
+returns `pass` looks like corroboration and is worse than no check at all.
+
+| check | evidence | found by |
+|---|---|---|
+| `signal_present` | cyclostationary line at the claimed symbol rate | pure noise came back `low_confidence`, not `failed` |
+| `carrier_aligned` | spectrum still centred after the CFO hypothesis | the 19 files above |
+| `output_usable` | the receiver's **own** estimated output BER | `8psk_8dB_2013`: 2-FSK returned `ok` while estimating its own output 19 % wrong |
+| `alphabet_used` | does the cloud use the whole constellation claimed? | the subset trap, below |
+| `tone_alias` | FSK offset that is a whole tone spacing | `4fsk_13dB_2033`, below |
+| `timing_converged` | Gardner — was measured, reported, and not counted | — |
+| `carrier_locked` | the S-th power metric, kept | — |
+| `equaliser_converged` | recorded as **unknown**, deliberately | see below |
+
+**Measured on the corpus, blind, three arms over the same 36 files:**
+
+| arm | decodes | mod correct | confidently wrong | *old rule would have been* | median |
+|---|---|---|---|---|---|
+| true rate, no offset | 33/36 | 36/36 | 0 | *0* | 0.33 s |
+| S2's top hypothesis | 4/36 | 36/36 | **0** | ***19*** | 0.33 s |
+| **ranked hypotheses, searched** | **29/36** | 31/36 | **0** | *0* | 2.70 s |
+
+The italic column is what the old rule would have said about the *same runs*,
+reconstructed from the per-check verdicts each run recorded — measured, not
+remembered, and regenerable. It is a floor: it cannot speak for the four files
+where today's build gives up before the carrier loop runs at all.
+
+**Block C — retry across the hypotheses S2 ranked** (`search.receive_best`).
+S2 hands over ranked lists and S3 was reading only the top of each, which is
+the same as pretending the ranking was a decision. Reading the rest took files
+decoding from **4 to 29 of 36**. It is bounded, and the bound is the design:
+
+- **Screen before running.** `signal_present` answers "is there a signal at
+  this rate" from one FFT in 8–28 ms. Candidates that fail it never cost a
+  chain run. 72–90 combinations screen down to 4–12 for about half a second.
+- **Screen once per distinct measurement**, not per candidate — presence
+  depends on family and rate, alignment on rate and offset, neither on which
+  plug-in is asking. At most 24 measurements for 90 candidates.
+- **A wall clock behind both**, because the argument above is about this corpus
+  and a judge will bring something else.
+
+Worst file **5.6 s** against a 20 s budget. Without the screen the same
+candidate list is 6 modulations × 3 rates × 5 offsets of *full* chain runs.
+
+**It does not silently repair S2.** A rejected carrier offset becomes a *new
+candidate* carrying the measured correction, scored beside every other and
+recorded in `hypotheses` with the reason it was created. The rejection stays in
+the record. Quietly patching the input would have left this bug upstream with
+nothing pointing at it, and the only reason it was found is that the number was
+visible.
+
+**The subset trap — found while checking my own work against Dheeraj's
+classifier, and the nastiest of the lot.** QPSK's four points *are* four of
+16-QAM's sixteen, and three of 8-PSK's eight. Run a QPSK capture through the
+16-QAM plug-in and nothing about the reception is wrong: every symbol lands
+exactly on a legal constellation point, so the decision-directed noise variance
+comes out tiny and the LLRs come out enormous.
+
+    qpsk signal, 16-QAM plug-in    status ok   confidence 0.984
+                                   estimated_output_ber 1.8e-21
+                                   ACTUAL BER 0.482
+
+Every check listed above asks whether the receiver locked to the constellation
+it was *told* to assume. None of them could ask whether that was the right
+constellation — a four-point cloud is a perfectly good 16-QAM reception in
+which twelve points happen never to be used. `alphabet_used` asks exactly that,
+and a real 16-QAM stream uses all sixteen. Measured across four schemes × four
+hypotheses × 4–25 dB: **correct hypothesis ≥ 0.992 evenness, wrong-but-`ok`
+≤ 0.670.** It vetoes and never confirms — at 4 dB noise scatters symbols onto
+every point and the check goes blind, which is precisely when the carrier and
+output checks are doing the work.
+
+**Nehal — this one matters to your pre-flight specifically.** On a
+mis-classified file `estimated_output_ber` was not merely uninformative, it was
+1.8e-21 with `valid: true`. It is now `false`.
+
+**Two more things the corpus taught, both now closed:**
+
+- **FSK has a frequency ambiguity exactly as PSK has a rotation one**, and this
+  file claimed for two days that it did not. Shift an M-FSK signal by one tone
+  spacing: the tone bank finds the same M tones in the same places while every
+  label moves by one. `4fsk_13dB_2033` — identical tones, identical margins,
+  every check passing, bit error rate **0.248**, which is exactly one position
+  of slip on a Gray-labelled 4-ary alphabet. S3 cannot resolve it, so it now
+  refuses the hypothesis. Emitting M label-rotations the way the linear branch
+  emits S phase-rotations is the symmetric fix and would multiply S4's per-file
+  work by the FSK order — **Nehal, that is your call, not mine**; it is written
+  up in `fsk_plugin.py` against the 7 Sep FSK row.
+- **Two indistinguishable hypotheses are separated by Occam.** The same file
+  produced an identical estimate at 0 Hz and at −49 951 Hz, and the large
+  offset won on a meaningless tie-break. A hypothesis needing a bigger
+  correction needs more evidence for it, so the smaller correction now wins a
+  tie.
+
+**Naidhruv:** `values["envelope"]` is `"inside"` or `"outside"` on every
+result — "the input is beyond what S3 supports" versus "fair input, nothing
+recoverable in it". That is the `/envelope` endpoint's field. I did **not**
+widen the status enum to the Command Center's `out_of_envelope` today: you have
+not landed `contracts/`, so there is no consumer to serve, and a fourth value
+that every existing `status == "ok"` branch has never seen is a poor trade on
+an integration day. It follows the moment the Pydantic model exists.
+
+**Nehal — your ask, done.** `estimated_output_ber` and
+`estimated_output_ber_valid` are now **primary keys**: present on every path of
+every plug-in including the ones that emit no bits, guaranteed by
+`result.REQUIRED_VALUES` and `S3Result.__post_init__`, asserted across 6
+modulations × 7 adversarial inputs. They were previously on the success path
+only, so a defensive `values["estimated_output_ber"]` raised `KeyError` on
+exactly the inputs the check exists to catch.
+
+Two things about it you should know before your pre-flight trusts it further:
+
+1. **The validity flag was the part that was broken**, not the number. It was
+   gated on carrier lock alone, so on all 19 files above it read `true` beside
+   an estimate of 0.000000. It is now gated on every check. Your
+   `preflight_reason` only speaks when valid, so your gate was already safe —
+   but it was safe by luck of ordering, not because the flag meant anything.
+2. Your measurement that the estimate separates recovery from failure was made
+   on a corpus with `cfo=0`; the separation you found is real and the numbers
+   above do not contradict it. Worth re-running `zoo_gate_study.py` against
+   this branch, since the validity flag now excludes a population it used to
+   include.
+
+**Dheeraj — your fixture is deleted, as promised.**
+`tests/fixtures/rf_channel.py` and `tests/fixtures/local_s2.py` are gone. Every
+S3 test and both report scripts now go through `zoo.rf` and
+`pipeline.s2_estimate`. There is one modulator in this repo and one symbol-rate
+estimator, not two of each. `tests/fixtures/corpus.py` replaces them: it reads
+your corpus, regenerates the transmitted bits from the seed in each truth JSON
+(verified exact — relative mismatch 1.3e-9, which is the float32 the WAV is
+stored in), and does the correlation alignment in **one** place.
+
+That last part found a real bug in my own reporting: `measured_ber` in two
+report scripts sliced a comparison window as long as the reference, which
+leaves exactly one candidate offset and it is always the wrong one. It reported
+**0.485 for files that decode exactly**. Any earlier number of mine from those
+two scripts that looked like a coin flip should be re-read.
+
+**Still open from today:**
+
+- **Seven files do not decode**, all at 4–8 dB. Four are FSK, and they split
+  two ways with different owners. `2fsk_8dB_2025` (S2 offers 11987, 9345,
+  59987 Hz against a true 50000) and `4fsk_4dB_2030` (65634) fail because the
+  true rate is not in the list — the retry loop can only search what it is
+  given, so these come back `failed` with the measured line score in the reason
+  rather than as a wrong answer. **Dheeraj**, one predicate is behind both:
+  `estimate()`'s envelope test reads these WAVs as non-constant-envelope, so
+  FSK captures go to the *linear* rate estimator and `fsk_order_hypotheses`
+  comes back empty on all 36 files. That is worth more to this gate than
+  anything left in S3.
+- **`2fsk_4dB_2024` is mine and it is a near miss.** S2's rate is 48479 against
+  a true 50000 — close enough to work — and my presence check scored it 4.4
+  against a limit of 4.5. That limit comes from the worst noise draw at the
+  shortest record length, so loosening it to catch this file spends the margin
+  that keeps noise out. The fix is a better statistic at 4 dB, not a looser
+  number, and that is 5 Sep's row.
+- **`equaliser_converged` does not vote**, and is recorded as `unknown` rather
+  than quietly dropped. `CMAResult.converged` asks whether the modulus error
+  *improved*, which is meaningless on a channel with nothing to equalise — it
+  reads `False` on `qpsk_20dB_2011`, a file that demodulates to a bit error
+  rate of exactly zero. Letting it veto would have failed a perfect file, and
+  the zoo has no multipath to set an absolute threshold against. It becomes a
+  vote the day the corpus grows a channel that needs an equaliser.
+- **Choosing the modulation is still not S3's job.** With no ranking from S2
+  the search runs every survivor and picks on reported quality — that works
+  here and it is not a classifier. 31 of 36 currently correct; the five misses
+  are all files where nothing locks at all.
+
+**Dheeraj — I tested against your classifier branch before it merges, and
+found two bugs on my side.** `modulation_hypotheses` is
+`[(class_name, probability)]`, and my reader coerced every value with
+`float()`, so the first ranking you handed over would have raised
+`ValueError: could not convert string to float: 'qpsk'`. Second, a modulation
+your classifier did not rank defaulted to a prior of 1.0 — *above* a
+0.91-probability match — so the three schemes you never mentioned would have
+been tried first. Both fixed and pinned against the exact shape
+`S2Result` declares on `dhiraj/zoo-v0`. With the ranking wired in:
+
+| what S2 says | result | chain runs |
+|---|---|---|
+| correct top guess | `ok` → qpsk | **1** |
+| **corrupted** top guess (16qam at 0.80 on a QPSK file) | `ok` → qpsk | 3 |
+| no ranking at all | `ok` → qpsk | 6 |
+
+That middle row is the 4 Sep cross-check — *corrupt S2's top hypothesis and the
+pipeline still decodes via the second* — holding from S3's side. It only holds
+because of `alphabet_used`: before it, 16-QAM returned `ok` on that file and
+the search stopped there.
+
+---
 
 **Landed 29 Aug – 3 Sep. Merged to `main`.** The column is complete, and the
 defects found while closing it are listed below rather than left implicit.
@@ -438,6 +1158,8 @@ defects found while closing it are listed below rather than left implicit.
 | 1 Sep | no label lookup in S3 | asserted by test, 0 hits |
 | 2 Sep | LLR contract, all six modulations | 45 contract tests green |
 | 3 Sep | estimated output BER within 2x of actual | holds on every locked file |
+| 4 Sep | pure noise → `failed` with a reason, no crash | 6/6 modulations, 12–34 ms |
+| 4 Sep | ≥40% of the corpus to usable LLRs, ≥4 of 6 modulations | **29/36 (81%), 6 of 6** |
 
 ### The junction — verified end to end
 
@@ -498,12 +1220,11 @@ resolved — everything above was regenerated on 3.11.9.
   not a derived one. It holds across both FSK orders and a 4 dB span, which is
   why I trust it as a missing term rather than a fudge. Somebody should derive
   it properly.
-- Everything is measured against `tests/fixtures/rf_channel.py`, which drives
-  Nehal's `local_zoo`. **Dheeraj: the day your zoo lands, my fixture dies and I
-  re-run every number above.** My fixture and my demodulator deliberately share
-  `bitmap.py` so there is one mapping rather than two — but that does mean a
-  mapping error would be invisible to both, which the Gray-adjacency test
-  reduces rather than removes.
+- ~~Everything is measured against `tests/fixtures/rf_channel.py`~~ —
+  **resolved 4 Sep.** The fixture is deleted; signals come from `zoo.rf` and
+  the corpus. The shared-`bitmap.py` caveat still stands and always will: one
+  mapping used by both sides means a mapping error is invisible to both, which
+  the Gray-adjacency test reduces rather than removes.
 - 16-QAM and FSK have not been taken through to S4; the junction study covers
   BPSK, QPSK and 8-PSK.
 - Soft-vs-hard coding gain is unmeasured. The chain decodes exactly at every
