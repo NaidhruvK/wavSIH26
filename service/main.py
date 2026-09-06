@@ -382,9 +382,10 @@ def get_run_report(run_id: str) -> dict[str, Any]:
     # 1. If active background job has completed, return its result directly
     job = job_runner.get_job(run_id)
     if job and job.status == "completed" and job.result is not None:
-        if hasattr(job.result, "model_dump"):
-            return job.result.model_dump()
-        return dict(job.result)
+        rep_dict = job.result.model_dump() if hasattr(job.result, "model_dump") else dict(job.result)
+        if "status" not in rep_dict:
+            rep_dict["status"] = "failed" if rep_dict.get("envelope_verdict") == "failed" else "completed"
+        return rep_dict
 
     # 2. Check SQLite database
     run_record = get_run(run_id)

@@ -66,7 +66,12 @@ def check_status() -> dict:
     # Discover and run runnable test suite (contracts + service)
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
-    runnable_dirs = [REPO_ROOT / "tests" / "contract", REPO_ROOT / "tests" / "service", REPO_ROOT / "tests" / "eval"]
+    runnable_dirs = [
+        REPO_ROOT / "tests" / "contract",
+        REPO_ROOT / "tests" / "service",
+        REPO_ROOT / "tests" / "eval",
+        REPO_ROOT / "tests" / "e2e",
+    ]
     for d in runnable_dirs:
         if d.is_dir():
             for f in sorted(d.glob("test_*.py")):

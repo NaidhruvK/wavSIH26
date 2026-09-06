@@ -9,9 +9,9 @@ status:
 
 test:
 	@if command -v pytest >/dev/null 2>&1; then \
-		pytest tests/contract/ tests/service/ tests/eval/ -v; \
+		pytest tests/contract/ tests/service/ tests/eval/ tests/e2e/ -v; \
 	else \
-		$(PYTHON) -m unittest tests/contract/test_stage_contract.py tests/contract/test_registry_contract.py tests/service/test_config.py tests/service/test_db.py tests/service/test_mocks.py tests/service/test_job_runner.py tests/service/test_orchestrator.py tests/service/test_main.py tests/eval/test_metrics.py tests/eval/test_harness.py; \
+		$(PYTHON) -m unittest tests/contract/test_stage_contract.py tests/contract/test_registry_contract.py tests/service/test_config.py tests/service/test_db.py tests/service/test_mocks.py tests/service/test_job_runner.py tests/service/test_orchestrator.py tests/service/test_main.py tests/eval/test_metrics.py tests/eval/test_harness.py tests/e2e/test_e2e_pipeline.py; \
 	fi
 
 eval:

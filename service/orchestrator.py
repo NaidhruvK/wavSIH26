@@ -798,6 +798,9 @@ def orchestrate(
     return report
 
 
+DEFAULT_STAGE_OVERRIDES: dict[str, Callable[..., Any]] = {}
+
+
 def submit_analysis_job(
     run_id: str,
     file_path: Path | str,
@@ -811,6 +814,9 @@ def submit_analysis_job(
 ) -> Job:
     """Submit analysis pipeline to run asynchronously via JobRunner."""
     active_runner = runner or job_runner
+    merged_overrides = dict(DEFAULT_STAGE_OVERRIDES)
+    if stage_overrides:
+        merged_overrides.update(stage_overrides)
     return active_runner.submit_job(
         run_id,
         orchestrate,
@@ -821,6 +827,6 @@ def submit_analysis_job(
         stage_timeout=stage_timeout,
         total_timeout=total_timeout,
         runner=active_runner,
-        stage_overrides=stage_overrides,
+        stage_overrides=merged_overrides,
         db_path=db_path,
     )
