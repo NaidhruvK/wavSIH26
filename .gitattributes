@@ -12,3 +12,13 @@ models/dataset_train.csv -text
 models/dataset_holdout.csv -text
 *.wav binary
 *.npy binary
+
+# 7 Sep, caught by Nehal: the same autocrlf hole as classifier.txt, not yet
+# hit but live -- zoo/corpus/ccsds/*.payload.bin ships raw payload bytes
+# (caller-supplied via payload_text) with git's text/binary decision left
+# to its own heuristic (`git check-attr` showed "unspecified" for both).
+# Today's eight files are pure ASCII with no newline bytes, so the
+# heuristic's guess of "text" happened to be a no-op conversion -- the
+# first payload containing a newline byte gets silently mangled on any
+# Windows checkout otherwise, exactly like classifier.txt was.
+*.bin binary
