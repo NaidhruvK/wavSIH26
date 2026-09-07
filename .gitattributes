@@ -12,3 +12,16 @@ models/dataset_train.csv -text
 models/dataset_holdout.csv -text
 *.wav binary
 *.npy binary
+
+# Same hole, second time. The rules above cover *.wav, *.npy and the three
+# models/ files; they do not cover *.bin, and zoo/corpus/ccsds/ ships eight
+# .payload.bin. `git check-attr text binary` reported "unspecified" on all of
+# them, so git falls back to its content heuristic -- and these files are pure
+# ASCII with zero NUL bytes, so the heuristic calls them text.
+#
+# Nothing is corrupted today, and only by luck: they also contain zero newline
+# bytes, so LF->CRLF is a no-op on the current corpus. But `payload_text` is
+# caller-supplied, so the first payload containing a newline gets mangled on
+# every Windows checkout -- exactly the failure models/classifier.txt already
+# cost us. Closing it before that payload exists rather than after.
+*.bin binary

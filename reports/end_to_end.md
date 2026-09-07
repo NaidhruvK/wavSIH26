@@ -9,6 +9,15 @@ right and its explanation of them was wrong** — see "Correcting yesterday"
 below. Measured against `origin/main` at `093f431`, so Anvith's roll-off fix
 and tap caps are in the path.
 
+**Re-measured 6 September, and one number moved.** `anvith/s3-robustness`
+deleted `tests/fixtures/rf_channel.py`; this study was the last file importing
+it and is now on `tests.fixtures.corpus.synth`. **The channel implementation
+changed underneath the study**, so every number below was re-run rather than
+carried over — the 4 September figures had been measured by code that no
+longer exists. All 36 rows reproduce the same verdicts (30/36 recover, 15/18
+print). The printable fraction did not: see below. `reports/end_to_end.csv` is
+the re-run.
+
 ```
 payload -> conv encode 1/2 K=7 -> block interleave 8x12 -> QPSK
         -> AWGN + CFO + fractional timing offset
@@ -43,9 +52,27 @@ a fully inverted stream as a match.
 | text | 6 dB | 0.00005 | 0/3 | 0/3 |
 
 **30 of 36 recover. 15 of 18 text files print the message**, at a printable
-fraction of 1.000. Yesterday those columns read 15 of 36 and **0 of 18**.
+fraction of **0.9993 to 1.000** — 8 of the 15 at 1.000, 7 at 0.9993, which is
+one non-printing byte in a 1400-byte payload. Yesterday those columns read
+15 of 36 and **0 of 18**.
 
-Timing, whole chain per file including Viterbi: median 24 s, max 50 s. The 90 s
+**The 0.9993 is one byte, and it is measured rather than reasoned about.**
+Decoding 16 dB / seed 1 and counting: the payload is **1499 bytes with exactly
+one non-printing byte, at position 0** — value `0xBC`, and 1 - 1/1499 = 0.9993.
+It is the leading partial byte, where the decode starts mid-message: the
+recovered text below begins `plied. RAAYA SIH26147`, mid-word, because nothing
+in this chain does frame synchronisation and the payload has no sync marker to
+align to. So it is a byte-alignment boundary artifact, not noise surviving the
+decode — `raw_ber` is 0.00000 on every one of these rows.
+
+The 4 September version of this file published a flat 1.000. **That figure came
+from the deleted channel and it is the only number the re-run changed.** Which
+of the two is "right" is not a question I can settle: the channel that produced
+the 1.000 no longer exists to measure against. What can be said is that the
+verdict columns are unmoved and the delta is one boundary byte, which is the
+same absent-frame-sync gap already recorded under Limits.
+
+Timing, whole chain per file including Viterbi: median 26 s, max 47 s. The 90 s
 per-analysis budget holds with room, and the maximum is a 6 dB file — the ones
 that fail are the ones that cost most, because nothing short-circuits.
 
@@ -66,7 +93,7 @@ That is no longer true, and it was not true for the reason anyone thought.
 ```
 16 dB, text arm, seed 1, rotation 0
 period=96  block(depth=8,width=12)  rate 1/2 K=7  G=(0o171, 0o133)
-printable : 100.0%
+printable : 99.93%
 plied. RAAYA SIH26147 -- this message went through a modulator, a noisy
 channel and a blind receiver. Nothing about the interleaver or the code...
 ```
@@ -150,7 +177,10 @@ half of S3's rotations carry the stream inverted; the rank test is blind to
 inversion, so both recover identical parameters and both decode without
 complaint. Measured on one file: rotation 2 printable 1.000, rotation 0
 printable 0.001, same parameters. The study picks by rotation index and got
-the inverted one.
+the inverted one. (Those two figures are on the 4 September channel. The
+6 September re-run reproduces the same contrast on the same file at 0.9993
+against 0.0007 — the conclusion is unchanged, and the 0.0007 is the same
+single boundary byte counted from the other polarity.)
 
 This is **risk #9 arriving exactly as the register worded it** — "decode
 succeeds but bits are inverted". The printable fraction was already the
