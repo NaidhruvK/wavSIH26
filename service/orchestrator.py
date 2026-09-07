@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -231,19 +232,50 @@ def adapt_s1(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
         raw.elapsed_ms = elapsed_ms
         return raw
 
-    status = StageStatus.OK if getattr(raw, "status", None) == "ok" else StageStatus.FAILED
     bursts = getattr(raw, "bursts", [])
+    if isinstance(raw, dict):
+        snr_db = raw.get("snr_db")
+        noise_floor_db = raw.get("noise_floor_db")
+        occupied_bw_hz = raw.get("occupied_bw_hz")
+        bursts = raw.get("bursts", bursts)
+        fs = raw.get("fs")
+        raw_status = raw.get("status")
+        raw_reason = raw.get("reason")
+        psd_db = raw.get("psd_db")
+        psd_freqs = raw.get("psd_freqs")
+    else:
+        snr_db = getattr(raw, "snr_db", None)
+        noise_floor_db = getattr(raw, "noise_floor_db", None)
+        occupied_bw_hz = getattr(raw, "occupied_bw_hz", None)
+        fs = getattr(raw, "fs", None)
+        raw_status = getattr(raw, "status", None)
+        raw_reason = getattr(raw, "reason", None)
+        psd_db = getattr(raw, "psd_db", None)
+        psd_freqs = getattr(raw, "psd_freqs", None)
+
     values = {
-        "snr_db": getattr(raw, "snr_db", None),
-        "noise_floor_db": getattr(raw, "noise_floor_db", None),
-        "occupied_bw_hz": getattr(raw, "occupied_bw_hz", None),
+        "snr_db": snr_db,
+        "noise_floor_db": noise_floor_db,
+        "occupied_bw_hz": occupied_bw_hz,
         "burst_count": len(bursts) if bursts is not None else 0,
-        "fs": getattr(raw, "fs", None),
+        "fs": fs,
     }
 
+    # Envelope check: SNR below declared operating envelope (-5.0 dB)
+    if snr_db is not None and isinstance(snr_db, (int, float)) and not math.isnan(snr_db) and snr_db < -5.0:
+        status = StageStatus.OUT_OF_ENVELOPE
+        confidence = 0.0
+        reason = f"Signal SNR ({snr_db:.1f} dB) below declared operating envelope (-5.0 dB)"
+    elif raw_status == "ok":
+        status = StageStatus.OK
+        confidence = 0.98
+        reason = None
+    else:
+        status = StageStatus.FAILED
+        confidence = 0.0
+        reason = raw_reason
+
     artifacts = {}
-    psd_db = getattr(raw, "psd_db", None)
-    psd_freqs = getattr(raw, "psd_freqs", None)
     if psd_db is not None and psd_freqs is not None:
         try:
             freq_list = [float(f) for f in psd_freqs]
@@ -265,18 +297,18 @@ def adapt_s1(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
     return StageResult(
         stage="s1_detect",
         status=status,
-        confidence=0.98 if status == StageStatus.OK else 0.0,
+        confidence=confidence,
         values=values,
         hypotheses=[
             Hypothesis(
                 value="bursty" if values["burst_count"] > 0 else "continuous",
-                score=0.95,
+                score=0.95 if status == StageStatus.OK else 0.0,
                 evidence=f"{values['burst_count']} bursts detected",
             )
         ],
         artifacts=artifacts,
         elapsed_ms=elapsed_ms,
-        reason=getattr(raw, "reason", None),
+        reason=reason,
     )
 
 
@@ -298,18 +330,37 @@ def adapt_s2(raw: Any, elapsed_ms: float) -> StageResult:
     symbol_rate_score = (
         getattr(raw, "symbol_rate_score", 0.0) if not isinstance(raw, dict) else raw.get("symbol_rate_score", 0.0)
     )
+    raw_reason = getattr(raw, "reason", None) if not isinstance(raw, dict) else raw.get("reason")
+    raw_status = getattr(raw, "status", None) if not isinstance(raw, dict) else raw.get("status")
+
+    is_valid_rate = rate is not None and isinstance(rate, (int, float)) and not math.isnan(rate) and rate > 0
+    sps = (fs / rate) if is_valid_rate else 0.0
 
     values = {
         "symbol_rate": rate,
         "symbol_rate_hz": rate,
-        "sps": (fs / rate) if rate > 0 else 0.0,
+        "sps": sps,
         "cfo_hz": cfo_hz,
         "order_hint": order_hint,
         "symbol_rate_score": symbol_rate_score,
     }
 
-    status = StageStatus.OK if rate > 0 else StageStatus.LOW_CONFIDENCE
-    confidence = min(1.0, max(0.1, values["symbol_rate_score"] / 10.0)) if values["symbol_rate_score"] else 0.9
+    if raw_status == "failed":
+        status = StageStatus.FAILED
+        confidence = 0.0
+        reason = raw_reason or "S2 parameter estimation failed"
+    elif not is_valid_rate:
+        status = StageStatus.OUT_OF_ENVELOPE
+        confidence = 0.0
+        reason = raw_reason or "Estimated symbol rate is invalid or non-positive"
+    elif sps < 2.5 or sps > 40.0:
+        status = StageStatus.OUT_OF_ENVELOPE
+        confidence = 0.0
+        reason = f"Estimated SPS ({sps:.2f}) outside declared operating envelope [2.5, 40.0]"
+    else:
+        status = StageStatus.OK
+        confidence = min(1.0, max(0.1, values["symbol_rate_score"] / 10.0)) if values["symbol_rate_score"] else 0.9
+        reason = None
 
     hyps: list[Hypothesis] = []
     order = values["order_hint"]
@@ -330,7 +381,7 @@ def adapt_s2(raw: Any, elapsed_ms: float) -> StageResult:
         hypotheses=hyps,
         artifacts={},
         elapsed_ms=elapsed_ms,
-        reason=None,
+        reason=reason,
     )
 
 
@@ -365,11 +416,20 @@ def adapt_s3(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
             except Exception:
                 pass
 
+        values = base_dict.get("values", {})
+        # Map values["envelope"] == "outside" to StageStatus.OUT_OF_ENVELOPE
+        if values.get("envelope") == "outside":
+            status = StageStatus.OUT_OF_ENVELOPE
+            confidence = 0.0
+        else:
+            status = StageStatus(base_dict.get("status", "ok"))
+            confidence = float(base_dict.get("confidence", 0.95))
+
         return StageResult(
             stage="s3_receive",
-            status=StageStatus(base_dict.get("status", "ok")),
-            confidence=float(base_dict.get("confidence", 0.95)),
-            values=base_dict.get("values", {}),
+            status=status,
+            confidence=confidence,
+            values=values,
             hypotheses=[
                 Hypothesis(value=h["value"], score=h["score"], evidence=h.get("evidence", ""))
                 for h in base_dict.get("hypotheses", [])
@@ -377,6 +437,39 @@ def adapt_s3(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
             artifacts=artifacts,
             elapsed_ms=elapsed_ms,
             reason=base_dict.get("reason"),
+        )
+
+    if isinstance(raw, dict):
+        values = raw.get("values", {})
+        envelope_val = values.get("envelope") if isinstance(values, dict) else None
+        if envelope_val == "outside" or raw.get("envelope") == "outside":
+            status = StageStatus.OUT_OF_ENVELOPE
+            confidence = 0.0
+        else:
+            status = StageStatus(raw.get("status", "ok"))
+            confidence = float(raw.get("confidence", 0.9))
+        return StageResult(
+            stage="s3_receive",
+            status=status,
+            confidence=confidence,
+            values=values if values else raw,
+            hypotheses=[],
+            artifacts={},
+            elapsed_ms=elapsed_ms,
+            reason=raw.get("reason"),
+        )
+
+    raw_vals = getattr(raw, "values", None)
+    if isinstance(raw_vals, dict) and raw_vals.get("envelope") == "outside":
+        return StageResult(
+            stage="s3_receive",
+            status=StageStatus.OUT_OF_ENVELOPE,
+            confidence=0.0,
+            values=raw_vals,
+            hypotheses=[],
+            artifacts={},
+            elapsed_ms=elapsed_ms,
+            reason=getattr(raw, "reason", None) or "Input out of operating envelope",
         )
 
     return StageResult(
@@ -653,6 +746,53 @@ def orchestrate(
         _persist(res)
         return res, raw_result
 
+    def _refuse_downstream(
+        trigger_stage: str,
+        trigger_res: StageResult,
+        remaining_stage_names: list[str],
+    ) -> AnalysisReport:
+        refusal_reason = "Refused: input out of operating envelope"
+        for stg in remaining_stage_names:
+            refused_res = StageResult(
+                stage=stg,
+                status=StageStatus.OUT_OF_ENVELOPE,
+                confidence=0.0,
+                reason=refusal_reason,
+            )
+            stages.append(refused_res)
+            _persist(refused_res)
+
+        final_payload = {
+            "payload_text": "",
+            "printable_fraction": 0.0,
+            "looks_like_text": False,
+            "bits_count": 0,
+        }
+
+        report = AnalysisReport(
+            run_id=run_id,
+            file_meta=file_meta,
+            envelope_verdict="out_of_envelope",
+            stages=stages,
+            final=final_payload,
+        )
+
+        update_run(
+            run_id=run_id,
+            status="completed",
+            envelope_verdict="out_of_envelope",
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            db_path=db_path,
+        )
+
+        log_event(
+            logging.INFO,
+            run_id,
+            "pipeline",
+            f"Analysis pipeline refused with verdict=out_of_envelope (triggered by {trigger_stage}: {trigger_res.reason}), duration={(time.time() - start_time):.2f}s",
+        )
+        return report
+
     # -------------------------------------------------------------------------
     # S0: Ingest
     # -------------------------------------------------------------------------
@@ -724,6 +864,13 @@ def orchestrate(
             lambda raw, ms: adapt_s1(raw, ms, run_id),
         )
 
+    if s1_res.status == StageStatus.OUT_OF_ENVELOPE:
+        return _refuse_downstream(
+            "s1_detect",
+            s1_res,
+            ["s2_estimate", "s3_receive", "s4_recover", "s5_decode", "s6_frame"],
+        )
+
     # -------------------------------------------------------------------------
     # S2: Estimate (Blind symbol rate and CFO estimation)
     # -------------------------------------------------------------------------
@@ -745,6 +892,13 @@ def orchestrate(
             "s2_estimate",
             lambda: s2_fn(iq_samples, sample_rate),
             adapt_s2,
+        )
+
+    if s2_res.status == StageStatus.OUT_OF_ENVELOPE:
+        return _refuse_downstream(
+            "s2_estimate",
+            s2_res,
+            ["s3_receive", "s4_recover", "s5_decode", "s6_frame"],
         )
 
     # Resolve S2 parameters for receiver
@@ -773,6 +927,13 @@ def orchestrate(
         _run_s3,
         lambda raw, ms: adapt_s3(raw, ms, run_id),
     )
+
+    if s3_res.status == StageStatus.OUT_OF_ENVELOPE:
+        return _refuse_downstream(
+            "s3_receive",
+            s3_res,
+            ["s4_recover", "s5_decode", "s6_frame"],
+        )
 
     llrs = getattr(s3_raw, "llrs", None)
     if llrs is None and isinstance(s3_raw, (list, tuple)):

@@ -47,7 +47,7 @@ class DummyS0Result:
 
 
 class DummyS1Result:
-    def __init__(self, status="ok", snr_db=15.0, noise_floor_db=-60.0, occupied_bw_hz=50000.0, bursts=None):
+    def __init__(self, status="ok", snr_db=15.0, noise_floor_db=-60.0, occupied_bw_hz=50000.0, bursts=None, reason=None):
         self.status = status
         self.fs = 200000.0
         self.snr_db = snr_db
@@ -56,7 +56,7 @@ class DummyS1Result:
         self.bursts = bursts or [(0, 100)]
         self.psd_freqs = [-50000.0, 0.0, 50000.0]
         self.psd_db = [-60.0, -20.0, -60.0]
-        self.reason = None
+        self.reason = reason
 
 
 class DummyS2Estimate:
@@ -81,12 +81,12 @@ class RealS2EstimateResult:
 
 
 class DummyS3Result:
-    def __init__(self, status="ok", llrs=None):
+    def __init__(self, status="ok", llrs=None, values=None, reason=None, confidence=0.95):
         self.status = status
-        self.confidence = 0.95
-        self.values = {"modulation": "qpsk", "evm_percent": 5.2}
+        self.confidence = confidence
+        self.values = values if values is not None else {"modulation": "qpsk", "evm_percent": 5.2}
         self.hypotheses = [{"value": "qpsk", "score": 0.95, "evidence": "tight clusters"}]
-        self.reason = None
+        self.reason = reason
         self.llrs = llrs if llrs is not None else [1.5, -2.0, 3.1, -1.8] * 100
         self.symbols = [1.0 + 1.0j, -1.0 + 1.0j, -1.0 - 1.0j, 1.0 - 1.0j] * 20
 
@@ -563,6 +563,186 @@ class TestOrchestrator(unittest.TestCase):
         with unittest.mock.patch.dict("sys.modules", {"pipeline.s3_receive": None}):
             fn = get_s3_receive()
             self.assertIsNone(fn)
+
+    def test_adapt_s3_envelope_outside_becomes_out_of_envelope(self):
+        """Verify adapt_s3 maps values['envelope'] == 'outside' to StageStatus.OUT_OF_ENVELOPE."""
+        s3_outside = DummyS3Result(
+            status="failed",
+            values={"envelope": "outside", "modulation": "qpsk"},
+            reason="S2 reports 1.25 samples/symbol; S3 needs at least 2",
+        )
+        res = adapt_s3(s3_outside, 10.0, "run-s3-outside")
+        self.assertEqual(res.status, StageStatus.OUT_OF_ENVELOPE)
+        self.assertEqual(res.confidence, 0.0)
+        self.assertEqual(res.values["envelope"], "outside")
+        self.assertIn("at least 2", res.reason)
+
+        # Inside envelope with failed status remains StageStatus.FAILED
+        s3_inside_failed = DummyS3Result(
+            status="failed",
+            values={"envelope": "inside", "modulation": "qpsk"},
+            reason="Demodulation lock failed",
+        )
+        res_failed = adapt_s3(s3_inside_failed, 10.0, "run-s3-inside-fail")
+        self.assertEqual(res_failed.status, StageStatus.FAILED)
+
+    def test_adapt_s1_low_snr_out_of_envelope(self):
+        """Verify adapt_s1 marks SNR below -5.0 dB as OUT_OF_ENVELOPE."""
+        s1_low = DummyS1Result(status="ok", snr_db=-8.5)
+        res = adapt_s1(s1_low, 10.0, "run-s1-low")
+        self.assertEqual(res.status, StageStatus.OUT_OF_ENVELOPE)
+        self.assertEqual(res.confidence, 0.0)
+        self.assertIn("-8.5 dB", res.reason)
+        self.assertIn("-5.0 dB", res.reason)
+
+        # Normal SNR >= -5.0 dB remains StageStatus.OK
+        s1_ok = DummyS1Result(status="ok", snr_db=12.0)
+        res_ok = adapt_s1(s1_ok, 10.0, "run-s1-ok")
+        self.assertEqual(res_ok.status, StageStatus.OK)
+        self.assertGreater(res_ok.confidence, 0.0)
+
+        # S1 failure without SNR remains StageStatus.FAILED
+        s1_fail = DummyS1Result(status="failed", snr_db=None, reason="empty IQ array")
+        res_fail = adapt_s1(s1_fail, 10.0, "run-s1-fail")
+        self.assertEqual(res_fail.status, StageStatus.FAILED)
+        self.assertEqual(res_fail.reason, "empty IQ array")
+
+    def test_adapt_s2_invalid_or_out_of_envelope_sps(self):
+        """Verify adapt_s2 marks invalid rate or SPS outside [2.5, 40.0] as OUT_OF_ENVELOPE."""
+        # Non-positive rate
+        s2_zero = DummyS2Estimate(symbol_rate=0.0)
+        res_zero = adapt_s2(s2_zero, 10.0)
+        self.assertEqual(res_zero.status, StageStatus.OUT_OF_ENVELOPE)
+        self.assertEqual(res_zero.confidence, 0.0)
+
+        # SPS below 2.5 (e.g. symbol_rate = 100000.0, fs = 200000.0 -> sps = 2.0 < 2.5)
+        s2_low_sps = DummyS2Estimate(symbol_rate=100000.0, fs=200000.0)
+        res_low_sps = adapt_s2(s2_low_sps, 10.0)
+        self.assertEqual(res_low_sps.status, StageStatus.OUT_OF_ENVELOPE)
+        self.assertEqual(res_low_sps.confidence, 0.0)
+        self.assertIn("outside declared operating envelope", res_low_sps.reason)
+
+        # SPS above 40.0 (e.g. symbol_rate = 4000.0, fs = 200000.0 -> sps = 50.0 > 40.0)
+        s2_high_sps = DummyS2Estimate(symbol_rate=4000.0, fs=200000.0)
+        res_high_sps = adapt_s2(s2_high_sps, 10.0)
+        self.assertEqual(res_high_sps.status, StageStatus.OUT_OF_ENVELOPE)
+        self.assertEqual(res_high_sps.confidence, 0.0)
+        self.assertIn("outside declared operating envelope", res_high_sps.reason)
+
+        # Valid SPS
+        s2_valid = DummyS2Estimate(symbol_rate=25000.0, fs=200000.0)
+        res_valid = adapt_s2(s2_valid, 10.0)
+        self.assertEqual(res_valid.status, StageStatus.OK)
+        self.assertGreater(res_valid.confidence, 0.0)
+
+    def test_orchestrator_refuses_downstream_on_s1_out_of_envelope(self):
+        """Verify S1 OUT_OF_ENVELOPE stops downstream stages and sets report.envelope_verdict."""
+        overrides = make_clean_overrides()
+        overrides["s1_detect"] = lambda iq, fs: DummyS1Result(status="ok", snr_db=-10.0)
+
+        s2_called = False
+        def mock_s2(iq, fs):
+            nonlocal s2_called
+            s2_called = True
+            return DummyS2Estimate()
+
+        overrides["s2_estimate"] = mock_s2
+
+        report = orchestrate(
+            run_id="run-refuse-s1",
+            file_path=self.test_file,
+            runner=self.runner,
+            stage_overrides=overrides,
+            db_path=self.db_path,
+        )
+
+        self.assertFalse(s2_called, "S2 was executed despite S1 being out of envelope")
+        self.assertEqual(report.envelope_verdict, "out_of_envelope")
+        self.assertEqual(len(report.stages), 7)
+        self.assertEqual(report.stages[0].status, StageStatus.OK)
+        self.assertEqual(report.stages[1].status, StageStatus.OUT_OF_ENVELOPE)
+        for downstream in report.stages[2:]:
+            self.assertEqual(downstream.status, StageStatus.OUT_OF_ENVELOPE)
+            self.assertIn("Refused: input out of operating envelope", downstream.reason)
+
+        run_rec = get_run("run-refuse-s1", db_path=self.db_path)
+        self.assertEqual(run_rec["envelope_verdict"], "out_of_envelope")
+        self.assertEqual(run_rec["status"], "completed")
+
+    def test_orchestrator_refuses_downstream_on_s2_out_of_envelope(self):
+        """Verify S2 OUT_OF_ENVELOPE stops downstream stages and sets report.envelope_verdict."""
+        overrides = make_clean_overrides()
+        overrides["s2_estimate"] = lambda iq, fs: DummyS2Estimate(symbol_rate=2000.0, fs=200000.0)  # sps = 100.0
+
+        s3_called = False
+        def mock_s3(iq, params):
+            nonlocal s3_called
+            s3_called = True
+            return DummyS3Result()
+
+        overrides["s3_receive"] = mock_s3
+
+        report = orchestrate(
+            run_id="run-refuse-s2",
+            file_path=self.test_file,
+            runner=self.runner,
+            stage_overrides=overrides,
+            db_path=self.db_path,
+        )
+
+        self.assertFalse(s3_called, "S3 was executed despite S2 being out of envelope")
+        self.assertEqual(report.envelope_verdict, "out_of_envelope")
+        self.assertEqual(len(report.stages), 7)
+        self.assertEqual(report.stages[0].status, StageStatus.OK)
+        self.assertEqual(report.stages[1].status, StageStatus.OK)
+        self.assertEqual(report.stages[2].status, StageStatus.OUT_OF_ENVELOPE)
+        for downstream in report.stages[3:]:
+            self.assertEqual(downstream.status, StageStatus.OUT_OF_ENVELOPE)
+            self.assertIn("Refused: input out of operating envelope", downstream.reason)
+
+        run_rec = get_run("run-refuse-s2", db_path=self.db_path)
+        self.assertEqual(run_rec["envelope_verdict"], "out_of_envelope")
+        self.assertEqual(run_rec["status"], "completed")
+
+    def test_orchestrator_refuses_downstream_on_s3_out_of_envelope(self):
+        """Verify S3 OUT_OF_ENVELOPE stops downstream stages and sets report.envelope_verdict."""
+        overrides = make_clean_overrides()
+        overrides["s3_receive"] = lambda iq, params: DummyS3Result(
+            status="failed",
+            values={"envelope": "outside", "modulation": "qpsk"},
+            reason="record too short to settle the timing loop",
+        )
+
+        s4_called = False
+        def mock_s4(bits):
+            nonlocal s4_called
+            s4_called = True
+            return DummyRecoveryResult()
+
+        overrides["s4_recover"] = mock_s4
+
+        report = orchestrate(
+            run_id="run-refuse-s3",
+            file_path=self.test_file,
+            runner=self.runner,
+            stage_overrides=overrides,
+            db_path=self.db_path,
+        )
+
+        self.assertFalse(s4_called, "S4 was executed despite S3 being out of envelope")
+        self.assertEqual(report.envelope_verdict, "out_of_envelope")
+        self.assertEqual(len(report.stages), 7)
+        self.assertEqual(report.stages[0].status, StageStatus.OK)
+        self.assertEqual(report.stages[1].status, StageStatus.OK)
+        self.assertEqual(report.stages[2].status, StageStatus.OK)
+        self.assertEqual(report.stages[3].status, StageStatus.OUT_OF_ENVELOPE)
+        for downstream in report.stages[4:]:
+            self.assertEqual(downstream.status, StageStatus.OUT_OF_ENVELOPE)
+            self.assertIn("Refused: input out of operating envelope", downstream.reason)
+
+        run_rec = get_run("run-refuse-s3", db_path=self.db_path)
+        self.assertEqual(run_rec["envelope_verdict"], "out_of_envelope")
+        self.assertEqual(run_rec["status"], "completed")
 
 
 if __name__ == "__main__":
