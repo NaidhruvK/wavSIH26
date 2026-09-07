@@ -38,6 +38,11 @@ def check_status() -> dict:
     registry_details = {"modulations": 0, "interleavers": 0, "codes": 0}
     if registry_ok:
         try:
+            from service.orchestrator import load_plugins
+            load_plugins()
+        except Exception:
+            pass
+        try:
             import registry
 
             desc = registry.describe()

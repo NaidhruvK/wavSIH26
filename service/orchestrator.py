@@ -79,8 +79,60 @@ def save_stage_artifact(run_id: str, artifact_name: str, data: Any) -> str:
 
 
 # -----------------------------------------------------------------------------
-# Dynamic / Fallback Pipeline Resolvers
+# Dynamic / Fallback Pipeline Resolvers & Plugin Loader
 # -----------------------------------------------------------------------------
+
+REQUIRED_PLUGIN_MODULES = (
+    "pipeline.s3_receive",
+    "pipeline.s4_recover.interleavers",
+    "pipeline.s5_decode.conv_code",
+    "pipeline.s5_decode.rs_code",
+)
+
+_PLUGIN_LOAD_ERRORS: dict[str, str] = {}
+_PLUGINS_LOADED: bool = False
+
+
+def load_plugins(force: bool = False, raise_on_error: bool = False) -> dict[str, str]:
+    """Import required pipeline plugin modules to trigger side-effect registration.
+
+    Populates MODULATIONS, INTERLEAVERS, and CODES in the registry.
+    Safe against re-entrancy, reload idempotency, and environments missing compiled DSP wheels.
+    Returns a dictionary of {module_name: error_message} for any plugin that failed to load.
+    """
+    global _PLUGINS_LOADED
+    if _PLUGINS_LOADED and not force and (len(MODULATIONS) > 0 or len(_PLUGIN_LOAD_ERRORS) > 0):
+        return _PLUGIN_LOAD_ERRORS
+
+    import importlib
+    import sys
+
+    _PLUGIN_LOAD_ERRORS.clear()
+    for mod_name in REQUIRED_PLUGIN_MODULES:
+        try:
+            if mod_name in sys.modules:
+                importlib.reload(sys.modules[mod_name])
+            else:
+                importlib.import_module(mod_name)
+        except Exception as exc:
+            _PLUGIN_LOAD_ERRORS[mod_name] = f"{type(exc).__name__}: {exc}"
+            logger.warning("Plugin module '%s' failed to load: %s", mod_name, exc)
+            if raise_on_error:
+                raise
+
+    _PLUGINS_LOADED = True
+    if _PLUGIN_LOAD_ERRORS:
+        logger.warning(
+            "Service registry partially populated. Plugin load failures: %s",
+            _PLUGIN_LOAD_ERRORS,
+        )
+    return _PLUGIN_LOAD_ERRORS
+
+
+def get_plugin_load_errors() -> dict[str, str]:
+    """Return map of plugin module names that failed to load and their error messages."""
+    return dict(_PLUGIN_LOAD_ERRORS)
+
 
 def get_s0_ingest() -> Optional[Callable[..., Any]]:
     try:
@@ -287,6 +339,20 @@ def adapt_s3(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
         raw.elapsed_ms = elapsed_ms
         return raw
 
+    if raw is None:
+        errs = get_plugin_load_errors()
+        err_msg = f" (plugin load failures: {', '.join(f'{k}: {v}' for k, v in errs.items())})" if errs else ""
+        return StageResult(
+            stage="s3_receive",
+            status=StageStatus.FAILED,
+            confidence=0.0,
+            values={"modulation": "unknown"},
+            hypotheses=[],
+            artifacts={},
+            elapsed_ms=elapsed_ms,
+            reason=f"Demodulation failed: no result from receiver{err_msg}",
+        )
+
     if hasattr(raw, "as_stage_result"):
         base_dict = raw.as_stage_result()
         artifacts = {}
@@ -392,7 +458,21 @@ def adapt_s5(raw: Any, elapsed_ms: float) -> StageResult:
         raw.elapsed_ms = elapsed_ms
         return raw
 
-    bit_count = len(raw) if raw is not None else 0
+    if raw is None:
+        errs = get_plugin_load_errors()
+        err_msg = f" (plugin load failures: {', '.join(f'{k}: {v}' for k, v in errs.items())})" if errs else ""
+        return StageResult(
+            stage="s5_decode",
+            status=StageStatus.FAILED,
+            confidence=0.0,
+            values={"decoded_bits_count": 0},
+            hypotheses=[],
+            artifacts={},
+            elapsed_ms=elapsed_ms,
+            reason=f"Decoding failed: no result from decoder{err_msg}",
+        )
+
+    bit_count = len(raw)
     status = StageStatus.OK if bit_count > 0 else StageStatus.FAILED
     return StageResult(
         stage="s5_decode",
@@ -451,6 +531,7 @@ def orchestrate(
     db_path: Optional[Path | str] = None,
 ) -> AnalysisReport:
     """Execute the S0 -> S1 -> S2 -> S3 -> S4 -> S5 -> S6 pipeline in order."""
+    load_plugins()
     start_time = time.time()
     stage_timeout_sec = stage_timeout if stage_timeout is not None else config.stage_timeout_seconds
     total_timeout_sec = total_timeout if total_timeout is not None else config.total_timeout_seconds

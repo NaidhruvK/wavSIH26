@@ -26,7 +26,9 @@ from service.orchestrator import (
     adapt_s4,
     adapt_s5,
     adapt_s6,
+    get_plugin_load_errors,
     get_s2_estimate,
+    load_plugins,
     orchestrate,
     submit_analysis_job,
 )
@@ -414,6 +416,91 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(s2_stage.values["symbol_rate_hz"], 40000.0)
         self.assertEqual(s2_stage.values["sps"], 5.0)
         self.assertEqual(captured_s2_params.get("symbol_rate"), 40000.0)
+
+    def test_load_plugins_and_error_tracking(self):
+        """Verify load_plugins returns errors dict and get_plugin_load_errors is consistent."""
+        errors = load_plugins(force=True)
+        self.assertIsInstance(errors, dict)
+        tracked_errors = get_plugin_load_errors()
+        self.assertEqual(errors, tracked_errors)
+
+    def test_plugin_error_visibility_in_stage_results(self):
+        """Verify that S3 and S5 include plugin load failures in reason when stage fails."""
+        mock_errors = {"pipeline.s3_receive": "ModuleNotFoundError: No module named 'numpy'"}
+        with unittest.mock.patch("service.orchestrator.get_plugin_load_errors", return_value=mock_errors):
+            s3_res = adapt_s3(None, 5.0, "run-err-vis")
+            self.assertEqual(s3_res.status, StageStatus.FAILED)
+            self.assertIn("plugin load failures", s3_res.reason)
+            self.assertIn("pipeline.s3_receive", s3_res.reason)
+            self.assertIn("numpy", s3_res.reason)
+
+            s5_res = adapt_s5(None, 5.0)
+            self.assertEqual(s5_res.status, StageStatus.FAILED)
+            self.assertIn("plugin load failures", s5_res.reason)
+            self.assertIn("pipeline.s3_receive", s5_res.reason)
+
+    def test_orchestrator_dispatches_to_registered_plugins(self):
+        """Verify orchestrator dynamically routes to plugins registered in MODULATIONS and CODES."""
+        from registry import CODES, MODULATIONS, register_code, register_modulation
+
+        class CustomMod:
+            name = "custom_test_scheme"
+            called = False
+            def demodulate(self, samples, params):
+                CustomMod.called = True
+                return [1.0, -1.0, 1.0, -1.0]
+            def classify_features(self, iq):
+                return {}
+            def theoretical_cumulants(self):
+                return {}
+
+        class CustomConvCode:
+            name = "conv"
+            called = False
+            def blind_recover(self, llrs):
+                return {}
+            def decode(self, llrs, code_params):
+                CustomConvCode.called = True
+                return [0, 1, 0, 1]
+            def validate(self, bits):
+                return {"valid": True}
+
+        orig_conv = CODES.get("conv")
+        register_modulation(CustomMod(), replace=True)
+        register_code(CustomConvCode(), replace=True)
+
+        try:
+            overrides = make_clean_overrides()
+            # Remove s3_receive and s5_decode from overrides so orchestrator falls back to registry
+            overrides.pop("s3_receive", None)
+            overrides.pop("s5_decode", None)
+            # S2 suggests custom_test_scheme
+            overrides["s2_estimate"] = lambda iq, fs: DummyS2Estimate()
+            s2_orig = overrides["s2_estimate"]
+            def s2_with_hyp(iq, fs):
+                res = s2_orig(iq, fs)
+                return res
+            # S0/S1/S2/S4/S6 present
+            report = orchestrate(
+                run_id="run-plugin-dispatch",
+                file_path=self.test_file,
+                mod_scheme_hint="custom_test_scheme",
+                runner=self.runner,
+                stage_overrides=overrides,
+                db_path=self.db_path,
+            )
+            self.assertTrue(CustomMod.called, "S3 did not dispatch to registered modulation plugin")
+            self.assertTrue(CustomConvCode.called, "S5 did not dispatch to registered code plugin")
+            s3_stage = next(s for s in report.stages if s.stage == "s3_receive")
+            s5_stage = next(s for s in report.stages if s.stage == "s5_decode")
+            self.assertEqual(s3_stage.status, StageStatus.OK)
+            self.assertEqual(s5_stage.status, StageStatus.OK)
+        finally:
+            MODULATIONS.pop("custom_test_scheme", None)
+            if orig_conv is not None:
+                CODES["conv"] = orig_conv
+            else:
+                CODES.pop("conv", None)
 
 
 if __name__ == "__main__":

@@ -30,7 +30,11 @@ from .db import (
     initialize_database,
 )
 from .job_runner import job_runner
-from .orchestrator import submit_analysis_job
+from .orchestrator import (
+    get_plugin_load_errors,
+    load_plugins,
+    submit_analysis_job,
+)
 
 logger = logging.getLogger("raaya.api")
 
@@ -200,9 +204,14 @@ else:
     )
 
 
+# Trigger plugin registration on module load
+load_plugins()
+
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
 
 def get_envelope_metadata() -> dict[str, Any]:
     """Expose the declared operating envelope specifications."""
@@ -293,7 +302,12 @@ def health_check() -> dict[str, Any]:
 @app.get("/registry")
 def get_registry() -> dict[str, Any]:
     """Return plugin registry introspection summary and registered component list."""
-    return describe_registry()
+    load_plugins()
+    data = describe_registry()
+    errors = get_plugin_load_errors()
+    if errors:
+        data["errors"] = errors
+    return data
 
 
 @app.get("/envelope")

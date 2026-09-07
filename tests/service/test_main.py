@@ -79,6 +79,37 @@ class TestRestAPI(unittest.TestCase):
         self.assertIn("interleavers", data)
         self.assertIn("codes", data)
         self.assertIsInstance(data["counts"], dict)
+        if "errors" not in data:
+            # Fully loaded DSP environment
+            self.assertEqual(data["counts"]["modulations"], 6)
+            self.assertEqual(data["counts"]["interleavers"], 3)
+            self.assertEqual(data["counts"]["codes"], 2)
+        else:
+            # Lightweight host environment: errors should be surfaced and non-empty
+            self.assertIsInstance(data["errors"], dict)
+            self.assertGreater(len(data["errors"]), 0)
+
+    def test_registry_dynamic_plugin_registration(self):
+        from registry import MODULATIONS, register_modulation
+
+        class MockMod:
+            name = "custom_test_mod"
+            def demodulate(self, samples, params):
+                return []
+            def classify_features(self, iq):
+                return {}
+            def theoretical_cumulants(self):
+                return {}
+
+        register_modulation(MockMod())
+        try:
+            resp = self.client.get("/registry")
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            mod_names = [m["name"] for m in data["modulations"]]
+            self.assertIn("custom_test_mod", mod_names)
+        finally:
+            MODULATIONS.pop("custom_test_mod", None)
 
     def test_envelope_endpoint(self):
         resp = self.client.get("/envelope")
