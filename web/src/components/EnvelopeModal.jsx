@@ -102,12 +102,22 @@ export default function EnvelopeModal({ envelope, onClose }) {
                 <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>{stgSpec.description || ''}</span>
               </div>
               <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                {Object.entries(stgSpec).filter(([k]) => k !== 'description').map(([k, v]) => (
-                  <span key={k} style={{ marginRight: '16px', display: 'inline-block' }}>
-                    <span style={{ color: 'var(--text-dim)' }}>{k}: </span>
-                    <span style={{ color: '#fff' }}>{Array.isArray(v) ? v.join(', ') : String(v)}</span>
-                  </span>
-                ))}
+                {Object.entries(stgSpec).filter(([k]) => k !== 'description').map(([k, v]) => {
+                  let renderedVal = String(v);
+                  if (Array.isArray(v)) {
+                    renderedVal = v.join(', ');
+                  } else if (typeof v === 'object' && v !== null) {
+                    renderedVal = Object.entries(v)
+                      .map(([subK, subV]) => `${subK.toUpperCase()}: ${subV} dB`)
+                      .join(' | ');
+                  }
+                  return (
+                    <span key={k} style={{ marginRight: '16px', display: 'inline-block' }}>
+                      <span style={{ color: 'var(--text-dim)' }}>{k}: </span>
+                      <span style={{ color: '#fff' }}>{renderedVal}</span>
+                    </span>
+                  );
+                })}
               </div>
             </div>
           ))}
