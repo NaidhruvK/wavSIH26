@@ -86,24 +86,36 @@ exact polynomial, but 0o435 = 285 = 0x11D = x^8 + x^4 + x^3 + x^2 + 1 - which
 is the GF(256) field polynomial of Reed-Solomon, not the randomiser. No reading
 reconciles them; the reciprocal of 0o435 is 0o561, still not 0o651.
 
-It is a mislabel and not a malfunction: both polynomials are primitive of
-degree 8, so both give a period-255 additive scrambler, the corpus is
-self-consistent, and every recovery number measured against it stands. What it
+It was a mislabel and not a malfunction: both polynomials are primitive of
+degree 8, so both give a period-255 additive scrambler, the corpus was
+self-consistent, and every recovery number measured against it stood. What it
 would have broken is the only thing this table exists for - a REAL downlink.
 A "known standard profiles" table whose standard entry is not the standard
 declines the one stream it was written to catch.
 
-So both are listed. The blue book's goes first because it is the one a real
-capture will carry; ours follows so the corpus keeps working. The cost of the
-extra hypothesis is one screened pass on the failure path.
+RESOLVED 7 SEP, ON THE GENERATOR SIDE. Raised with Dheeraj as a choice between
+correcting the comment and correcting the constant; `9b4c524` corrected the
+CONSTANT and regenerated `zoo/corpus/ccsds/`. `zoo.bits_only.CCSDS_SCRAMBLER`
+is now 0o651, so the generator and the blue book finally agree and the entry
+below is no longer a workaround for a disagreement.
+
+0o435 is kept anyway, and demoted to what it actually is. It is NOT a standard
+randomiser - it is the Reed-Solomon field polynomial, and it never described a
+real downlink. It stays only so that a capture generated BEFORE `9b4c524` still
+descrambles instead of silently reading as noise. It is tried last, the RS
+decoder is still the judge, and a stream matching neither is declined rather
+than guessed - so carrying it costs one screened pass on the failure path and
+cannot manufacture a false accept.
 """
 
-CORPUS_RANDOMISER = 0o435
-"""What `zoo.bits_only` actually applies - x^8 + x^4 + x^3 + x^2 + 1. See above."""
+LEGACY_ZOO_RANDOMISER = 0o435
+"""NOT a standard. What `zoo.bits_only` applied before `9b4c524` corrected it -
+x^8 + x^4 + x^3 + x^2 + 1, the GF(256) field polynomial of Reed-Solomon. Kept
+only to read pre-`9b4c524` captures; see above."""
 
 STANDARD_RANDOMISERS = [
     ("ccsds-131.0-B", CCSDS_RANDOMISER, 0xFF),
-    ("zoo-corpus-0o435", CORPUS_RANDOMISER, 0xFF),
+    ("legacy-zoo-pre-9b4c524", LEGACY_ZOO_RANDOMISER, 0xFF),
 ]
 """(name, polynomial, initial state). Tried in order, after "no randomiser"."""
 

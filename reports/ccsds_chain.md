@@ -400,14 +400,23 @@ carried the same error for about an hour.
 Both are now carried, the blue book's first:
 
 ```python
-CCSDS_RANDOMISER = 0o651   # x^8+x^7+x^5+x^3+1, CCSDS 131.0-B
-CORPUS_RANDOMISER = 0o435  # x^8+x^4+x^3+x^2+1, what zoo.bits_only applies
+CCSDS_RANDOMISER      = 0o651  # x^8+x^7+x^5+x^3+1, CCSDS 131.0-B
+LEGACY_ZOO_RANDOMISER = 0o435  # x^8+x^4+x^3+x^2+1, the RS field polynomial
 
 STANDARD_RANDOMISERS = [
-    ("ccsds-131.0-B",    CCSDS_RANDOMISER,  0xFF),
-    ("zoo-corpus-0o435", CORPUS_RANDOMISER, 0xFF),
+    ("ccsds-131.0-B",         CCSDS_RANDOMISER,      0xFF),
+    ("legacy-zoo-pre-9b4c524", LEGACY_ZOO_RANDOMISER, 0xFF),
 ]
 ```
+
+**Resolved 7 September on the generator side.** `9b4c524` corrected the
+constant rather than the comment and regenerated `zoo/corpus/ccsds/`, so
+`zoo.bits_only.CCSDS_SCRAMBLER` is now `0o651` and the corpus carries the blue
+book's randomiser. The second entry is therefore no longer "what our corpus
+applies" but a legacy one, kept only to read captures generated before that
+commit, tried last and still judged by the RS decoder. The test that pinned
+this receiver against the generator's live constant caught the change as a red
+assertion (`285 == 425`) on merge rather than as a silent descramble to noise.
 
 Cost of the extra hypothesis is one screened pass on the failure path. Pinned
 by `test_the_blue_books_randomiser_is_in_the_table_and_is_not_the_corpus_one`,

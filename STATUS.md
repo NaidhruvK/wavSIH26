@@ -554,6 +554,66 @@ anchored at ≥10dB everywhere else too.
 `models/classifier.txt` frozen this morning per the 6 Sep plan, config
 hash `132fc1d21777` unchanged since 3 Sep — no retraining today.
 
+### 7 Sep — Nehal's review of yesterday's work: one documentation ask, one real bug, one gap closed
+
+Nehal independently re-verified the FSK CFO fix (168/168 at ≥10dB,
+worst cases reproduced exactly) and, separately, pressure-tested
+`zoo/ccsds.py` against his own S4-S6 chain — three findings, all
+addressed:
+
+**1. The 10dB CFO floor was a silent routing artifact, now stated as a
+number.** He measured that `estimate()`'s `constant_envelope` check
+(`std/mean < 0.25`) tracks `1/sqrt(2·SNR_linear)` almost exactly for
+FSK — it is measuring SNR, not envelope structure, and the modulation
+contributes nothing to it. Below ~9dB it silently misroutes to the
+linear CFO path with no failure signal (`status="ok"`, confidently
+wrong). Not a defect chasable by a threshold tweak — `s2_envelope.md`
+already proved that crossover can't be widened without breaking clean
+high-SNR PSK/QAM. Fixed by documentation, per his explicit ask: added
+to `reports/envelope_study.py` / `envelope.md` §3, stating plainly that
+S2's declared CFO floor for FSK is 10dB and `cfo_hz` shouldn't be
+trusted below it regardless of `status`.
+
+**2. `CCSDS_SCRAMBLER` was mislabelled — a real bug, now fixed.**
+`zoo/bits_only.py`'s `CCSDS_SCRAMBLER = 0o435` was actually 0x11D, the
+GF(256) Reed-Solomon field polynomial, not the CCSDS 131.0-B randomiser
+(0o651 = 0x1A9 = x^8+x^7+x^5+x^3+1) its own comment and name describe —
+an easy constant to reach for while writing an RS-and-randomiser
+generator in the same file. Both are primitive degree-8 (period 255
+either way), so nothing was corrupted — the corpus was a valid,
+self-consistent scrambler between this generator and Nehal's receiver
+checking against the same constant — but the label was wrong. Fixed
+the constant (not just the comment), matching the whole point of
+`zoo/ccsds.py` being the *standards-accurate* alternative to the
+existing fixture. `zoo/corpus/ccsds/` regenerated with the corrected
+polynomial; `tests/unit/test_bits_only.py` pins the fix (checks the
+exact tap positions match h(x), and that the sequence has period
+exactly 255, not some smaller divisor that would also have satisfied
+"primitive of degree 8").
+
+**3. `.gitattributes` had a gap Nehal caught before it bit anyone:**
+`*.payload.bin` (the new CCSDS corpus's raw payload bytes) had no
+`-text`/`binary` marking, the exact autocrlf hole that corrupted
+`models/classifier.txt` before. Today's eight files are pure ASCII
+with no newline bytes, so the heuristic's "text" guess happened to be
+a no-op — the first `payload_text` containing a newline would have
+been silently mangled on any Windows checkout otherwise. Added
+`*.bin binary`.
+
+**Also landed: `payload_text` and `mean_burst` on `zoo.bits_only.make_stream`**,
+the two remaining things `tests/fixtures/local_zoo.py` could do that
+the real zoo couldn't — the reason Nehal still had 12 test files, 7
+report studies, and `pipeline/s4_recover/cli.py` importing from
+`tests/`. Ported `gilbert_elliott_mask`/`inject_burst_errors` from that
+fixture (his own description of the model, unchanged) rather than
+reimplementing the physics differently. `payload_text` repeats real
+text to fill `n_source_bits`, same construction as the fixture's
+version, so a caller switching from one to the other sees identical
+bits. This doesn't retire the fixture itself — that's Nehal's call, on
+his own files — but the blocker on his side is gone.
+
+Full regression suite re-run after all of the above.
+
 ---
 
 ## Anvith — S3 receiver chain
@@ -2109,6 +2169,82 @@ correct the constant (regenerate `zoo/corpus/ccsds/` and re-measure anything
 against it). My chain works either way. What should not survive is a corpus
 file labelled CCSDS-conformant that is not - that is the exact claim I spent
 5 Sep being careful *not* to make about my own fixture.
+
+**ANSWERED 7 SEP - `9b4c524` corrected the CONSTANT and regenerated the
+corpus.** `zoo.bits_only.CCSDS_SCRAMBLER` is now 0o651, so the generator and
+the blue book agree and the corpus is CCSDS-conformant on this layer for real.
+My receiver follows it: `CORPUS_RANDOMISER` is renamed `LEGACY_ZOO_RANDOMISER`
+and demoted in `STANDARD_RANDOMISERS` to what it actually is - not a standard,
+the RS field polynomial, carried only so a pre-`9b4c524` capture still
+descrambles instead of reading as noise. Tried last, RS still the judge.
+
+**The pin did its job.** `test_known_randomiser_matches_the_generators_lfsr`
+asserted `CORPUS_RANDOMISER == CCSDS_SCRAMBLER` against Dheeraj's live constant
+rather than a second copy of my own, so the change surfaced as a red test on
+merge (`assert 285 == 425`) instead of as a silent descramble-to-noise. That
+was the whole point of pinning against their implementation, and it is the
+first time this week a cross-lane change announced itself.
+
+Dheeraj also took the `.gitattributes` line in the same commit, so my version
+of it was dropped in the merge in favour of theirs - same rule, `*.bin binary`,
+verified still `binary: set` after resolving.
+
+### 4c. AND FIXING THE MISLABEL BROKE MY GATE, FOR A REASON WORTH THE WHOLE DAY
+
+**The 6 Sep gate now xfails, and it is not the test that is wrong.** Merging
+`9b4c524` turned `test_the_real_transmit_order_peels_to_a_byte_exact_payload`
+red at both depths, with the worst possible shape:
+
+    status = ok    stages = conv, viterbi, reed-solomon
+    rs_params = RSParams(n=255, k=223, offset=0, blocks_checked=8,
+                         errata_rate=0.0)
+    printable_fraction = 0.3957        <- garbage
+    payload == expected : False
+
+Eight blocks, offset 0, **zero corrections** - the strongest confidence signal
+the RS layer can produce - on a payload that is wrong. `derandomise` is absent
+from `stages`: the chain accepted the NO-RANDOMISER hypothesis and never tried
+one.
+
+**Root cause, measured, and it is structural rather than bad luck.** The CCSDS
+randomiser is an LFSR of period 255 BITS. An RS(255,223) block is 255 bytes =
+2040 bits = **exactly eight whole periods**, so every codeword is XORed with the
+same 255-byte pattern K. I tested K itself:
+
+| keystream | K as an RS(255,223) block |
+|---|---|
+| `0o651`, the real CCSDS one | **decodes, errata = 0 - K IS a codeword** |
+| `0o435`, the old mislabel | rejects |
+
+RS is linear over GF(256). If K is a codeword then for any codeword C,
+**C + K is a codeword, exactly.** So "RS decoded every block at errata_rate
+0.0" carries *no information whatsoever* about whether the randomiser came off.
+The randomiser maps the code onto itself.
+
+**This kills the premise I built 6 Sep on.** I wrote that both new primitives
+were "judged by the RS decoder and nothing else". For the real standard's
+randomiser that judge is blind, and reordering the hypotheses does not help:
+applying the randomiser to an un-randomised stream also yields codewords, so
+the ambiguity is symmetric. **Only the payload can separate them.**
+
+And the 6 Sep gate passed only because `0o435` happened to break the code. I
+was being marked by an examiner who could not read - which is exactly the
+"green suite tells you nothing" failure I wrote up twice this week, arriving a
+third time in a form no timing check would have caught.
+
+Pinned by `test_the_ccsds_randomiser_is_invisible_to_the_reed_solomon_decoder`
+(passing - it asserts the property in both directions) and the gate is
+`xfail(strict=True)` so it cannot be quietly declared fixed.
+
+**Not fixed tonight, and deliberately not.** The fix is a design decision about
+what this chain is allowed to claim - a payload-level discriminator, or an
+honest "randomiser ambiguous" in the result - and picking one at 2am on a
+branch I want to merge is how the 268 s function got shipped. **DHERAJ /
+NAIDHRUV: `recover_ccsds` currently returns confident garbage on a real CCSDS
+downlink. Do not wire it into the orchestrator's payload path until this is
+resolved.** Everything else on the branch stands: the symbol interleaver, the
+scrambler screen ranking, all six depths peeling, and the 268 s -> 5.1 s fix
+are unaffected - this is the randomiser layer alone.
 
 **And one line of `.gitattributes`, because it is the autocrlf hole again.**
 Your fix covers `*.wav`, `*.npy` and the three `models/` files. It does not

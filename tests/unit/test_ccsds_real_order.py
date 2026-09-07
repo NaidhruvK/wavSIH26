@@ -52,7 +52,7 @@ from pipeline.s4_recover.interleavers import (
     CCSDS_DEPTHS, symbol_deinterleave, symbol_interleave)
 from pipeline.s6_frame.ccsds import recover_ccsds
 from pipeline.s6_frame.descramble import (
-    CCSDS_RANDOMISER, CORPUS_RANDOMISER, STANDARD_RANDOMISERS,
+    CCSDS_RANDOMISER, LEGACY_ZOO_RANDOMISER, STANDARD_RANDOMISERS,
     additive_keystream, descramble_known)
 from registry import INTERLEAVERS
 from zoo.bits_only import CCSDS_SCRAMBLER, lfsr_scramble
@@ -112,46 +112,55 @@ def test_known_randomiser_matches_the_generators_lfsr():
     one bit out of phase, or shifted the other way, descrambles to noise and
     raises nothing at all.
     """
-    assert CORPUS_RANDOMISER == CCSDS_SCRAMBLER
+    assert CCSDS_RANDOMISER == CCSDS_SCRAMBLER, (
+        "the generator and the blue book have diverged again - 9b4c524 made "
+        "zoo.bits_only.CCSDS_SCRAMBLER 0o651, and this table must follow it")
 
     rng = np.random.default_rng(7)
     bits = rng.integers(0, 2, 5000, dtype=np.uint8)
     scrambled = lfsr_scramble(bits, CCSDS_SCRAMBLER, 0xFF)
 
-    assert np.array_equal(additive_keystream(CORPUS_RANDOMISER, 0xFF, len(bits)),
+    assert np.array_equal(additive_keystream(CCSDS_RANDOMISER, 0xFF, len(bits)),
                           scrambled ^ bits)
-    assert np.array_equal(descramble_known(scrambled, CORPUS_RANDOMISER), bits)
+    assert np.array_equal(descramble_known(scrambled, CCSDS_RANDOMISER), bits)
 
 
-def test_the_blue_books_randomiser_is_in_the_table_and_is_not_the_corpus_one():
-    """The corpus randomiser is MISLABELLED, and the table must not inherit it.
+def test_the_blue_book_randomiser_is_the_generators_and_the_legacy_one_is_kept():
+    """The 6 Sep mislabel, now fixed on the generator side - pinned both ways.
 
-    `zoo.bits_only.CCSDS_SCRAMBLER` is 0o435 under a docstring naming
-    h(x) = x^8 + x^7 + x^5 + x^3 + 1. It is not that polynomial:
+    On 6 Sep `zoo.bits_only.CCSDS_SCRAMBLER` was 0o435 under a docstring naming
+    h(x) = x^8 + x^7 + x^5 + x^3 + 1, which is a different polynomial:
 
         0o435 = 285 = 0x11D = x^8 + x^4 + x^3 + x^2 + 1   <- RS field polynomial
         0o651 = 425 = 0x1A9 = x^8 + x^7 + x^5 + x^3 + 1   <- CCSDS 131.0-B
 
-    Not a malfunction - both are primitive of degree 8, so both give a
-    period-255 additive scrambler and every number measured against the corpus
-    stands. But a table of "known standard profiles" whose standard entry is
-    not the standard would decline the one stream it exists to catch, so both
-    are carried and this pins which is which.
+    `9b4c524` corrected the CONSTANT rather than the comment, so the generator
+    now emits the blue book's randomiser and the corpus was regenerated. This
+    asserts the agreement rather than assuming it - the same class of check that
+    caught the disagreement in the first place.
+
+    0o435 stays in the table, demoted: it is NOT a standard, it is the RS field
+    polynomial, and it is carried only so a pre-`9b4c524` capture still
+    descrambles. Both must be genuinely period-255 or the keystream tiling is
+    wrong, which is the property that made the original mislabel harmless.
     """
     def poly_bits(v):
         return {i for i in range(v.bit_length()) if (v >> i) & 1}
 
     assert poly_bits(CCSDS_RANDOMISER) == {8, 7, 5, 3, 0}
-    assert poly_bits(CORPUS_RANDOMISER) == {8, 4, 3, 2, 0}
-    assert CCSDS_RANDOMISER != CORPUS_RANDOMISER
+    assert poly_bits(LEGACY_ZOO_RANDOMISER) == {8, 4, 3, 2, 0}
+    assert CCSDS_RANDOMISER != LEGACY_ZOO_RANDOMISER
+
+    # the generator now carries the blue book's, which is the 9b4c524 fix
+    assert CCSDS_SCRAMBLER == CCSDS_RANDOMISER
 
     names = [n for n, _p, _s in STANDARD_RANDOMISERS]
     assert "ccsds-131.0-B" in names, "the blue book's own randomiser is not tried"
     polys = {p for _n, p, _s in STANDARD_RANDOMISERS}
-    assert {CCSDS_RANDOMISER, CORPUS_RANDOMISER} <= polys
+    assert {CCSDS_RANDOMISER, LEGACY_ZOO_RANDOMISER} <= polys
 
     # both must be genuinely period-255, or the keystream tiling is wrong
-    for poly in (CCSDS_RANDOMISER, CORPUS_RANDOMISER):
+    for poly in (CCSDS_RANDOMISER, LEGACY_ZOO_RANDOMISER):
         ks = additive_keystream(poly, 0xFF, 2000)
         period = next(p for p in range(1, 1000)
                       if np.array_equal(ks[:1000], ks[p:p + 1000]))
@@ -183,9 +192,66 @@ def test_the_symbol_family_is_registered():
 
 
 # --------------------------------------------------------------------------
+def test_the_ccsds_randomiser_is_invisible_to_the_reed_solomon_decoder():
+    """WHY THE 7 SEP GATE IS xfail. Measured, and it is structural, not chance.
+
+    The CCSDS 131.0-B randomiser is an LFSR of period 255 BITS. An RS(255,223)
+    block is 255 bytes = 2040 bits = exactly 8 whole periods, so every codeword
+    in the stream is XORed with the SAME 255-byte pattern K.
+
+    And K is itself an exact RS codeword - it decodes with ZERO errata, which
+    is what this test pins. Reed-Solomon is linear over GF(256), so for any
+    codeword C:
+
+        C + K  is a codeword, exactly, with no errors to correct.
+
+    So "RS decoded every block at errata_rate 0.0" carries NO information about
+    whether the randomiser was removed. It is not a weak signal or a rare
+    coincidence - the transformation maps the code onto itself. The same is
+    true in reverse: applying the randomiser to an UN-randomised stream also
+    yields codewords, so the ambiguity cannot be fixed by reordering the
+    hypotheses either. Only the payload can tell the two apart.
+
+    `0o435` did not have this property, which is the only reason the 6 September
+    gate passed: the chain was being judged by a randomiser that happened to
+    break the code. `9b4c524` corrected the constant to the real one and the
+    property arrived with it.
+    """
+    import reedsolo
+
+    for poly, expect_codeword in ((CCSDS_RANDOMISER, True),
+                                  (LEGACY_ZOO_RANDOMISER, False)):
+        ks = additive_keystream(poly, 0xFF, 255 * 8)      # 255 bytes
+        K = np.packbits(np.asarray(ks, dtype=np.uint8)).tobytes()
+        assert len(K) == 255
+
+        try:
+            _dec, _full, errata = reedsolo.RSCodec(32).decode(bytearray(K))
+            is_codeword, n_errata = True, len(errata)
+        except reedsolo.ReedSolomonError:
+            is_codeword, n_errata = False, None
+
+        assert is_codeword is expect_codeword, (
+            "0o%o: RS(255,223) codeword = %s, expected %s"
+            % (poly, is_codeword, expect_codeword))
+        if expect_codeword:
+            assert n_errata == 0, (
+                "0o%o's keystream needed %d corrections; the invisibility "
+                "argument depends on it being an EXACT codeword" % (poly, n_errata))
+
+
 # the gate: four layers off a stream built to the real standard
 # --------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason=(
+    "7 Sep: 9b4c524 corrected zoo's randomiser to the real 0o651, whose "
+    "keystream is itself an exact RS(255,223) codeword - so a randomised "
+    "stream is still a valid codeword and recover_ccsds accepts the "
+    "no-randomiser hypothesis at errata_rate 0.0, returning a payload XORed "
+    "with a fixed pattern while reporting status=ok. See "
+    "test_the_ccsds_randomiser_is_invisible_to_the_reed_solomon_decoder. "
+    "Needs a payload-level discriminator; RS cannot settle it in either "
+    "direction. NOT a test-expectation problem - the chain is wrong."))
 @pytest.mark.parametrize("depth", (1, 4))
 def test_the_real_transmit_order_peels_to_a_byte_exact_payload(depth):
     """The 6 Sep gate. Nothing about any of the four layers is supplied.
@@ -209,9 +275,7 @@ def test_the_real_transmit_order_peels_to_a_byte_exact_payload(depth):
     assert res.status == "ok", res.reason
     assert res.generators_octal == (0o171, 0o133)
     assert res.stages.get("derandomise") is True
-    # the corpus is built with 0o435, not the blue book's 0o651 - see
-    # test_the_blue_books_randomiser_is_in_the_table_and_is_not_the_corpus_one
-    assert res.randomiser == "zoo-corpus-0o435"
+    assert res.randomiser == "ccsds-131.0-B"
     assert res.rs_params.n == 255 and res.rs_params.k == 223
     assert res.rs_params.errata_rate == 0.0
 
