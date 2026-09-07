@@ -694,9 +694,8 @@ producing. Asserted on the search's own verdict about itself, never on a wall
 clock — `assert elapsed < N` is the instrument that produced the flake.
 
 **S3's own tests, run in their own session because of the registry issue
-below: 240 passed, 1 skipped** (`tests/unit/test_s3_receive.py`,
-`test_s3_lockcheck.py`, `test_s3_ldpc_junction.py`). The one skip is the
-dormant LDPC acceptance test, which names the missing plug-in as its reason.
+below: 252 passed, 0 skipped** (`tests/unit/test_s3_receive.py`,
+`test_s3_lockcheck.py`, `test_s3_ldpc_junction.py`).
 
 **Action: PR #13 needs merging.** `e7b9649` is timestamped 01:29 and your
 report 10:29 — **the fix existed nine hours before you started measuring**, in a
@@ -745,19 +744,59 @@ hands S3 a symbol rate wrong by up to 81% and the answer comes through
 `lockcheck.strongest_line`, the rate rescue. Those are the half that can
 regress; testing only the clean SNRs would have left the rescue unpinned.
 
-**Block C — LDPC decode path — is designed and measured, and the plug-in is
-not written.** `reports/s3_ldpc_design.md`. A `CodePlugin` belongs beside
-`conv_code.py` and `rs_code.py` in `pipeline/s5_decode/`, which is Nehal's, and
-the rule that has held four days is that a file in someone else's directory is
-a request and not an edit. **So block E — "LDPC decodes with the supplied H" —
-does not close today. It is open, not done.**
+**Blocks C and E are CLOSED.** `pipeline/s3_receive/ldpc_code.py`, registered
+as `CODES["ldpc"]`; design, measurements and acceptance numbers in
+`reports/s3_ldpc_design.md`. The Command Center's definition of done for this
+row is "**both registered** and passing through the same chain", and both now
+are — `MODULATIONS["4fsk"]` and `CODES["ldpc"]`, each reached by name.
 
-Checked against the Command Center rather than remembered: its definition of
-done for this row is "**both registered** and passing through the same chain".
-4-FSK is registered and passing; LDPC is neither. Half the row is met, and the
-half that is not is the half the verify line names. The acceptance criteria are
-written as a real test that is skipped with a reason naming the missing
-plug-in, and wakes up the moment `register_code()` runs for it.
+**NEHAL — the file is in MY directory, and that is a request rather than a
+decision.** A `CodePlugin` belongs beside `conv_code.py` and `rs_code.py` in
+`pipeline/s5_decode/`. I did not write it there because that folder is yours
+and the rule is that a file in someone else's directory is a request at the
+sync. So it is built to move: it imports **nothing** from `pipeline.s3_receive`,
+reaches the system only through `registry.register_code`, and every test
+reaches it by name through `CODES["ldpc"]`. `pipeline/s3_receive/__init__.py`
+is untouched, so importing S3 does not register a code plug-in — checked,
+`CODES` is empty until something asks for the module by name. **The move is
+`git mv` plus one import line in `tests/unit/test_s3_ldpc_junction.py`.** Say
+the word and I will do it, or do it yourself; it is your remit.
+
+**Block E's four criteria, measured rather than asserted.** Chain: information
+bits → IRA encoder → `zoo.rf.through_channel` at 2 dB with a carrier offset and
+a fractional timing error → `MODULATIONS["qpsk"].receive` →
+`CODES["ldpc"].decode`.
+
+| criterion | result |
+|---|---|
+| decodes where the raw stream does not | S3 `ok`, raw BER **0.0091**, source bits wrong after decoding **0**, 5/5 blocks to a zero syndrome |
+| alignment found inside the promised window | `llr_start_bit_tolerance + 1` offsets — at most five — hits the boundary every run |
+| the wrong sign fails | negate every LLR: **0 of 5** blocks converge, output at 47% BER |
+| `blind_recover` returns `None` | on zeros, on noise, on a ramp; wired into nothing |
+
+The SNR is picked so the raw stream is *not* already correct — at 5 dB and
+above it is exact, and a decode that succeeds there shows the plumbing runs and
+nothing else. **The edge, because a decoder nobody has found the edge of is a
+decoder nobody has measured:** it still clears a **6.0%** raw rate at −1 dB
+where S3 has fallen to `low_confidence`, and at −2 dB S3 returns `failed` with
+no LLRs. On this code the binding limit is the receiver, not the decoder. Over
+plain AWGN with no receiver in the way it takes 6.5% to zero.
+
+**That last number cuts against my own design rule and I would rather say so.**
+§3 below says an LDPC decoder should gate on `status == "ok"`, and here a
+`low_confidence` stream at 6% raw error decoded perfectly. The rule is
+justified by the 82×-over-confident case, not by every refused stream — it is
+conservative, it is the right default, and it is not free.
+
+**Normalised min-sum is the default, not sum-product**, because min-sum's
+check update is positively homogeneous and so immune to the *scale* half of a
+calibration error. It is **not** immune to a shape error, and saying otherwise
+would be the overclaim; what makes it safe is that the measured shape error
+inside the `ok` population is small (1.06–1.62 across bins). Both algorithms
+are implemented and both are pinned. `MIN_SUM_NORMALISATION = 0.75` is an
+inherited literature default and is labelled as one — there is no corpus of
+LDPC-coded captures here to tune it against, and a constant chosen on one arm
+is the mistake this stage has been punished for twice.
 
 What the day produced instead is the part that is mine and that the plug-in
 cannot be written without: **the two things S3 has to supply an LDPC decoder,
