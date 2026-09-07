@@ -61,11 +61,28 @@ class DummyCode:
 
 
 class TestRegistryContract(unittest.TestCase):
+    # The registry is process-global and the real plug-ins register at module
+    # import time, so a bare clear() in tearDown could never be undone: once
+    # pipeline.s3_receive was imported, nothing re-runs its register_*() calls.
+    # This class therefore used to leave the registry EMPTY for every test that
+    # ran after it in the same process. Measured 7 Sep on main:
+    #
+    #   tests/contract/test_s3_s4_s5_chain.py alone -> 4 passed
+    #   after this class                            -> 4 errors, KeyError 'qpsk'
+    #   tests/unit/test_s3_ldpc_junction.py alone   -> 27 passed
+    #   after this class                            -> 24 failed
+    #
+    # 14 of the 41 failures on main were this and nothing else. Snapshot and
+    # restore instead, so the isolation these tests need costs no one else.
     def setUp(self):
+        self._saved = (dict(MODULATIONS), dict(INTERLEAVERS), dict(CODES))
         clear()
 
     def tearDown(self):
         clear()
+        MODULATIONS.update(self._saved[0])
+        INTERLEAVERS.update(self._saved[1])
+        CODES.update(self._saved[2])
 
     def test_direct_registration(self):
         mod = DummyModulation()

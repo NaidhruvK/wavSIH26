@@ -7,6 +7,7 @@ Compatible with both unittest and pytest.
 """
 from __future__ import annotations
 
+import dataclasses
 import tempfile
 import time
 import unittest
@@ -316,18 +317,26 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(stage_map["s1_detect"].status, StageStatus.FAILED)
         self.assertIn("exceeded timeout", stage_map["s1_detect"].reason)
 
-    def test_s2_fallback_detection(self):
-        class MockLocalS2:
-            @staticmethod
-            def estimate_blind(iq, fs):
-                return DummyS2Estimate()
+    def test_s2_resolves_to_the_real_pipeline_stage(self):
+        """S2 must resolve to pipeline/s2_estimate.py and nothing else.
 
-        with unittest.mock.patch.dict("sys.modules", {"tests.fixtures.local_s2": MockLocalS2}):
-            estimator = get_s2_estimate()
-            self.assertIsNotNone(estimator)
-            self.assertTrue(callable(estimator))
-            est = estimator(None, 200000.0)
-            self.assertEqual(est.symbol_rate, 25000.0)
+        This replaces test_s2_fallback_detection, which asserted
+        `est.symbol_rate == 25000.0` against a tests/fixtures/local_s2 fallback
+        that could never be reached (the primary has existed since 1 Sep) and
+        whose field the real S2Result does not even have - it publishes
+        symbol_rate_hz. The fallback is gone; this pins that it stays gone,
+        because a service silently running a test fixture is worse than one
+        that fails.
+        """
+        estimator = get_s2_estimate()
+        self.assertIsNotNone(estimator)
+        self.assertTrue(callable(estimator))
+        self.assertEqual(estimator.__module__, "pipeline.s2_estimate")
+
+        from pipeline.s2_estimate import S2Result
+        field_names = {f.name for f in dataclasses.fields(S2Result)}
+        self.assertIn("symbol_rate_hz", field_names)
+        self.assertNotIn("symbol_rate", field_names)
 
     def test_artifact_handling(self):
         overrides = make_clean_overrides()
@@ -424,6 +433,45 @@ class TestOrchestrator(unittest.TestCase):
         tracked_errors = get_plugin_load_errors()
         self.assertEqual(errors, tracked_errors)
 
+    def test_required_plugin_modules_covers_every_registering_module(self):
+        """Every module that registers a plug-in on import must be in the loader.
+
+        REQUIRED_PLUGIN_MODULES is a hand-maintained tuple, and on 7 Sep it
+        silently went stale: the LDPC plug-in moved into pipeline/s5_decode/
+        three and a half hours after the tuple was written, so the service came
+        up with CODES = {conv, reed-solomon} and the LDPC decode path was dead
+        through the API while its own unit tests stayed green. Nothing pointed
+        at it, because a missing plug-in looks exactly like a scheme nobody
+        tried. Derive the truth from the source instead of trusting the tuple.
+        """
+        import re
+
+        from service.orchestrator import REQUIRED_PLUGIN_MODULES
+
+        pipeline_root = Path(__file__).resolve().parents[2] / "pipeline"
+        registering = set()
+        pattern = re.compile(r"^register_(modulation|interleaver|code)\s*\(",
+                             re.MULTILINE)
+        for path in pipeline_root.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            if pattern.search(path.read_text(encoding="utf-8")):
+                rel = path.relative_to(pipeline_root.parent).with_suffix("")
+                registering.add(".".join(rel.parts))
+
+        self.assertTrue(registering, "found no registering modules - check the scan")
+        covered = set(REQUIRED_PLUGIN_MODULES)
+        missing = {
+            m for m in registering
+            # A module is covered either directly or by its package, whose
+            # __init__ imports it (pipeline.s3_receive registers this way).
+            if m not in covered and not any(m.startswith(c + ".") for c in covered)
+        }
+        self.assertEqual(
+            missing, set(),
+            "these modules register a plug-in on import but the service never "
+            f"imports them, so their schemes are invisible to the API: {sorted(missing)}")
+
     def test_plugin_error_visibility_in_stage_results(self):
         """Verify that S3 and S5 include plugin load failures in reason when stage fails."""
         mock_errors = {"pipeline.s3_receive": "ModuleNotFoundError: No module named 'numpy'"}
@@ -448,7 +496,13 @@ class TestOrchestrator(unittest.TestCase):
             called = False
             def demodulate(self, samples, params):
                 CustomMod.called = True
-                return [1.0, -1.0, 1.0, -1.0]
+                # 4 LLRs used to be enough here only because S5 decoded the
+                # stream exactly as it arrived. It now applies the offset and
+                # de-interleaver S4 recovered, and DummyRecoveryResult declares
+                # block depth 8 x width 12, so anything under one 96-bit period
+                # de-interleaves to nothing and S5 correctly declines to decode.
+                # Four whole periods, so this exercises the real path.
+                return [1.0, -1.0] * 192
             def classify_features(self, iq):
                 return {}
             def theoretical_cumulants(self):
