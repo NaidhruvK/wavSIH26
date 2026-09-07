@@ -614,6 +614,76 @@ his own files — but the blocker on his side is gone.
 
 Full regression suite re-run after all of the above.
 
+### 7 Sep, same day — the OneDrive problem hit my machine too, same fix as Nehal's
+
+That full-suite re-run above surfaced 4 failures in `tests/unit/test_rank_spike.py`
+(not my file, not touched today) — `blind_recover`'s statistical fallback
+(`pipeline/s4_recover/rank_collapse.py`, `STAT_FALLBACK_BUDGET_S = 8.0`,
+wall-clock) running out of its time budget before finding the period.
+Didn't assume it was unrelated to my work: reproduced it away from my
+changes first — 29/29 passing standalone, 45/45 passing run directly
+after every file this session touched — before concluding it was
+environmental, not a regression.
+
+Root cause was already diagnosed and fixed by Nehal, on his own machine,
+the night before (`4db1455`, `nehal/rs-runtime`, not yet merged): this
+whole repo lives under OneDrive (`...\OneDrive\Desktop\SIH\wavSIH26`),
+which syncs every test write and every regenerated report and becomes
+the top CPU process on the machine during a full suite run — his
+measurement was 83,600 CPU-seconds of OneDrive activity during one run,
+one test going from ~280s to **4h57m**. A wall-clock-budgeted search
+like the statistical fallback is exactly the kind of thing that
+degrades under that contention without any logic being wrong.
+
+Applied his exact fix here: fresh clone to `C:\dev\wavSIH26` (not a copy
+— a Windows venv bakes in absolute paths and doesn't survive a move),
+fresh `.venv` on the pinned Python 3.11.9, `docs/stack_check.py` 11/11,
+`.gitattributes` verified working on a clean checkout
+(`models/classifier.txt` MD5-identical to the OneDrive copy). Full
+suite: **396 passed, 1 xfailed, 0 failed** — `test_rank_spike.py` clean
+this time — in **11m55s**, against 37-44 minutes for the same suite on
+the OneDrive path across this session's last two runs. Confirms both
+Nehal's diagnosis and his fix, independently, on a second machine.
+
+**Not yet done: the old OneDrive clone hasn't been deleted.** Same call
+Nehal made on his own machine — left in place rather than delete a
+working copy that still has everything pushed and nothing unique in it,
+until it's confirmed the new location is what gets used going forward.
+
+### 7 Sep, later — the CV router carries its own diagnostic now
+
+Nehal's follow-up sharpened the 10dB-floor finding: `envelope_cv`
+(`std(|x|)/mean(|x|)`) gives 2fsk and 4fsk the IDENTICAL value to three
+decimal places at every SNR — proof the statistic carries no modulation
+information at all, only an SNR one. Worse, he found that documenting
+the floor in a report doesn't protect every consumer: his own chain
+survives a bad low-SNR FSK CFO because `search.receive_best` defaults
+`cfo=0`, but Naidhruv's orchestrator calls `plugin.receive()` directly
+(`orchestrator.py:696`), with no such fallback in the path.
+
+His ask, explicit about scope: not a redesign, just make the decision
+say so in the *result*, not only in a report a caller has to already
+know to go read. `S2Result` now carries `envelope_cv` — the raw
+statistic, always populated (even when a caller passes
+`constant_envelope` explicitly, a path that previously never computed
+it at all) — so any consumer, orchestrator included, can apply its own
+policy to `cfo_hz` instead of trusting `constant_envelope` blind.
+Deliberately did NOT pair it with a new `low_confidence`-style boolean:
+picking a threshold on `envelope_cv` for that is exactly the
+undecidable crossover `s2_envelope.md` already proved has no single
+right answer — inventing a second one under the same pressure that
+produced the first threshold bug would repeat the mistake, not fix it.
+Two new tests in `test_s2_estimate.py`, one of which pins Nehal's exact
+measured table (2fsk/4fsk `envelope_cv` at all six SNRs, to 3dp) as a
+regression guard.
+
+**Worth relaying to Naidhruv directly**, since it's his file: the
+`orchestrator.py:696` direct-call path has no `cfo=0` fallback the way
+Nehal's own receiver wrapper does, so it's the one place in the system
+still fully exposed to a bad FSK CFO below 10dB. Not something I can
+fix from here — his integration layer, his call on how to handle it
+(check `envelope_cv`, catch it downstream, or accept the stated floor).
+
 ---
 
 ## Anvith — S3 receiver chain

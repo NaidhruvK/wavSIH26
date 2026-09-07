@@ -273,3 +273,40 @@ def test_result_hypotheses_are_ranked_descending():
     result = estimate(r.iq, r.fs)
     rate_scores = [h[1] for h in result.symbol_rate_hypotheses]
     assert rate_scores == sorted(rate_scores, reverse=True)
+
+
+def test_envelope_cv_always_populated_even_when_constant_envelope_given():
+    """7 Sep, Nehal: constant_envelope < 0.25 is an SNR test wearing a
+    modulation test's name -- his ask was that the raw statistic be
+    exposed in the result, not just documented in a report, so any
+    caller can apply its own policy instead of trusting constant_envelope
+    blind. Must be populated even when the caller passes constant_envelope
+    explicitly, since that path never computes it internally otherwise."""
+    f = _corpus_files("qpsk_10dB_*.wav")[0]
+    r = ingest(f)
+    result = estimate(r.iq, r.fs, constant_envelope=False)
+    assert result.envelope_cv is not None
+    assert result.envelope_cv > 0.0
+
+
+@pytest.mark.parametrize("scheme,snr,expected", [
+    ("2fsk", 20, 0.070), ("2fsk", 15, 0.124), ("2fsk", 13, 0.155),
+    ("2fsk", 10, 0.215), ("2fsk", 8, 0.264), ("2fsk", 4, 0.376),
+    ("4fsk", 20, 0.070), ("4fsk", 15, 0.124), ("4fsk", 13, 0.155),
+    ("4fsk", 10, 0.215), ("4fsk", 8, 0.264), ("4fsk", 4, 0.377),
+])
+def test_envelope_cv_matches_nehals_independent_measurement(scheme, snr, expected):
+    """Pins the table from Nehal's 7 Sep review -- 2fsk and 4fsk give the
+    same envelope_cv to three decimal places at every SNR (his table's
+    values, rounded means of the 7 reps per scheme/SNR cell), which is
+    the whole proof this statistic carries no modulation information,
+    only an SNR one (it tracks 1/sqrt(2*SNR_linear)). Checked against
+    the first file in the cell, not the mean -- tolerance widened to
+    0.002 to cover real inter-rep variance (measured range for 2fsk at
+    4dB alone is 0.375-0.378), not because the statistic is imprecise."""
+    f = _corpus_files(f"{scheme}_{snr}dB_*.wav")[0]
+    r = ingest(f)
+    result = estimate(r.iq, r.fs)
+    assert abs(result.envelope_cv - expected) < 0.002, (
+        f"{f.name}: envelope_cv={result.envelope_cv:.3f}, expected {expected}"
+    )
