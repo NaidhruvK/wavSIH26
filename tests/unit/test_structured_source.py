@@ -352,3 +352,42 @@ def test_the_same_stream_with_a_random_payload_aligns_on_the_argmax():
                                            max_rows=PERIOD + ROW_MARGIN))
             for off in range(PERIOD)]
     assert int(np.argmax(defs)) == 0
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "7 Sep, measured: a REPEATING text payload plus a NON-ZERO start offset "
+    "defeats the rank collapse. Neither condition alone does it - random "
+    "payload recovers 10/10 across offsets 0,1,2,4,12,16,24,48,81,95, and a "
+    "text payload at offset 0 recovers - but together they give 1/10. The "
+    "walk's alignment starts from offset 0 (_attempt_candidate: "
+    "'period, offset = first, 0') and a structured source makes the offset "
+    "argmax uninformative, which the tests above already establish at offset "
+    "0. Not fixed: the candidate walk is the core of S4 and this landed on "
+    "the day of the core-lock gate. pipeline/s4_recover/cli.py --demo pins "
+    "start_offset=0 so the demo is unaffected."))
+def test_a_structured_source_at_a_nonzero_offset_is_a_known_gap():
+    """The two conditions are independently harmless and jointly fatal.
+
+    This is the offset-argmax problem the rest of this file characterises,
+    extended by the one variable those tests hold fixed. `zoo.bits_only`
+    defaults `start_offset` to a RANDOM value, so any caller that does not pin
+    it is sampling this gap rather than avoiding it - which is exactly how it
+    was found, porting the CLI demo off the old fixture.
+
+    The corpus itself is NOT affected and that is measured, not assumed: all
+    six clean `zoo/corpus/bits_only/` files carry non-zero start offsets
+    (72, 34, 78, 30, 44, 21) and all six recover, because their payloads are
+    random rather than repeating text.
+    """
+    from zoo.bits_only import make_stream as zoo_make_stream
+
+    msg = ("RAAYA SIH26147 -- blind recovery of modulation, interleaver and "
+           "code. Nothing about this file was supplied in advance. ")
+    bits, _truth = zoo_make_stream(80_000, 8, 12, ber=0.0, seed=0,
+                                   scramble=False, payload_text=msg,
+                                   start_offset=48)
+    res = blind_recover(bits)
+
+    assert res.status == "ok"
+    assert res.interleaver is not None
+    assert res.interleaver.params == {"depth": 8, "width": 12}
