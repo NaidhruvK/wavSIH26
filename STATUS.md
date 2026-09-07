@@ -2629,7 +2629,7 @@ reconciles exactly (14+14+10+1+1+1 failed, 4+2 errors):
   so `tearDown` deleted the temp directory out from under it -
   `PermissionError [WinError 32]`. On Linux the unlink succeeds and the race is
   invisible, **so this was only ever red on our machines and green in CI.** Now
-  joins the job future; 14/14 five runs running.
+  joins the job future; 14/14 on five consecutive runs.
 - **`test_default_config_values` asserted `endswith("reports/artifacts")`** with
   a forward slash - passes in the container, fails on every one of our machines.
   Same Linux-only blind spot. Compares path parts now.

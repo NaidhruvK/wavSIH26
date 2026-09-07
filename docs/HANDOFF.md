@@ -85,12 +85,23 @@ Ignore it.
   across `tests/unit` + `tests/contract`. Not yet merged.
 - **Start your own branch** for new work — `nehal/<feature>`. Never commit to
   `main` directly, even though nothing currently stops you (see section 5).
-- **Two stale copies remain under OneDrive and should be deleted** once you
-  are satisfied with `C:\dev\raaya`: `OneDrive\Desktop\raaya` (the pre-move
-  clone, fully pushed — nothing unique in it) and the one below.
-- **`C:\Users\aneha\OneDrive\Desktop\SIH`** is the pre-repo working copy,
-  fully superseded. It should be deleted — two copies is how they diverge, and
-  the IDE has already been observed opening the stale one.
+- ~~**Two stale copies remain under OneDrive and should be deleted**~~
+  **WITHDRAWN 7 Sep — do not spend time on this, and do not delete anything.**
+  Measured rather than assumed: `OneDrive\Desktop\raaya` **is already gone**,
+  and `OneDrive\Desktop\SIH` holds **zero entries** — it is an empty Files
+  On-Demand placeholder (reparse tag `0x9000e01a`), not a real copy. Deleting
+  it frees no disk and would only remove it from the cloud. The instruction
+  above rested on a premise that is no longer true, and it asked for a
+  destructive action for no benefit.
+
+  The OneDrive *load* is real and is a different thing: OneDrive.exe sustains
+  ~112 % of one core on an idle machine (cumulative 83.6k → 158.3k → 202.9k
+  CPU-seconds across 4/6/7 Sep). The churn is `OneDrive\Desktop` holding
+  ~250,000 files across a dozen unrelated projects (RAG App 50k+, lychee 36k,
+  HA-QCNN 36k, LLM Red-Team Lab 32k, BlockVerify 22k) — **other people's work,
+  not ours to delete.** Stopping OneDrive before a timed run buys ~12 %; that
+  is the whole remedy. It does not affect the gate: the core-lock number is
+  17.7 s twice consecutively against a 90 s budget.
 
 Environment: **Python 3.11.9** (not 3.13 — see
 `docs/python-version-decision.md`). `.venv` in the clone is already built.
@@ -289,10 +300,22 @@ a status) and `test_early_exit_agrees_with_the_full_sweep_on_what_matters`.
   file, de-interleaved at its stated offset with its stated parameters, is
   annihilated exactly by the parity check of its stated generators.
   `tests/fixtures/local_zoo.py` is **deliberately NOT deleted** - see the note
-  in section 6 - because `zoo/bits_only.py` has no `payload_text`, no
-  `mean_burst` and only block interleavers, so removing it would delete
-  coverage rather than duplication. It is demoted from ground truth to a
-  parametric generator; the gates are the corpus's job now.
+  in section 6. **CORRECTED 8 Sep: the reason given here was "`zoo/bits_only.py`
+  has no `payload_text`, no `mean_burst` and only block interleavers". The
+  first two are no longer true** - `9b4c524` added both at my request, which is
+  what unblocked porting the CLI off `tests/` in `164373b`. The third was never
+  a reason at all: `local_zoo.make_stream` is block-only too (depth/width, no
+  family argument), so it never carried diagonal or convolutional coverage
+  either.
+
+  Counted, not estimated, the real remaining gap is **two functions**:
+  `local_zoo.random_case` and `local_zoo.make_rs_stream`, which have no
+  equivalent anywhere in `zoo/`. Everything else it exports is now duplicated
+  there - `lfsr_scramble`, `inject_errors`, `gilbert_elliott_mask`,
+  `inject_burst_errors`, `bits_needed`, `make_stream` (zoo's also takes
+  `start_offset`), and `make_ccsds_stream` (now `zoo/ccsds.py`). It is demoted
+  from ground truth to a parametric generator; the gates are the corpus's job
+  now.
 - **An interleaved stream carrying a SHORT REPEATING payload is refused, not
   recovered**, and the reason is measured rather than assumed. Two things
   defeat it. Its own periodicity collapses before the interleaver's (an
@@ -538,4 +561,13 @@ Two standing jobs that are not on any day's list:
 1. The moment Dheeraj's zoo lands, delete `tests/fixtures/local_zoo.py`, point
    the tests at the real corpus, and re-run the gates. Report any number that
    moves.
+
+   **Status 8 Sep: the zoo has landed in full and this is overdue.** The
+   blocker named in section 3 is gone; the CLI no longer imports the fixture
+   (`164373b`), so nothing shipping depends on it and deleting it no longer
+   breaks the container's default `CMD`. What still does: **12 test files and 7
+   report studies**, and two functions with no zoo equivalent - `random_case`
+   and `make_rs_stream`. Port those two into `zoo/` first, then delete. Not a
+   drive-by: real coverage is at stake, so it wants a deliberate pass rather
+   than a quick one.
 2. Keep `STATUS.md` current under the `## Nehal` heading only.
