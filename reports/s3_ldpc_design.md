@@ -5,16 +5,15 @@ supplied parity-check matrix") and block E ("LDPC decodes with the supplied
 H").
 
 **Both blocks are closed.** The decode path is
-`pipeline/s3_receive/ldpc_code.py`, registered as `CODES["ldpc"]`, and block
-E's four acceptance criteria are tests rather than claims - §5 has the numbers.
+`pipeline/s5_decode/ldpc_code.py`, registered as `CODES["ldpc"]`, and block E's
+four acceptance criteria are tests rather than claims - §5 has the numbers.
 
-**It is in the S3 owner's directory rather than `pipeline/s5_decode/`, where a
-`CodePlugin` belongs.** That directory is Nehal's, and the standing rule here
-is that a file in someone else's folder is a request at the sync and never an
-edit; it has held all week and is why four people on one pipeline have had no
-merge conflicts. So the file is written to move - it imports nothing from S3
-and reaches the system only through the registry - and §6 is a one-line
-relocation request rather than a request to build anything.
+It spent its first afternoon in `pipeline/s3_receive/` and moved once the
+ownership was agreed, because a `CodePlugin` belongs beside `conv_code.py` and
+`rs_code.py` rather than inside the receiver stage. The properties that made
+the move cheap were designed in and are worth keeping: it imports nothing from
+S3, it touches no existing file, and every test reaches it by name through
+`CODES`.
 
 Two measurements had to come first, because the plug-in could not be written
 without them: **the two things S3 has to supply an LDPC decoder, one of which
@@ -171,7 +170,7 @@ schemes are listed as unmeasured rather than as passing.
 
 ## 4. The plug-in, as built
 
-`pipeline/s3_receive/ldpc_code.py`, registered as `CODES["ldpc"]`. It
+`pipeline/s5_decode/ldpc_code.py`, registered as `CODES["ldpc"]`. It
 satisfies `registry.CodePlugin`, the same shape `ConvCode` and
 `ReedSolomonCode` satisfy:
 
@@ -184,24 +183,23 @@ class LDPCCode:
     def syndrome(self, llrs, params: dict) -> dict:     # beyond the protocol
 ```
 
-### Where it lives, and the thing to fix later
+### Where it lives
 
-It belongs beside `conv_code.py` and `rs_code.py` in `pipeline/s5_decode/`.
-That directory is Nehal's, and the rule this project runs on is that a file in
-someone else's folder is a request at the sync and never an edit — the thing
-that has kept four people on one pipeline at near-zero merge conflicts all
-week. So it sits in the S3 owner's own directory instead, and it is built to
-move:
+Beside `conv_code.py` and `rs_code.py`, which is Nehal's directory. Written by
+the S3 owner because the row is on his day-clock column, and landed there with
+agreement rather than dropped in - it sat in `pipeline/s3_receive/` for an
+afternoon first, because a file in someone else's folder is a request at the
+sync and never an edit.
 
-* it imports **nothing** from `pipeline.s3_receive`,
-* it reaches the system only through `registry.register_code`,
-* every test reaches it by name through `CODES["ldpc"]`, never by import,
-* `pipeline/s3_receive/__init__.py` is untouched, so importing S3 does **not**
-  register a code plug-in — verified, `CODES` is empty until something asks
-  for the module by name.
+The isolation that made that move a `git mv` is still true and still useful:
 
-**Relocating it is `git mv` plus one import line** in
-`tests/unit/test_s3_ldpc_junction.py`. Nothing else refers to its path.
+* it imports **nothing** from `pipeline.s3_receive` - only numpy and the
+  registry,
+* it touches no existing file: `pipeline/s5_decode/__init__.py` is empty and
+  stays empty, because code plug-ins register on **explicit** import,
+* every test reaches it by name through `CODES["ldpc"]`, never by import.
+
+So rewriting, renaming or replacing it costs one line.
 
 ### `blind_recover` returns `None`, deliberately
 
@@ -340,24 +338,20 @@ short ramp, and is not wired into anything.
 
 ---
 
-## 6. What is still open, and the one request
+## 6. What is still open
 
-**The request, to Nehal at the sync:** `git mv pipeline/s3_receive/ldpc_code.py
-pipeline/s5_decode/`. It is one move and one import line in the test file; the
-plug-in imports nothing from S3 and reaches the system only through the
-registry. It is in your directory's remit, so it is yours to say — I put it in
-mine rather than write into `s5_decode/` uninvited.
+**Nothing is blocked on anyone.** The file is in `pipeline/s5_decode/` where it
+belongs, both blocks are closed, and the row's definition of done - "**both
+registered** and passing through the same chain" - is met by
+`MODULATIONS["4fsk"]` and `CODES["ldpc"]`, each reached by name.
 
-**Two scope facts from the Command Center, checked rather than remembered:**
-
-* Its definition of done for this row is "**both registered** and passing
-  through the same chain". Both now are: `MODULATIONS["4fsk"]` and
-  `CODES["ldpc"]`, each reached by name.
-* The same scope line asks the system to "detect LDPC-like structure when it
-  is not [supplied], and say so on screen". **That half is not done and is not
-  S3's** — it is structure detection in S4/S6 plus a UI string, and as far as
-  this document's author can tell nobody owns it. Worth raising alongside the
-  move request.
+**One scope fact from the Command Center, checked rather than remembered.** The
+same line that puts "LDPC decoding when the parity-check matrix is supplied" in
+scope also asks the system to "detect LDPC-like structure when it is not
+[supplied], and say so on screen". **That half is not done and it is not
+S3's** - it is structure detection in S4/S6 plus a UI string, and as far as
+this document's author can tell nobody owns it. Worth raising at the sync; it
+is a visible thing for a judge to ask about.
 
 **Still open, and worth knowing before building on this:**
 
@@ -373,8 +367,8 @@ mine rather than write into `s5_decode/` uninvited.
   close it; nothing in `zoo/corpus/rf/` does today.
 * The non-coherent FSK LLR still carries a **measured** calibration constant
   of 2.0 rather than a derived one (`softmap._NONCOHERENT_CALIBRATION`).
-  2-FSK's 1.62× is the loosest number in the `ok` population and that constant
+  2-FSK's 1.62x is the loosest number in the `ok` population and that constant
   is the likely reason.
 * **The code used to demonstrate this is a fixture, not a standard.** It is a
-  rate-1/2 IRA-style code built in the test file. Nothing here claims a
-  CCSDS or DVB-S2 LDPC profile; what it claims is that a supplied H decodes.
+  rate-1/2 IRA-style code built in the test file. Nothing here claims a CCSDS
+  or DVB-S2 LDPC profile; what it claims is that a supplied H decodes.

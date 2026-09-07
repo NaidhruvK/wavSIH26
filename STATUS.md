@@ -744,23 +744,31 @@ hands S3 a symbol rate wrong by up to 81% and the answer comes through
 `lockcheck.strongest_line`, the rate rescue. Those are the half that can
 regress; testing only the clean SNRs would have left the rescue unpinned.
 
-**Blocks C and E are CLOSED.** `pipeline/s3_receive/ldpc_code.py`, registered
+**Blocks C and E are CLOSED.** `pipeline/s5_decode/ldpc_code.py`, registered
 as `CODES["ldpc"]`; design, measurements and acceptance numbers in
 `reports/s3_ldpc_design.md`. The Command Center's definition of done for this
 row is "**both registered** and passing through the same chain", and both now
 are — `MODULATIONS["4fsk"]` and `CODES["ldpc"]`, each reached by name.
 
-**NEHAL — the file is in MY directory, and that is a request rather than a
-decision.** A `CodePlugin` belongs beside `conv_code.py` and `rs_code.py` in
-`pipeline/s5_decode/`. I did not write it there because that folder is yours
-and the rule is that a file in someone else's directory is a request at the
-sync. So it is built to move: it imports **nothing** from `pipeline.s3_receive`,
-reaches the system only through `registry.register_code`, and every test
-reaches it by name through `CODES["ldpc"]`. `pipeline/s3_receive/__init__.py`
-is untouched, so importing S3 does not register a code plug-in — checked,
-`CODES` is empty until something asks for the module by name. **The move is
-`git mv` plus one import line in `tests/unit/test_s3_ldpc_junction.py`.** Say
-the word and I will do it, or do it yourself; it is your remit.
+**NEHAL — there is a file of mine in your directory, and here is exactly what
+it does and does not touch.** A `CodePlugin` belongs beside `conv_code.py` and
+`rs_code.py`, and the LDPC row is on my day-clock column, so I wrote it and put
+it where it belongs rather than leaving a decoder inside the receiver stage. It
+spent its first afternoon in `pipeline/s3_receive/` precisely because the rule
+is that your folder is a request and not an edit; it moved once that was
+agreed. What it costs you:
+
+* **it touches no existing file.** `pipeline/s5_decode/__init__.py` is empty
+  and stays empty — code plug-ins register on explicit import, exactly as
+  `conv_code.py` and `rs_code.py` do. `git show --stat` on the move shows one
+  added file and nothing else in your directory.
+* **it imports nothing from `pipeline.s3_receive`** — numpy and the registry,
+  that is all. No coupling to my stage came with it.
+* **every test reaches it by name through `CODES["ldpc"]`**, never by import,
+  so rewriting, renaming or throwing it away costs one line.
+
+Rewrite it or replace it freely; nothing outside its own tests depends on its
+internals.
 
 **Block E's four criteria, measured rather than asserted.** Chain: information
 bits → IRA encoder → `zoo.rf.through_channel` at 2 dB with a carrier offset and

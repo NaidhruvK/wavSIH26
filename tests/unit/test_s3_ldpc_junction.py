@@ -1,11 +1,11 @@
 """What an LDPC decoder needs from S3, pinned. Owner: Anvith.
 
 7 September, day-clock blocks C and E. Design and the measurements behind it:
-`reports/s3_ldpc_design.md`. The plug-in is
-`pipeline/s3_receive/ldpc_code.py` - the S3 owner's own directory rather than
-`pipeline/s5_decode/`, where a CODES plug-in belongs, because that one is
-Nehal's and a file in someone else's folder is a request at the sync and not
-an edit. It is written to move: `git mv` plus the single import line below.
+`reports/s3_ldpc_design.md`. The plug-in is `pipeline/s5_decode/ldpc_code.py`,
+beside `conv_code.py` and `rs_code.py` where a CODES plug-in belongs. It spent
+an afternoon in `pipeline/s3_receive/` first, because that folder is Nehal's
+and a file in someone else's directory is a request at the sync and not an
+edit; it moved once that was agreed.
 
 Three things are pinned here. The first two are properties of S3's output that
 an LDPC decode path depends on and that nothing before it has needed - Viterbi,
@@ -47,9 +47,10 @@ from registry import CODES, MODULATIONS  # noqa: E402
 from tests.fixtures import corpus  # noqa: E402
 
 # Code plug-ins register on EXPLICIT import - by design, so that nothing pays
-# for a decoder it never asks for. This is the ONE line in the test suite that
-# knows where the file lives; everything below reaches it through `CODES`.
-import pipeline.s3_receive.ldpc_code  # noqa: E402,F401  (registers LDPCCode)
+# for a decoder it never asks for, and so `pipeline/s5_decode/__init__.py` can
+# stay empty. This is the ONE line in the test suite that knows where the file
+# lives; everything below reaches it through `CODES`.
+import pipeline.s5_decode.ldpc_code  # noqa: E402,F401  (registers LDPCCode)
 from tests.fixtures.corpus import synth  # noqa: E402
 
 has_corpus = pytest.mark.skipif(
@@ -292,13 +293,10 @@ def test_the_streams_with_over_confident_llrs_are_the_ones_s3_refuses():
 # --- 3. the supplied H, and the decode path built on it ---------------------
 #
 # Block C and block E of the 7 Sep row. The plug-in is
-# `pipeline/s3_receive/ldpc_code.py` - the S3 owner's directory rather than
-# `pipeline/s5_decode/`, where a CODES plug-in belongs, because that directory
-# is Nehal's and the rule here is that a file in someone else's folder is a
-# request at the sync and not an edit. It is built to move: it imports nothing
-# from S3, registers only through `registry.register_code`, and every test
-# below reaches it by NAME through `CODES["ldpc"]`. Relocating it is `git mv`
-# plus the import line above.
+# `pipeline/s5_decode/ldpc_code.py`, beside `conv_code.py` and `rs_code.py`.
+# Every test below reaches it by NAME through `CODES["ldpc"]` and never by
+# import, which is the same rule the registry tests follow: adding, moving or
+# replacing a code plug-in stays one file and one registration line.
 
 
 def supplied_h(k: int = 8, m: int = 4, seed: int = 11):
@@ -476,7 +474,7 @@ def test_the_three_ways_of_supplying_h_agree():
     The alist is here because it is the format published matrices ship in, and
     a parser that is never exercised is a parser that is wrong.
     """
-    from pipeline.s3_receive.ldpc_code import parity_check_from_params
+    from pipeline.s5_decode.ldpc_code import parity_check_from_params
 
     h, _ = supplied_h()
     m, n = h.shape

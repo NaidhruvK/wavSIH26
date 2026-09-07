@@ -3,22 +3,27 @@
 7 September, day-clock block C. Design, and the two measurements it rests on:
 `reports/s3_ldpc_design.md`.
 
-WHERE THIS FILE LIVES, AND WHY IT IS HERE RATHER THAN IN s5_decode
-------------------------------------------------------------------
-A `CODES` plug-in belongs beside `conv_code.py` and `rs_code.py` in
-`pipeline/s5_decode/`. That directory is Nehal's, and the rule this project
-runs on is that a file in someone else's directory is a request at the sync
-and never an edit - it is what has kept four people on one pipeline at
-near-zero merge conflicts all week.
+WHO WROTE THIS AND WHY IT IS IN THIS DIRECTORY
+----------------------------------------------
+NEHAL - this is your folder and this file is not yours. Written by the S3
+owner because the LDPC decode path is on his row of the 7 September day clock,
+and landed here with agreement rather than dropped in: a `CODES` plug-in
+belongs beside `conv_code.py` and `rs_code.py`, not inside the receiver stage.
+It spent an afternoon in `pipeline/s3_receive/` for exactly that reason - a
+file in someone else's directory is a request at the sync and never an edit,
+which is what has kept four people on one pipeline at near-zero merge
+conflicts all week.
 
-So it lives here, in the S3 owner's own directory, and it is built to move:
+It was written to be easy to take over, and those properties are worth keeping:
 
-  * it imports NOTHING from `pipeline.s3_receive`,
-  * it reaches the rest of the system only through `registry.register_code`,
-  * every test reaches it by name through `CODES["ldpc"]`, never by import.
+  * it imports NOTHING from `pipeline.s3_receive` - only numpy and the registry,
+  * it touches no existing file: `pipeline/s5_decode/__init__.py` is empty and
+    stays empty, because code plug-ins register on EXPLICIT import,
+  * every test reaches it by name through `CODES["ldpc"]`, never by import,
+    so moving or replacing it costs one line.
 
-Relocating it is `git mv` plus changing one import line in
-`tests/unit/test_s3_ldpc_junction.py`. Nothing else refers to its path.
+Rewrite it, rename it or throw it away - nothing outside its own tests depends
+on its internals.
 
 WHY AN LDPC DECODER IS THE FIRST THING HERE THAT CARES ABOUT LLR MAGNITUDES
 ---------------------------------------------------------------------------
