@@ -13,7 +13,17 @@ import math
 
 import numpy as np
 
-__all__ = ["PayloadReport", "bits_to_bytes", "calculate_byte_entropy", "extract_text"]
+__all__ = [
+    "CCSDS_ASM",
+    "CCSDS_ASM_INV",
+    "PayloadReport",
+    "bits_to_bytes",
+    "calculate_byte_entropy",
+    "extract_text",
+]
+
+CCSDS_ASM = b"\x1a\xcf\xfc\x1d"
+CCSDS_ASM_INV = b"\xe5\x30\x03\xe2"
 
 PRINTABLE = set(range(32, 127)) | {9, 10, 13}
 
@@ -44,6 +54,11 @@ class PayloadReport:
     looks_like_text: bool
     inverted: bool = False        # was the stream read in inverted polarity?
     entropy: float = 0.0          # Shannon entropy in bits per byte (0.0 to 8.0)
+    has_header: bool = False
+    header_hex: str = ""
+    header_entropy: float = 0.0
+    payload_entropy: float = 0.0
+    payload_text: str = ""
 
     def preview(self, width: int = 220) -> str:
         t = self.text[:width].replace("\n", " ")
@@ -93,7 +108,13 @@ def extract_text(bits, min_printable: float = 0.85,
     """
     raw = bits_to_bytes(bits)
     if not raw:
-        return PayloadReport(0, 0.0, "", False, inverted=False, entropy=0.0)
+        return PayloadReport(
+            0, 0.0, "", False,
+            inverted=False, entropy=0.0,
+            has_header=False, header_hex="",
+            header_entropy=0.0, payload_entropy=0.0,
+            payload_text="",
+        )
 
     printable = _printable_fraction(raw)
     inverted = False
@@ -105,5 +126,44 @@ def extract_text(bits, min_printable: float = 0.85,
 
     entropy = calculate_byte_entropy(raw)
     text = raw.decode("utf-8", errors="replace")
-    return PayloadReport(len(raw), printable, text,
-                         printable >= min_printable, inverted, entropy)
+
+    asm_pos = raw.find(CCSDS_ASM)
+    if asm_pos != -1:
+        has_header = True
+        header_bytes = raw[asm_pos : asm_pos + 4]
+        header_hex = header_bytes.hex().upper()
+        payload_bytes = raw[asm_pos + 4 :]
+        header_entropy = calculate_byte_entropy(header_bytes)
+        payload_entropy = calculate_byte_entropy(payload_bytes)
+        payload_text = payload_bytes.decode("utf-8", errors="replace")
+    else:
+        asm_inv_pos = raw.find(CCSDS_ASM_INV)
+        if asm_inv_pos != -1:
+            has_header = True
+            header_bytes = raw[asm_inv_pos : asm_inv_pos + 4]
+            header_hex = header_bytes.hex().upper()
+            payload_bytes = raw[asm_inv_pos + 4 :]
+            header_entropy = calculate_byte_entropy(header_bytes)
+            payload_entropy = calculate_byte_entropy(payload_bytes)
+            payload_text = payload_bytes.decode("utf-8", errors="replace")
+        else:
+            has_header = False
+            header_hex = ""
+            header_entropy = 0.0
+            payload_bytes = raw
+            payload_entropy = entropy
+            payload_text = text
+
+    return PayloadReport(
+        n_bytes=len(raw),
+        printable_fraction=printable,
+        text=text,
+        looks_like_text=printable >= min_printable,
+        inverted=inverted,
+        entropy=entropy,
+        has_header=has_header,
+        header_hex=header_hex,
+        header_entropy=header_entropy,
+        payload_entropy=payload_entropy,
+        payload_text=payload_text,
+    )

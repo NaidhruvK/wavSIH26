@@ -40,6 +40,8 @@ from pipeline.s6_frame.descramble import (
     recover_scrambler,
 )
 from pipeline.s6_frame.payload import (
+    CCSDS_ASM,
+    CCSDS_ASM_INV,
     bits_to_bytes,
     calculate_byte_entropy,
     extract_text,
@@ -303,13 +305,108 @@ class TestByteEntropy(unittest.TestCase):
         self.assertLess(rep.entropy, 8.0)
 
     def test_extract_text_empty_input(self):
-        """Empty bit stream yields a clean empty report with 0.0 entropy."""
+        """Empty bit stream yields a clean empty report with 0.0 entropy and default header fields."""
         rep = extract_text([])
         self.assertEqual(rep.n_bytes, 0)
         self.assertEqual(rep.entropy, 0.0)
         self.assertEqual(rep.text, "")
         self.assertFalse(rep.looks_like_text)
         self.assertFalse(rep.inverted)
+        self.assertFalse(rep.has_header)
+        self.assertEqual(rep.header_hex, "")
+        self.assertEqual(rep.header_entropy, 0.0)
+        self.assertEqual(rep.payload_entropy, 0.0)
+        self.assertEqual(rep.payload_text, "")
+
+    def test_asm_ascii_payload_split(self):
+        """CCSDS_ASM followed by ASCII payload splits cleanly."""
+        payload = b"Hello, SIH2026 ground station!"
+        data = CCSDS_ASM + payload
+        bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8))
+        rep = extract_text(bits)
+
+        self.assertTrue(rep.has_header)
+        self.assertEqual(rep.header_hex, "1ACFFC1D")
+        self.assertEqual(rep.payload_text, "Hello, SIH2026 ground station!")
+        self.assertAlmostEqual(rep.header_entropy, calculate_byte_entropy(CCSDS_ASM), places=7)
+        self.assertAlmostEqual(rep.header_entropy, 2.0, places=7)
+        self.assertAlmostEqual(rep.payload_entropy, calculate_byte_entropy(payload), places=7)
+        self.assertEqual(rep.n_bytes, len(data))
+        self.assertEqual(rep.text, (CCSDS_ASM + payload).decode("utf-8", errors="replace"))
+        self.assertAlmostEqual(rep.entropy, calculate_byte_entropy(data), places=7)
+
+    def test_asm_after_arbitrary_leading_bytes(self):
+        """CCSDS_ASM after arbitrary leading bytes splits at the ASM marker."""
+        preamble = b"\x00\x01\x02\x03\x55\xaa"
+        payload = b"Telemetry payload after sync marker"
+        data = preamble + CCSDS_ASM + payload
+        bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8))
+        rep = extract_text(bits)
+
+        self.assertTrue(rep.has_header)
+        self.assertEqual(rep.header_hex, "1ACFFC1D")
+        self.assertEqual(rep.payload_text, "Telemetry payload after sync marker")
+        self.assertAlmostEqual(rep.header_entropy, 2.0, places=7)
+        self.assertAlmostEqual(rep.payload_entropy, calculate_byte_entropy(payload), places=7)
+        self.assertEqual(rep.n_bytes, len(data))
+
+    def test_no_asm_entire_stream_is_payload(self):
+        """Stream without ASM sets has_header=False, header_hex="", payload_text == text."""
+        payload = b"Direct ASCII text without any CCSDS sync marker."
+        bits = np.unpackbits(np.frombuffer(payload, dtype=np.uint8))
+        rep = extract_text(bits)
+
+        self.assertFalse(rep.has_header)
+        self.assertEqual(rep.header_hex, "")
+        self.assertEqual(rep.header_entropy, 0.0)
+        self.assertEqual(rep.payload_text, rep.text)
+        self.assertAlmostEqual(rep.payload_entropy, rep.entropy, places=7)
+        self.assertAlmostEqual(rep.payload_entropy, calculate_byte_entropy(payload), places=7)
+
+    def test_inverted_stream_and_inverted_asm(self):
+        """Inverted stream polarity resolution and inverted ASM detection."""
+        # Case A: Inverted text payload with resolve_polarity=True (default).
+        # Printability check flips stream to upright, restoring CCSDS_ASM.
+        payload = b"Inverted text payload to test polarity flip and ASM."
+        data = CCSDS_ASM + payload
+        bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8))
+        inv_bits = 1 - bits
+
+        rep_resolved = extract_text(inv_bits, resolve_polarity=True)
+        self.assertTrue(rep_resolved.inverted)
+        self.assertTrue(rep_resolved.has_header)
+        self.assertEqual(rep_resolved.header_hex, "1ACFFC1D")
+        self.assertEqual(rep_resolved.payload_text, payload.decode("utf-8"))
+        self.assertAlmostEqual(rep_resolved.header_entropy, 2.0, places=7)
+        self.assertAlmostEqual(rep_resolved.payload_entropy, calculate_byte_entropy(payload), places=7)
+
+        # Case B: Stream containing raw inverted ASM (CCSDS_ASM_INV = b"\xe5\x30\x03\xe2")
+        # when resolve_polarity=False.
+        inv_data = CCSDS_ASM_INV + payload
+        inv_bits_raw = np.unpackbits(np.frombuffer(inv_data, dtype=np.uint8))
+        rep_inv_asm = extract_text(inv_bits_raw, resolve_polarity=False)
+        self.assertFalse(rep_inv_asm.inverted)
+        self.assertTrue(rep_inv_asm.has_header)
+        self.assertEqual(rep_inv_asm.header_hex, "E53003E2")
+        self.assertEqual(rep_inv_asm.payload_text, payload.decode("utf-8"))
+        self.assertAlmostEqual(rep_inv_asm.header_entropy, 2.0, places=7)
+        self.assertAlmostEqual(rep_inv_asm.payload_entropy, calculate_byte_entropy(payload), places=7)
+
+    def test_payload_entropy_isolated_to_payload_bytes_only(self):
+        """Payload entropy is computed strictly over payload bytes without marker contamination."""
+        # Single repeated byte has 0 entropy, but CCSDS_ASM has entropy 2.0 (4 distinct bytes).
+        raw_payload = b"A" * 50
+        data = CCSDS_ASM + raw_payload
+        bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8))
+        rep = extract_text(bits)
+
+        self.assertTrue(rep.has_header)
+        self.assertEqual(rep.header_hex, "1ACFFC1D")
+        self.assertAlmostEqual(rep.header_entropy, 2.0, places=7)
+        self.assertAlmostEqual(rep.payload_entropy, 0.0, places=7)
+        self.assertEqual(rep.payload_text, "A" * 50)
+        # Total stream entropy is > 0 due to the ASM bytes present
+        self.assertGreater(rep.entropy, 0.0)
 
 
 if __name__ == "__main__":
