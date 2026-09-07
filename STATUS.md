@@ -618,6 +618,286 @@ Full regression suite re-run after all of the above.
 
 ## Anvith — S3 receiver chain
 
+### 7 Sep, afternoon — the S3 budget fix exists and is NOT on main, plus the 7 Sep column
+
+**NEHAL — read this first. Your measurement is right and your diagnosis is
+right. The fix is already written; it is in PR #13 and PR #13 is not merged,
+so your tree cannot have it.** You checked that `search.py` is bit-identical to
+`origin/main` before reporting, which was the correct thing to do and is
+exactly what pins the problem: `origin/main` does not contain the fix.
+`git diff --stat origin/main pipeline/s3_receive/search.py` against
+`anvith/s3-core-lock` is +141/-6.
+
+**Measured on this machine, same signal, same params, both trees:**
+
+| | `origin/main` (your tree) | `anvith/s3-core-lock` (PR #13) |
+|---|---|---|
+| chain runs to reach QPSK | 8 | **3** |
+| `receive_best` wall time | 10.25 s | **3.02 s** |
+| pytest wall, 8 fresh processes | 12.21–12.57 s | **4.29–4.53 s** |
+| smallest budget still answering `ok`/QPSK | 9 s | **2 s** |
+| answer at a 5 s budget | `low_confidence`/8-PSK | **`ok`/QPSK** |
+
+**Your 21.4 s is consistent with my 10.25 s** — your box measures 2.09x mine on
+this workload. Scaling the fixed branch by the same factor puts the answer at
+about **6.3 s against the 20 s budget, 3.2x margin**, where main gives you
+107%. It also explains the result that surprised you: stopping OneDrive takes
+21.4 s to 18.8 s, which is **94% of the budget**. At 94% the run-to-run
+variance still straddles the deadline, so the flake survives a quiet machine —
+your table showed exactly that, and the arithmetic agrees with it.
+
+**I could not reproduce the flake here, and that is not evidence.** 8 fresh
+processes on `origin/main` on this machine: 8 passes. The budget governs
+`receive_best`, which costs 10.25 s here against your 21.4 s - so this box has
+**1.95x headroom where yours has 0.93x**. A machine fast enough
+not to see it is not a machine that has tested it — the chain-run count is the
+number that reads the same on any hardware, and it is 8 against 3.
+
+**Both things you asked for stayed exactly as they were.**
+
+* `lockcheck.ALPHABET_ENTROPY_LIMIT` is **0.90**, unchanged and untouched. You
+  were right that it is the hero here: an 8-PSK answer to a QPSK signal is what
+  a truncated search returns, four of the eight points are the QPSK
+  constellation and the other four are empty, and the guard refusing it is the
+  guard working.
+* `SEARCH_BUDGET_S` is **20.0**, unchanged. Widening it would have bought the
+  test a pass and left the mechanism. Its docstring moved instead: the budget
+  is a fixed clock over work that scales with capture length, so "twenty runs
+  at 1.0 s" is true of the corpus's 80 000-sample files and not of a 240 000-
+  sample one.
+
+**Your suggestion 3 I did NOT take, and here is why.** Accepting
+`low_confidence` when `search_budget_exhausted` is True would make the 1 Sep
+blind-path gate pass on the machine where it matters most — a slow one — while
+the chain no longer reached bits. What I took instead is the half of your point
+that is unarguable: **that test failed with the wrong error message, and it
+cost you a day.** The first assertion to go was `status == "ok"`, and the text
+it printed came from the evenness guard, which reads as an accusation against
+`lockcheck` and is not one. There is now an assertion that fires BEFORE it,
+reading (the count is filled in at run time - this is the text as printed on a
+truncated run):
+
+    the search did not finish: 1 chain runs, stopped at one of its two bounds.
+    What it returned is the best of a partial candidate list rather than the
+    search's answer, so read the reason below as a symptom and not as a
+    verdict. The fix is to find why the answer got expensive - NOT to raise
+    SEARCH_BUDGET_S, and NOT to loosen ALPHABET_ENTROPY_LIMIT.
+    reason: only 4 of 8 constellation points carry traffic (evenness 0.667,
+    needs 0.90) - ...; search truncated by a 1 s budget: 1 of 18 surviving
+    candidates were run and 17 never reached - this is the best of what ran,
+    not a survey of the field
+
+It names neither bound, on purpose: `search_budget_exhausted` is raised by the
+clock **or** by `MAX_CHAIN_RUNS`, `reason` already names the one that applied,
+and a second claim free to contradict it is the exact failure this area keeps
+producing. Asserted on the search's own verdict about itself, never on a wall
+clock — `assert elapsed < N` is the instrument that produced the flake.
+
+**S3's own tests, run in their own session because of the registry issue
+below: 240 passed, 1 skipped** (`tests/unit/test_s3_receive.py`,
+`test_s3_lockcheck.py`, `test_s3_ldpc_junction.py`). The one skip is the
+dormant LDPC acceptance test, which names the missing plug-in as its reason.
+
+**Action: PR #13 needs merging.** `e7b9649` is timestamped 01:29 and your
+report 10:29 — **the fix existed nine hours before you started measuring**, in a
+branch you had no reason to look in. That is on me, not on you: a fix that is
+not merged is a fix nobody has. I have brought `origin/main` into the branch —
+it was 17 commits behind, and the merge is clean.
+
+---
+
+#### The merge re-verified: 0 of 756 corpus rows changed
+
+`origin/main` moved from `3f366c3` to `b6eeb30` while this branch sat: PR #12
+(Dheeraj's zoo), PR #14 (Nehal's 6 Sep) and PR #16 (Naidhruv's integration),
+the last of which **replaced `registry/protocols.py`
+wholesale** — 155 lines, the strawman finally becoming the real registry.
+Elsewhere in those 17 commits `zoo/bits_only.py` gained 113 lines and its
+`CCSDS_SCRAMBLER` constant changed. Either could have moved an S3 number, so
+the corpus study was re-run on the merged tree rather than quoted from the CSV.
+
+| arm | before merge | after merge |
+|---|---|---|
+| `truth-params` | 231/252 decode, 252/252 mod correct, 0 confidently wrong | identical |
+| `s2-top` | 202/252, 252/252, 0 | identical |
+| `search` | 231/252, 240/252, 0 | identical |
+
+**756 rows, zero changed outcomes.** Worst case 6.99 s against 6.97 s before,
+inside the ~20% run-to-run spread this machine has. `pipeline/s3_receive/` and
+`pipeline/s2_estimate.py` are byte-identical across those 17 commits, which is
+why — but that was checked after measuring, not instead of it.
+
+---
+
+#### 7 Sep column: block B was already done, block D is 42/42, block C is a design and block E is OPEN
+
+**Block B — 4-FSK plug-in — was already satisfied before the day started.**
+Registered, `family = "fsk"`, decoding `4fsk_20dB_2035` end to end from blind
+estimates. **Third day running that a row was written against a picture that
+had already moved.** The half hour spent checking has now paid four times.
+
+**Block D — ten 4-FSK files through the same chain — is 42 of 42.** Every
+4-FSK file in the corpus, at every SNR including 4 dB: `ok`, chose 4-FSK, zero
+confidently wrong, worst case 3.4 s. Ten of them are now pinned as tests
+(`test_ten_4fsk_files_decode_through_the_same_blind_chain`), and the ten
+deliberately include 4 dB and 8 dB — the files where S2's envelope predicate
+hands S3 a symbol rate wrong by up to 81% and the answer comes through
+`lockcheck.strongest_line`, the rate rescue. Those are the half that can
+regress; testing only the clean SNRs would have left the rescue unpinned.
+
+**Block C — LDPC decode path — is designed and measured, and the plug-in is
+not written.** `reports/s3_ldpc_design.md`. A `CodePlugin` belongs beside
+`conv_code.py` and `rs_code.py` in `pipeline/s5_decode/`, which is Nehal's, and
+the rule that has held four days is that a file in someone else's directory is
+a request and not an edit. **So block E — "LDPC decodes with the supplied H" —
+does not close today. It is open, not done.**
+
+Checked against the Command Center rather than remembered: its definition of
+done for this row is "**both registered** and passing through the same chain".
+4-FSK is registered and passing; LDPC is neither. Half the row is met, and the
+half that is not is the half the verify line names. The acceptance criteria are
+written as a real test that is skipped with a reason naming the missing
+plug-in, and wakes up the moment `register_code()` runs for it.
+
+What the day produced instead is the part that is mine and that the plug-in
+cannot be written without: **the two things S3 has to supply an LDPC decoder,
+both measured, one of them missing until this afternoon.**
+
+**1. Where the stream starts — NEW, and it was a real gap.** Nothing had
+needed it: Viterbi, Reed-Solomon and S4 are all indifferent to the start
+offset. A block code decoded against a supplied H is not — a codeword has a
+first bit. `values` did not support the answer: adding up everything a consumer
+could see left it short by a **constant 507 symbols** - 507 bits on BPSK and
+2028 on 16-QAM, the shortfall scaling with bits per symbol. The missing 507 is
+three quantities the stage knows and a
+consumer cannot see — Gardner's 2-symbol interpolator head start, the
+500-symbol settling trim, the equaliser's centre tap at 5 of 11.
+
+S3 now reports `llr_start_bit` and `llr_start_bit_tolerance` on both branches.
+Measured against the harness's `align` over **all 36 (modulation, SNR) cells:
+36 of 36 inside tolerance**, error never negative and never more than one
+symbol, with `carrier_settled_at` ranging 0 to 3328. The residue is the timing
+loop's fractional interpolation position, so one symbol is a floor and not
+slack — calling it exact would have been the more useful claim and the false
+one. A decoder now searches **at most 5 forward offsets instead of 40 000.**
+
+**2. Whether the magnitudes can be trusted — measured, and it splits on
+`status`.** `reports/s3_llr_calibration.md`. Viterbi maximises a *sum* of LLRs
+and is invariant to scaling them; sum-product belief propagation combines them
+through `tanh` and is not. So BP is the first consumer in this project whose
+answer depends on the magnitudes being right, and `estimated_ber`'s existing
+factor-of-two contract is an *aggregate* — a demapper can pass it while being
+over-confident on strong bits and under-confident on weak ones, which is a
+correct mean and a useless reliability curve.
+
+| population | worst per-bin ratio, empirical / promised |
+|---|---|
+| files S3 returns `ok` on | **1.62x** — calibrated |
+| files S3 refuses (`low_confidence`) | **81.7x** (16-QAM 4 dB), 65.6x (8-PSK 4 dB) |
+
+On a refused file the demapper emits magnitudes of 4 to 8 — promising ~0.4%
+error — over bits wrong 29% and 39% of the time. **So the design rule is that
+an LDPC decoder gates on `status == "ok"` and never decodes a refused stream**,
+and the recommended algorithm is normalised min-sum rather than sum-product,
+because min-sum is invariant to exactly the scaling this had to go and measure.
+
+**Where that study has no power, said plainly:** only three of six schemes
+produced a scorable bin in the `ok` population. BPSK, QPSK and 8-PSK decode
+with too few errors at every SNR here to measure a reliability curve at all —
+19 818 of 19 955 BPSK bits at 4 dB sit in the `|LLR| >= 16` bin with zero
+errors, which is consistent with the promise and with a promise ten times
+smaller. Listed as unmeasured, not as passing.
+
+**A mistake this made, caught by its own known-answer check.** The calibration
+study carries a column pair that must reproduce `corpus.measured_ber` and
+`softmap.estimated_ber` from the repo's own functions. It fired on 8 of 30
+rows — and the fault was mine and in the check: it compared a windowed mean
+against a whole-array one, two different populations. Fixed, now 30 of 30
+agree. A known-answer check that fires on its own mismatched populations is
+worse than none, because it teaches you to ignore it. **Second thing that went
+wrong in the same study**: the summary table first ranked each modulation by
+its *median* bin ratio and printed "8psk … calibrated" over a file whose worst
+bin was 66x out, because it had pooled a result S3 stands behind with one S3
+refused. A decoder meets every bin, not the middle one. Ranked on the worst bin
+now, and split by `status`.
+
+---
+
+#### For other people
+
+**Nehal:** PR #13 (above). Separately, `reports/s3_ldpc_design.md` §6 is a
+request for one new file, `pipeline/s5_decode/ldpc_code.py` — it touches
+nothing existing, because `__init__.py` in that package is empty and plug-ins
+self-register on explicit import, so the diff is a single added file. Spec,
+measurements and acceptance criteria are all in that document. Happy to write
+it if you would rather it came from this side; it is your directory, so it is
+your call.
+
+**Naidhruv:** `contracts/`, `service/`, `web/` and `eval/` are on `main` now
+(3, 9, 26 and 4 files) — that closes the thing I was going to raise as the
+tripwire this morning. **`git tag -l` is still empty**, so `v0.4` was never
+cut and today's `v0.5` gate reads "v0.4's E2E suite still passes unchanged"
+against a tag that does not exist. The E2E suite itself does exist
+(`3bd8648`). Worth cutting the tag before the gate is judged.
+
+**Two things on `main` make the suite red, and I checked both on a clean
+`origin/main` worktree before saying so.** Full suite here:
+**31 failed, 780 passed, 5 skipped, 2 xfailed, 6 errors in 14m42s.** Nehal's
+10:29 run reported 678 passed and one failure because **PR #16 merged at
+11:36, after it** — his numbers predate the integration rather than
+contradicting these.
+
+**1. `starlette` is an unpinned transitive dependency and has drifted to
+1.6.0**, which the pinned `fastapi==0.141.1` cannot work with:
+`TypeError: cannot unpack non-iterable Route object` 27 times, plus
+`AttributeError: 'Middleware' object has no attribute 'options'`, across
+`tests/service/` and `tests/e2e/`. `requirements.txt` pins fastapi and not the
+library fastapi is built on, so `pip install -r requirements.txt` resolves a
+different stack depending on the day it runs. **The image builds from that
+file, so this is a freeze-day problem rather than a today problem.** Pinning
+the starlette that `fastapi==0.141.1` was exercised against should be the whole
+fix. (Also: `httpx` is absent, which FastAPI's `TestClient` wants — but it is
+NOT the cause here. I guessed it was, and the string does not appear once in
+the failure log.)
+
+**2. `registry.clear()` leaves the registry empty, and it takes the S3-S4-S5
+junction contract with it.** `TestRegistryContract.tearDown` calls
+`registry.clear()`, which empties the global `MODULATIONS` dict; Python's
+import cache means nothing re-registers afterwards. Measured on `origin/main`
+at `b6eeb30`, not on my branch:
+
+| command | result on clean main |
+|---|---|
+| `pytest tests/contract` | 58 passed, **4 errors** — `KeyError: 'qpsk'` in `test_s3_s4_s5_chain.py` |
+| `pytest tests/contract tests/unit/test_s3_receive.py` | **34 failed, 4 errors** |
+| `pytest tests` (everything) | those same unit tests PASS |
+
+**The full suite hides it**, because `tests/service` runs in between and
+`service/orchestrator.py` re-registers the plug-ins as a side effect of
+`750a05f`. So the greenness of a unit test currently depends on whether an
+unrelated suite happened to repopulate global state first, and the four
+junction contract tests — the ones that prove S3's LLRs reach S4 and decode —
+are erroring in **every** ordering while the summary line says "58 passed".
+Fix is yours to choose: `clear()` could snapshot and restore, or the fixture
+could re-register rather than leave the dicts empty. I have not touched
+`registry/` or `tests/contract/`.
+
+**Two smaller ones, same run:** a Windows `PermissionError [WinError 32]`
+deleting a still-open tmp wav in two `tests/e2e` cases, and
+`tests/service/test_orchestrator.py::test_s2_fallback_detection` asserting
+`est.symbol_rate` where `S2Result` has `symbol_rate_hz` (its `sys.modules`
+patch is not taking, so it gets the real object).
+
+**S3's numbers for the CORE LOCK gate are unchanged and re-verified:** at
+>= 10 dB every modulation and every SNR is 7/7 lock and 7/7 decode — 168/168
+decodes, 168/168 modulation correct, 0 confidently wrong. **Worst case
+1.01–1.23 s**, quoted as a range because that is what two runs of the same 168
+files on the same idle machine actually produced (1.23 s this morning, 1.01 s
+after the merge, on `bpsk_13dB_2003`); a single figure here would be a
+precision the instrument does not have. The 7 s worst case is the whole corpus
+and every one of those files is at 4 dB, outside the gate. Do not budget S3
+from it.
+
 ### 7 Sep — the 6 Sep column, closed against a finding of Nehal's
 
 **Branch `anvith/s3-core-lock`**, off `main` at `3f366c3`. Report:

@@ -209,6 +209,16 @@ class FSKDemod:
                 "symbol_offset": int(res.offset),
                 "n_symbols": int(res.indices.size),
                 "n_llrs": int(llrs.size),
+                # See the long note in linear.py. This branch has no equaliser,
+                # no carrier loop and no settling trim to drop symbols for, so
+                # the stream starts where the capture does. Note `symbol_offset`
+                # above is a SAMPLE offset within one symbol period and answers
+                # a different question - it does not say which transmitted
+                # symbol came first, which is why it could not be reused here.
+                # Measured against `align` on 2-FSK and 4-FSK at five SNRs:
+                # 0 to 2 bits, i.e. inside one symbol at both orders.
+                "llr_start_bit": 0,
+                "llr_start_bit_tolerance": int(self.order).bit_length() - 1,
                 "mean_margin": float(res.confidence),
                 "residual_cfo_hz": float(alignment.value or 0.0),
                 "estimated_output_ber": ber_est,

@@ -353,6 +353,37 @@ class LinearDemod:
             return self._fail(t0, "carrier never settled long enough to demap",
                               report=report)
 
+        # WHERE the emitted stream starts inside the transmitted one, in bits.
+        #
+        # Nothing has needed this before and so nothing reported it. S4
+        # tolerates an arbitrary start offset - its per-file label JSON has
+        # carried `start_offset` since the 29th - and Viterbi and Reed-Solomon
+        # inherit that indifference. A block code decoded against a SUPPLIED
+        # parity-check matrix does not: a codeword has a first bit, and a
+        # stream whose origin is unknown hands its decoder forty thousand
+        # candidate alignments instead of one.
+        #
+        # Three of the five terms below were already reported, and the other
+        # two are quantities this stage knows and a consumer cannot see. What
+        # `values` supported on its own was out by 507 SYMBOLS - 507 bits on
+        # BPSK, 2028 on 16-QAM, the shortfall scaling with bits per symbol -
+        # which is not a usable answer to "where does this start", against
+        # true offsets that run from 1107 bits to 20 140.
+        #
+        # Measured against the harness's `align` over four schemes x five SNRs
+        # with `carrier_settled_at` ranging 0 to 3328: exact on 11 of 20 files
+        # and never more than ONE SYMBOL out. One symbol is not zero, which is
+        # what `llr_start_bit_tolerance` exists to say - the residue is the
+        # timing loop's fractional interpolation position, and a consumer that
+        # needs the exact bit still has to search that window. Reporting this
+        # as exact would be the more useful claim and the false one.
+        # Derivation and table: reports/s3_ldpc_design.md.
+        dropped = (int(timing.positions[0] // sps)   # Gardner's head start
+                   + self.settle_symbols             # timing settling trim
+                   + (eq.taps.size - 1) // 2         # the equaliser's centre tap
+                   + warm                            # equaliser warm-up
+                   + int(carrier.settled_at))        # carrier acquisition
+
         # sigma^2 per block, not per file - see softmap.windowed_llr. The
         # file-wide number is still reported, because it is the one that
         # summarises the run.
@@ -417,6 +448,8 @@ class LinearDemod:
                 "noise_variance": float(sigma2),
                 "n_symbols": int(sym.size),
                 "n_llrs": int(llrs.size),
+                "llr_start_bit": int(dropped * self.scheme.bits),
+                "llr_start_bit_tolerance": int(self.scheme.bits),
                 # The correction this run would need, in Hz, on top of the CFO
                 # it was given. Reported rather than applied: `search.py`
                 # retries with it as one more hypothesis, and leaving it

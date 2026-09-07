@@ -850,6 +850,55 @@ def test_corpus_file_decodes_through_the_blind_search(name):
     assert ber < 0.01, f"{name}: raw BER {ber:.4f} on the best rotation"
 
 
+# Ten 4-FSK files, spanning every SNR the corpus has. The 7 Sep row asks for
+# ten "through the same chain", and `the same chain` is the point rather than
+# the ten: this is `receive_best` with S2's blind estimates, the identical
+# entry point every other modulation uses, with nothing FSK-shaped at the call
+# site. `test_search_never_names_a_scheme` walks the AST and enforces that on
+# the orchestration side; this enforces it on the outcome side.
+#
+# 4 dB and 8 dB are in the list deliberately, and they are the interesting
+# half. Those are the files where S2's envelope predicate reads low-SNR FSK as
+# non-constant-envelope and hands S3 a symbol rate wrong by up to 81%, so they
+# reach the answer through `lockcheck.strongest_line` - the rate rescue - and
+# take 2 to 10 chain runs where a clean file takes 1. Testing only the easy
+# SNRs would have left the rescue path unpinned, which is the half that can
+# actually regress.
+#
+# Measured over all 42 4-FSK files in the corpus, not just these ten:
+# 42/42 `ok`, 42/42 chose 4-FSK, 0 confidently wrong, worst case 3.4 s.
+# `reports/s3_lock_gate.md`.
+_TEN_4FSK = ["4fsk_4dB_2030", "4fsk_4dB_5030",
+             "4fsk_8dB_2031", "4fsk_8dB_3031",
+             "4fsk_10dB_2032", "4fsk_10dB_5032",
+             "4fsk_13dB_2033", "4fsk_13dB_6033",
+             "4fsk_15dB_2034", "4fsk_20dB_3035"]
+
+
+@has_corpus
+@pytest.mark.parametrize("name", _TEN_4FSK)
+def test_ten_4fsk_files_decode_through_the_same_blind_chain(name):
+    """7 Sep block D. Blind estimates in, bits out, through `receive_best`.
+
+    The premise of the row was that the 4-FSK plug-in needed writing first
+    (block B). It did not - it was registered, `family = "fsk"`, and already
+    decoding `4fsk_20dB_2035` end to end. What was NOT pinned was breadth: one
+    file at 20 dB stood for the whole scheme, and the low-SNR files that go
+    through the rate rescue were covered only by a corpus study, which is a
+    report and not a gate.
+    """
+    iq, fs, truth = corpus.load(name)
+    assert truth["scheme"] == "4fsk", f"{name} is not a 4-FSK file"
+    tx = corpus.reference_bits(truth)
+
+    res = receive_best(iq, params_from_s2(estimate(iq, fs), fs))
+    assert res.status == "ok", res.reason
+    assert res.values["modulation"] == "4fsk", \
+        f"chose {res.values['modulation']} for a 4-FSK file"
+    ber = corpus.measured_ber(res, tx)
+    assert ber < 0.01, f"{name}: raw BER {ber:.4f} on the best rotation"
+
+
 @has_corpus
 def test_the_corpus_regenerates_exactly():
     """Everything above rests on this: the transmitted bits can be rebuilt from
