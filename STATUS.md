@@ -614,6 +614,42 @@ his own files — but the blocker on his side is gone.
 
 Full regression suite re-run after all of the above.
 
+### 7 Sep, same day — the OneDrive problem hit my machine too, same fix as Nehal's
+
+That full-suite re-run above surfaced 4 failures in `tests/unit/test_rank_spike.py`
+(not my file, not touched today) — `blind_recover`'s statistical fallback
+(`pipeline/s4_recover/rank_collapse.py`, `STAT_FALLBACK_BUDGET_S = 8.0`,
+wall-clock) running out of its time budget before finding the period.
+Didn't assume it was unrelated to my work: reproduced it away from my
+changes first — 29/29 passing standalone, 45/45 passing run directly
+after every file this session touched — before concluding it was
+environmental, not a regression.
+
+Root cause was already diagnosed and fixed by Nehal, on his own machine,
+the night before (`4db1455`, `nehal/rs-runtime`, not yet merged): this
+whole repo lives under OneDrive (`...\OneDrive\Desktop\SIH\wavSIH26`),
+which syncs every test write and every regenerated report and becomes
+the top CPU process on the machine during a full suite run — his
+measurement was 83,600 CPU-seconds of OneDrive activity during one run,
+one test going from ~280s to **4h57m**. A wall-clock-budgeted search
+like the statistical fallback is exactly the kind of thing that
+degrades under that contention without any logic being wrong.
+
+Applied his exact fix here: fresh clone to `C:\dev\wavSIH26` (not a copy
+— a Windows venv bakes in absolute paths and doesn't survive a move),
+fresh `.venv` on the pinned Python 3.11.9, `docs/stack_check.py` 11/11,
+`.gitattributes` verified working on a clean checkout
+(`models/classifier.txt` MD5-identical to the OneDrive copy). Full
+suite: **396 passed, 1 xfailed, 0 failed** — `test_rank_spike.py` clean
+this time — in **11m55s**, against 37-44 minutes for the same suite on
+the OneDrive path across this session's last two runs. Confirms both
+Nehal's diagnosis and his fix, independently, on a second machine.
+
+**Not yet done: the old OneDrive clone hasn't been deleted.** Same call
+Nehal made on his own machine — left in place rather than delete a
+working copy that still has everything pushed and nothing unique in it,
+until it's confirmed the new location is what gets used going forward.
+
 ---
 
 ## Anvith — S3 receiver chain
