@@ -17,7 +17,9 @@ never would have:
 
 from __future__ import annotations
 
+import math
 import sys
+import unittest
 from pathlib import Path
 
 import numpy as np
@@ -37,7 +39,12 @@ from pipeline.s6_frame.descramble import (
     find_scrambler_period,
     recover_scrambler,
 )
-from pipeline.s6_frame.payload import bits_to_bytes, extract_text
+from pipeline.s6_frame.payload import (
+    bits_to_bytes,
+    calculate_byte_entropy,
+    extract_text,
+    PayloadReport,
+)
 from tests.fixtures.local_zoo import CCSDS_SCRAMBLER, lfsr_scramble, make_stream
 
 MSG = ("RAAYA SIH26147 -- blind recovery of modulation, interleaver and code. "
@@ -229,3 +236,81 @@ def test_polarity_resolution_does_not_rescue_noise():
         noise = extract_text(rng.integers(0, 2, 8000, dtype=np.uint8))
         assert not noise.looks_like_text
         assert noise.printable_fraction < 0.55
+
+
+# --------------------------------------------------------------------------
+# Byte entropy tests
+# --------------------------------------------------------------------------
+
+class TestByteEntropy(unittest.TestCase):
+    """Focused unit tests for Shannon byte entropy calculation and S6 integration."""
+
+    def test_empty_bytes_zero_entropy(self):
+        """Empty input yields 0.0 entropy."""
+        self.assertEqual(calculate_byte_entropy(b""), 0.0)
+        self.assertEqual(calculate_byte_entropy(bytearray()), 0.0)
+
+    def test_repeated_byte_zero_entropy(self):
+        """Identical/single-value byte streams have zero uncertainty (0.0 bits/byte)."""
+        self.assertEqual(calculate_byte_entropy(b"A"), 0.0)
+        self.assertEqual(calculate_byte_entropy(b"A" * 100), 0.0)
+        self.assertEqual(calculate_byte_entropy(b"\x00" * 50), 0.0)
+        self.assertEqual(calculate_byte_entropy(b"\xff" * 256), 0.0)
+
+    def test_two_equally_frequent_bytes_one_bit_per_byte(self):
+        """Two equally probable byte values yield exactly 1.0 bit/byte."""
+        self.assertAlmostEqual(calculate_byte_entropy(b"AB" * 50), 1.0, places=7)
+        self.assertAlmostEqual(calculate_byte_entropy(b"A" * 25 + b"B" * 25), 1.0, places=7)
+        self.assertAlmostEqual(calculate_byte_entropy(b"\x00" * 30 + b"\xff" * 30), 1.0, places=7)
+
+    def test_known_multi_value_distribution(self):
+        """Verify known distributions: 4 symbols (2 bits), 8 symbols (3 bits), uniform 256 (8 bits), biased."""
+        # 4 equally frequent bytes -> log2(4) = 2.0 bits/byte
+        self.assertAlmostEqual(calculate_byte_entropy(b"ABCD" * 25), 2.0, places=7)
+
+        # 8 equally frequent bytes -> log2(8) = 3.0 bits/byte
+        self.assertAlmostEqual(calculate_byte_entropy(b"ABCDEFGH" * 10), 3.0, places=7)
+
+        # 256 uniformly distributed bytes -> log2(256) = 8.0 bits/byte
+        data_256 = bytes(range(256))
+        self.assertAlmostEqual(calculate_byte_entropy(data_256), 8.0, places=7)
+
+        # Biased distribution: 75% 'A', 25% 'B'
+        # H = -(0.75 * log2(0.75) + 0.25 * log2(0.25))
+        expected_biased = -(0.75 * math.log2(0.75) + 0.25 * math.log2(0.25))
+        data_biased = b"A" * 75 + b"B" * 25
+        self.assertAlmostEqual(calculate_byte_entropy(data_biased), expected_biased, places=7)
+
+    def test_normal_extract_text_works_and_exposes_entropy(self):
+        """extract_text() still decodes text correctly and exposes entropy in PayloadReport."""
+        text_bytes = b"Hello, World! Telemetry payload stream for SIH2026."
+        bits = []
+        for byte in text_bytes:
+            for shift in range(7, -1, -1):
+                bits.append((byte >> shift) & 1)
+
+        rep = extract_text(bits)
+        self.assertEqual(rep.text, "Hello, World! Telemetry payload stream for SIH2026.")
+        self.assertEqual(rep.n_bytes, len(text_bytes))
+        self.assertTrue(rep.looks_like_text)
+        self.assertAlmostEqual(rep.printable_fraction, 1.0, places=5)
+        self.assertFalse(rep.inverted)
+
+        # Entropy field is populated and matches direct calculation
+        expected_entropy = calculate_byte_entropy(text_bytes)
+        self.assertAlmostEqual(rep.entropy, expected_entropy, places=7)
+        self.assertGreater(rep.entropy, 0.0)
+        self.assertLess(rep.entropy, 8.0)
+
+    def test_extract_text_empty_input(self):
+        """Empty bit stream yields a clean empty report with 0.0 entropy."""
+        rep = extract_text([])
+        self.assertEqual(rep.n_bytes, 0)
+        self.assertEqual(rep.entropy, 0.0)
+        self.assertEqual(rep.text, "")
+        self.assertFalse(rep.looks_like_text)
+        self.assertFalse(rep.inverted)
+
+
+if __name__ == "__main__":
+    unittest.main()

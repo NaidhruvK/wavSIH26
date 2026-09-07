@@ -7,13 +7,33 @@ readable text arriving out of a file the system was told nothing about is not.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
+import math
 
 import numpy as np
 
-__all__ = ["PayloadReport", "bits_to_bytes", "extract_text"]
+__all__ = ["PayloadReport", "bits_to_bytes", "calculate_byte_entropy", "extract_text"]
 
 PRINTABLE = set(range(32, 127)) | {9, 10, 13}
+
+
+def calculate_byte_entropy(raw: bytes) -> float:
+    """Calculate Shannon entropy in bits per byte (0.0 to 8.0).
+
+    empty input -> 0.0
+    identical bytes -> 0.0
+    uniformly distributed byte values -> up to 8.0
+    """
+    if not raw:
+        return 0.0
+    n = len(raw)
+    counts = Counter(raw)
+    entropy = 0.0
+    for count in counts.values():
+        p = count / n
+        entropy -= p * math.log2(p)
+    return float(entropy)
 
 
 @dataclass
@@ -23,6 +43,7 @@ class PayloadReport:
     text: str
     looks_like_text: bool
     inverted: bool = False        # was the stream read in inverted polarity?
+    entropy: float = 0.0          # Shannon entropy in bits per byte (0.0 to 8.0)
 
     def preview(self, width: int = 220) -> str:
         t = self.text[:width].replace("\n", " ")
@@ -72,7 +93,7 @@ def extract_text(bits, min_printable: float = 0.85,
     """
     raw = bits_to_bytes(bits)
     if not raw:
-        return PayloadReport(0, 0.0, "", False)
+        return PayloadReport(0, 0.0, "", False, inverted=False, entropy=0.0)
 
     printable = _printable_fraction(raw)
     inverted = False
@@ -82,6 +103,7 @@ def extract_text(bits, min_printable: float = 0.85,
         if flipped_printable > printable:
             raw, printable, inverted = flipped, flipped_printable, True
 
+    entropy = calculate_byte_entropy(raw)
     text = raw.decode("utf-8", errors="replace")
     return PayloadReport(len(raw), printable, text,
-                         printable >= min_printable, inverted)
+                         printable >= min_printable, inverted, entropy)
