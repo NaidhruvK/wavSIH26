@@ -1955,6 +1955,58 @@ encoder and interleaves SYMBOLS (bytes, depth I in 1..8), where I follow the
 Command Center's stated order and interleave bits. Fine for testing whether four
 layers peel; not a standards claim.
 
+### 7. THE FULL SUITE, RUN FOR THE FIRST TIME THIS WEEK - AND S3 IS FLAKY ON A CLOCK
+
+**678 passed, 1 failed, 4 skipped, 1 xfailed in 27m14s.** I had been quoting
+"the CCSDS suites are green" and calling the full run too slow to bother with.
+It was worth 27 minutes.
+
+**ANVITH - `test_s3_runs_on_blind_estimates_with_no_labels_in_the_path` is
+flaky: 2 passes in 8 fresh processes.** Not my branch - `search.py`,
+`lockcheck.py`, `linear.py`, `s2_estimate.py` and the test file are all
+bit-identical to `origin/main` on this branch; I checked before saying so.
+
+I first called it a deterministic failure and said main was red. **Both wrong** -
+the first two samples agreed and I generalised from them. Inside one process it
+is perfectly stable (5 calls, 5 x `ok`); the variation is BETWEEN processes.
+
+**Mechanism, measured.** `receive_best` enforces `SEARCH_BUDGET_S = 20.0` via a
+deadline checked at `search.py:425` and `:485`. Same signal, only the budget
+varied:
+
+| `budget_s` | status | modulation | exhausted | elapsed |
+|---|---|---|---|---|
+| **20.0 (default)** | ok | qpsk | False | **21 437 ms** |
+| 5.0 | low_confidence | **8psk** | True | 6 877 ms |
+| 30.0 | ok | qpsk | False | 21 375 ms |
+
+**The right answer costs ~21.4 s against a 20.0 s budget.** It passes only when
+the overshoot lands between two deadline checks. When the budget bites, S3
+returns **8psk for a QPSK signal** - and Anvith's evenness guard catches it and
+refuses to say `ok`. **That guard is doing its job and must not be loosened to
+make the test green**; the defect is upstream, in the search not reaching qpsk
+inside the budget.
+
+**Why this outranks one flaky test: the core-lock gate is "under 90 s, twice
+consecutively".** A stage whose correctness depends on how much wall clock it
+gets will pass or fail that gate for reasons unrelated to the code. And the
+OneDrive measurement below means the margin that exists on a quiet machine is
+not there on the demo machine. Written up for Anvith with a reproduction.
+
+### 8. Two of my own numbers were stale, and one of my findings was wrong
+
+Re-audited Naidhruv against his CURRENT tip `5530a2b`, not the `a9602d6` I
+wrote up on 6 Sep. The registry bug is still real and still reproduces
+(`{'modulations': 0, 'interleavers': 0, 'codes': 0}` at S3 time), but
+**`orchestrator.py:675/725` are now `693/742`, and his branch is 24 commits
+behind main, not 22.** Corrected in what I sent him.
+
+And I briefly concluded S4 could not handle non-zero start offsets, which would
+have sent Dheeraj chasing a generator bug that does not exist. **The corpus
+disproved it**: all six clean `zoo/corpus/bits_only/` files carry non-zero
+offsets (72, 34, 78, 30, 44, 21) and all six recover. My sweep had changed two
+variables at once. The true claim is narrower and is item 6 above.
+
 **Blocked on:** nothing.
 
 ---
