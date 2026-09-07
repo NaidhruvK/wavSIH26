@@ -1,0 +1,6 @@
+{
+  "dtype": "int8",
+  "layout": "interleaved",
+  "fs": 200000.0,
+  "source_file": "bpsk_15dB_2004.wav"
+}

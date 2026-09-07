@@ -684,6 +684,64 @@ still fully exposed to a bad FSK CFO below 10dB. Not something I can
 fix from here — his integration layer, his call on how to handle it
 (check `envelope_cv`, catch it downstream, or accept the stated floor).
 
+### 7 Sep — the winning layer: S0 format sniffer, endianness + channel layout, evidence shown
+
+Block B/C/D/E per the plan: extend the 29 Aug dtype-only sniffer
+(`pipeline/s0_ingest.py`) to also recover byte order and I/Q channel
+layout blind, with visible evidence, tested against 12 deliberately
+mislabelled raw files. **Gate: 12/12**, additive only — `pipeline/s0_ingest.py`'s
+existing WAV path, `read_wav_iq`, and every pre-7-Sep test are unchanged;
+nothing in the 6 Sep core path was touched.
+
+Two separate discriminators, each independently measured before trusting
+it, not tuned to force a number:
+
+- **Byte width (int8 vs 2/4-byte)**: the existing bounded/nonzero/extreme
+  magnitude heuristic turned out NOT reliable for this specific question
+  — measured a real int8 file scoring 0.9998 as int8 and 1.0000 as
+  int16, an effective coin flip. Found a much sharper signal instead:
+  for genuine int16 data the low byte of each sample is quantisation
+  noise (autocorrelation ≈0); for int8 data misread as int16, that "low
+  byte" is actually a real, smooth 8-bit sample, so it autocorrelates
+  strongly. Measured 0.64–0.88 for true int8 vs −0.05 to 0.00 for every
+  true int16/float32 file tried — a 10x+ margin, gates the byte-width
+  decision as a hard prior ahead of the existing magnitude score.
+- **Channel layout (interleaved I,Q,I,Q,... vs planar all-I-then-all-Q)**:
+  lag-1 autocorrelation of each half-channel. A genuinely oversampled RF
+  capture is smooth sample-to-sample within one real channel; splitting
+  the wrong way pairs unrelated bytes and that structure collapses
+  toward zero. Measured 0.44–0.87 correct vs ≈0.00 wrong, for every
+  scheme tried except 4fsk (below).
+
+Both discriminators were validated against the real RF corpus, not
+synthetic noise, before either shipped.
+
+**Two known, measured gaps, pinned rather than hidden** (same pattern as
+`test_fsk_order_known_gap_at_low_snr`) — a 3-file `s0_sniffer_known_gaps`
+corpus plus two tests that assert the CURRENT miss, so either starting
+to pass is a signal to promote the file and delete the test:
+
+- Byte-order recovery when the layout is ALSO planar: two independent
+  ambiguities compounding is harder than either alone, and a
+  discriminator sharp enough for that specific combination wasn't found
+  today. Every individual byte-order case in the main 12-file corpus
+  stays in an interleaved layout, where it's reliable — measured, not
+  assumed (checked deliberately: swapping only the scheme under an
+  unrelated dtype, e.g. accidentally combining 4fsk's layout gap with a
+  new dtype instead of actually avoiding it, was caught and fixed before
+  it became a silent hole in the 12/12 claim).
+- 4fsk's own channel-layout detection: its tone spacing at this sps
+  decorrelates adjacent same-channel samples regardless of alignment, so
+  even the CORRECT split autocorrelates near zero. Still exercised in
+  interleaved cases (dtype detection has no such problem); excluded only
+  from layout-sensitive cases.
+
+`zoo/build_s0_sniffer_corpus.py` (new, mine) builds both corpora from
+real `zoo/corpus/rf` signals — the adversarial part is genuinely the
+format ambiguity, not an easier synthetic signal. 22 new/changed tests
+in `test_s0_ingest.py`, all passing; existing 4 tests unchanged and
+still passing.
+
 ---
 
 ## Anvith — S3 receiver chain

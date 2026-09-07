@@ -1,0 +1,6 @@
+{
+  "dtype": "int8",
+  "layout": "planar",
+  "fs": 200000.0,
+  "source_file": "qpsk_13dB_2009.wav"
+}
