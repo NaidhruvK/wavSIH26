@@ -151,7 +151,7 @@ def get_s1_detect() -> Optional[Callable[..., Any]]:
 
 
 def get_s2_estimate() -> Optional[Callable[..., Any]]:
-    # Primary: check pipeline/s2_estimate.py
+    """Return pipeline.s2_estimate estimation callable if available."""
     try:
         from pipeline import s2_estimate
         if hasattr(s2_estimate, "estimate_blind"):
@@ -161,15 +161,15 @@ def get_s2_estimate() -> Optional[Callable[..., Any]]:
     except (ImportError, AttributeError):
         pass
 
-    # Fallback: check tests/fixtures/local_s2.py
-    try:
-        from tests.fixtures import local_s2
-        if hasattr(local_s2, "estimate_blind"):
-            return local_s2.estimate_blind
-    except (ImportError, AttributeError):
-        pass
-
     return None
+
+
+def get_s3_receive() -> Optional[Callable[..., Any]]:
+    try:
+        from pipeline.s3_receive import receive_best
+        return receive_best
+    except (ImportError, AttributeError):
+        return None
 
 
 def get_s4_recover() -> Optional[Callable[..., Any]]:
@@ -725,7 +725,7 @@ def orchestrate(
         )
 
     # -------------------------------------------------------------------------
-    # S2: Estimate (Supports local_s2 fixture fallback)
+    # S2: Estimate (Blind symbol rate and CFO estimation)
     # -------------------------------------------------------------------------
     s2_fn = overrides.get("s2_estimate") or get_s2_estimate()
     if s2_fn is None:
@@ -754,29 +754,18 @@ def orchestrate(
         or s2_res.values.get("symbol_rate", 25000.0)
     )
     cfo_hz = getattr(s2_raw, "cfo_hz", 0.0) or s2_res.values.get("cfo_hz", 0.0)
-    s2_params = {"fs": sample_rate, "symbol_rate": symbol_rate, "cfo_hz": cfo_hz}
-
-    # Thread hypotheses: determine modulation scheme
-    chosen_scheme = mod_scheme_hint
-    if not chosen_scheme and s2_res.hypotheses:
-        chosen_scheme = str(s2_res.hypotheses[0].value).lower()
-    if not chosen_scheme:
-        chosen_scheme = "qpsk"
+    s2_params: dict[str, Any] = {"fs": sample_rate, "symbol_rate": symbol_rate, "cfo_hz": cfo_hz}
+    if mod_scheme_hint:
+        s2_params["modulation_hypotheses"] = [(mod_scheme_hint.lower(), 1.0)]
 
     # -------------------------------------------------------------------------
-    # S3: Receive (Modulation demodulator)
+    # S3: Receive (Demodulation receiver via receive_best)
     # -------------------------------------------------------------------------
-    s3_fn = overrides.get("s3_receive")
+    s3_fn = overrides.get("s3_receive") or get_s3_receive()
 
     def _run_s3() -> Any:
         if s3_fn:
             return s3_fn(iq_samples, s2_params)
-        plugin = MODULATIONS.get(chosen_scheme)
-        if plugin:
-            if hasattr(plugin, "receive"):
-                return plugin.receive(iq_samples, s2_params)
-            if hasattr(plugin, "demodulate"):
-                return plugin.demodulate(iq_samples, s2_params)
         return None
 
     s3_res, s3_raw = _execute_stage(

@@ -28,6 +28,7 @@ from service.orchestrator import (
     adapt_s6,
     get_plugin_load_errors,
     get_s2_estimate,
+    get_s3_receive,
     load_plugins,
     orchestrate,
     submit_analysis_job,
@@ -216,7 +217,7 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(s1.stage, "s1_detect")
         self.assertEqual(s1.values["snr_db"], 15.0)
 
-        # S2 (local_s2 fallback with symbol_rate)
+        # S2 (symbol_rate fallback compatibility)
         s2 = adapt_s2(DummyS2Estimate(), 20.0)
         self.assertEqual(s2.stage, "s2_estimate")
         self.assertEqual(s2.values["symbol_rate"], 25000.0)
@@ -316,18 +317,24 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(stage_map["s1_detect"].status, StageStatus.FAILED)
         self.assertIn("exceeded timeout", stage_map["s1_detect"].reason)
 
-    def test_s2_fallback_detection(self):
-        class MockLocalS2:
+    def test_get_s2_estimate_does_not_import_local_s2(self):
+        """Verify get_s2_estimate does not import tests.fixtures.local_s2 and resolves pipeline.s2_estimate."""
+        mock_local_s2 = unittest.mock.MagicMock()
+        with unittest.mock.patch.dict("sys.modules", {"pipeline.s2_estimate": None, "tests.fixtures.local_s2": mock_local_s2}):
+            estimator = get_s2_estimate()
+            self.assertIsNone(estimator)
+            mock_local_s2.assert_not_called()
+
+        # When pipeline.s2_estimate is available
+        class MockPipelineS2:
             @staticmethod
-            def estimate_blind(iq, fs):
+            def estimate(iq, fs):
                 return DummyS2Estimate()
 
-        with unittest.mock.patch.dict("sys.modules", {"tests.fixtures.local_s2": MockLocalS2}):
+        with unittest.mock.patch.dict("sys.modules", {"pipeline.s2_estimate": MockPipelineS2}):
             estimator = get_s2_estimate()
             self.assertIsNotNone(estimator)
-            self.assertTrue(callable(estimator))
-            est = estimator(None, 200000.0)
-            self.assertEqual(est.symbol_rate, 25000.0)
+            self.assertEqual(estimator(None, 200000.0).symbol_rate, 25000.0)
 
     def test_artifact_handling(self):
         overrides = make_clean_overrides()
@@ -439,20 +446,78 @@ class TestOrchestrator(unittest.TestCase):
             self.assertIn("plugin load failures", s5_res.reason)
             self.assertIn("pipeline.s3_receive", s5_res.reason)
 
-    def test_orchestrator_dispatches_to_registered_plugins(self):
-        """Verify orchestrator dynamically routes to plugins registered in MODULATIONS and CODES."""
-        from registry import CODES, MODULATIONS, register_code, register_modulation
+    def test_orchestrator_dispatches_to_s3_receive_best(self):
+        """Verify S3 dispatch invokes receive_best when no override is supplied, and respects overrides."""
+        mock_receive_best = unittest.mock.MagicMock(return_value=DummyS3Result())
 
-        class CustomMod:
-            name = "custom_test_scheme"
-            called = False
-            def demodulate(self, samples, params):
-                CustomMod.called = True
-                return [1.0, -1.0, 1.0, -1.0]
-            def classify_features(self, iq):
-                return {}
-            def theoretical_cumulants(self):
-                return {}
+        with unittest.mock.patch("service.orchestrator.get_s3_receive", return_value=mock_receive_best):
+            overrides = make_clean_overrides()
+            overrides.pop("s3_receive", None)
+            overrides["s2_estimate"] = lambda iq, fs: DummyS2Estimate(symbol_rate=25000.0, cfo_hz=42.0)
+
+            report = orchestrate(
+                run_id="run-s3-receive-best",
+                file_path=self.test_file,
+                runner=self.runner,
+                stage_overrides=overrides,
+                db_path=self.db_path,
+            )
+
+            mock_receive_best.assert_called_once()
+            call_args, call_kwargs = mock_receive_best.call_args
+            self.assertEqual(len(call_args), 2)
+            self.assertIsNotNone(call_args[0])
+            self.assertEqual(call_args[1]["symbol_rate"], 25000.0)
+            self.assertEqual(call_args[1]["cfo_hz"], 42.0)
+            self.assertNotIn("modulation_hypotheses", call_args[1])
+            self.assertNotIn("modulations", call_kwargs)
+
+            s3_stage = next(s for s in report.stages if s.stage == "s3_receive")
+            self.assertEqual(s3_stage.status, StageStatus.OK)
+
+        # Verify mod_scheme_hint is forwarded as modulation_hypotheses prior without restricting modulations
+        with unittest.mock.patch("service.orchestrator.get_s3_receive", return_value=mock_receive_best):
+            mock_receive_best.reset_mock()
+            overrides = make_clean_overrides()
+            overrides.pop("s3_receive", None)
+            report = orchestrate(
+                run_id="run-s3-mod-hint",
+                file_path=self.test_file,
+                mod_scheme_hint="QPSK",
+                runner=self.runner,
+                stage_overrides=overrides,
+                db_path=self.db_path,
+            )
+            mock_receive_best.assert_called_once()
+            call_args, call_kwargs = mock_receive_best.call_args
+            self.assertEqual(len(call_args), 2)
+            self.assertEqual(call_args[1]["modulation_hypotheses"], [("qpsk", 1.0)])
+            self.assertNotIn("modulations", call_kwargs)
+
+        # Verify stage_overrides['s3_receive'] takes precedence over get_s3_receive
+        custom_s3_called = False
+        def custom_s3(iq, params):
+            nonlocal custom_s3_called
+            custom_s3_called = True
+            return DummyS3Result()
+
+        with unittest.mock.patch("service.orchestrator.get_s3_receive", return_value=mock_receive_best):
+            mock_receive_best.reset_mock()
+            overrides = make_clean_overrides()
+            overrides["s3_receive"] = custom_s3
+            report = orchestrate(
+                run_id="run-s3-override",
+                file_path=self.test_file,
+                runner=self.runner,
+                stage_overrides=overrides,
+                db_path=self.db_path,
+            )
+            self.assertTrue(custom_s3_called)
+            mock_receive_best.assert_not_called()
+
+    def test_orchestrator_dispatches_to_registered_codes(self):
+        """Verify orchestrator dynamically routes to code plugins registered in CODES."""
+        from registry import CODES, register_code
 
         class CustomConvCode:
             name = "conv"
@@ -466,41 +531,38 @@ class TestOrchestrator(unittest.TestCase):
                 return {"valid": True}
 
         orig_conv = CODES.get("conv")
-        register_modulation(CustomMod(), replace=True)
         register_code(CustomConvCode(), replace=True)
 
         try:
             overrides = make_clean_overrides()
-            # Remove s3_receive and s5_decode from overrides so orchestrator falls back to registry
-            overrides.pop("s3_receive", None)
             overrides.pop("s5_decode", None)
-            # S2 suggests custom_test_scheme
-            overrides["s2_estimate"] = lambda iq, fs: DummyS2Estimate()
-            s2_orig = overrides["s2_estimate"]
-            def s2_with_hyp(iq, fs):
-                res = s2_orig(iq, fs)
-                return res
-            # S0/S1/S2/S4/S6 present
             report = orchestrate(
-                run_id="run-plugin-dispatch",
+                run_id="run-code-dispatch",
                 file_path=self.test_file,
-                mod_scheme_hint="custom_test_scheme",
                 runner=self.runner,
                 stage_overrides=overrides,
                 db_path=self.db_path,
             )
-            self.assertTrue(CustomMod.called, "S3 did not dispatch to registered modulation plugin")
             self.assertTrue(CustomConvCode.called, "S5 did not dispatch to registered code plugin")
-            s3_stage = next(s for s in report.stages if s.stage == "s3_receive")
             s5_stage = next(s for s in report.stages if s.stage == "s5_decode")
-            self.assertEqual(s3_stage.status, StageStatus.OK)
             self.assertEqual(s5_stage.status, StageStatus.OK)
         finally:
-            MODULATIONS.pop("custom_test_scheme", None)
             if orig_conv is not None:
                 CODES["conv"] = orig_conv
             else:
                 CODES.pop("conv", None)
+
+    def test_get_s3_receive(self):
+        """Verify get_s3_receive resolves receive_best or returns None if unavailable."""
+        mock_receive_best = unittest.mock.MagicMock()
+        mock_module = unittest.mock.MagicMock(receive_best=mock_receive_best)
+        with unittest.mock.patch.dict("sys.modules", {"pipeline.s3_receive": mock_module}):
+            fn = get_s3_receive()
+            self.assertEqual(fn, mock_receive_best)
+
+        with unittest.mock.patch.dict("sys.modules", {"pipeline.s3_receive": None}):
+            fn = get_s3_receive()
+            self.assertIsNone(fn)
 
 
 if __name__ == "__main__":
