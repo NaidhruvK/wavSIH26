@@ -50,7 +50,15 @@ from pipeline.s4_recover.rank_collapse import blind_recover  # noqa: E402
 from pipeline.s6_frame.payload import extract_text  # noqa: E402
 from registry import CODES, INTERLEAVERS, MODULATIONS  # noqa: E402
 from tests.fixtures.local_zoo import make_stream  # noqa: E402
-from tests.fixtures.rf_channel import ChannelSpec, through_channel  # noqa: E402
+from tests.fixtures.corpus import synth  # noqa: E402
+
+# 6 Sep: ported off `tests/fixtures/rf_channel.py`, which `anvith/
+# s3-robustness` deleted when it merged. That fixture carried its own copy
+# of the modulate-and-add-noise path; `zoo/rf.py` is now the only place in
+# the repo that turns bits into a waveform, and `corpus.synth` is a thin
+# call into it. THE CHANNEL IMPLEMENTATION CHANGED, so every number below
+# had to be re-measured rather than carried over - see the header of
+# reports/end_to_end.md.
 
 MESSAGE = ("RAAYA SIH26147 -- this message went through a modulator, a noisy "
            "channel and a blind receiver. Nothing about the interleaver or the "
@@ -106,14 +114,13 @@ def recover_with_rotation_search(candidates):
 
 def run_one(snr_db: float, seed: int, payload: str | None):
     bits, truth = make_stream(60_000, DEPTH, WIDTH, seed=seed, payload_text=payload)
-    spec = ChannelSpec(scheme="qpsk", sps=4, beta=0.35, snr_db=snr_db,
-                       cfo_norm=1e-4, phase_rad=0.7, timing_offset_sym=0.3,
-                       seed=seed)
-    iq, n_used = through_channel(bits, spec)
+    iq, fs, symbol_rate, n_used = synth(
+        "qpsk", sps=4, beta=0.35, snr_db=snr_db, cfo_norm=1e-4, phase_rad=0.7,
+        timing_offset_sym=0.3, seed=seed, bits=bits)
 
     t0 = time.time()
-    s3 = MODULATIONS["qpsk"].receive(iq, {"fs": spec.fs,
-                                          "symbol_rate": spec.symbol_rate})
+    s3 = MODULATIONS["qpsk"].receive(iq, {"fs": fs,
+                                          "symbol_rate": symbol_rate})
     arm = "text" if payload else "random"
     base = {"arm": arm, "snr_db": snr_db, "seed": seed}
     if s3.llrs is None or np.asarray(s3.llrs).size == 0:

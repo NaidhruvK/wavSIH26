@@ -66,12 +66,20 @@ __all__ = [
     "diagonal_permutation", "diagonal_interleave", "diagonal_deinterleave",
     "DiagonalInterleaver",
     "conv_interleave", "conv_deinterleave", "ConvolutionalInterleaver",
-    "MAX_PERIOD", "MAX_BRANCHES", "MAX_DELAY",
+    "symbol_interleave", "symbol_deinterleave", "CCSDSSymbolInterleaver",
+    "MAX_PERIOD", "MAX_BRANCHES", "MAX_DELAY", "CCSDS_DEPTHS", "RS_SYMBOL_BITS",
 ]
 
 MAX_PERIOD = 512     # largest block/diagonal period considered
 MAX_BRANCHES = 32    # largest convolutional branch count
 MAX_DELAY = 8        # largest convolutional delay increment
+
+# CCSDS 131.0-B fixes the symbol interleaver's depth to I in {1,2,3,4,5,8}.
+# It is a closed set in the standard, not a range we chose, so the search is
+# six candidates rather than a grid - which is why this family is the cheap
+# one to try first (see pipeline/s6_frame/ccsds.py).
+CCSDS_DEPTHS = (1, 2, 3, 4, 5, 8)
+RS_SYMBOL_BITS = 8   # an RS symbol over GF(2^8) is one byte
 
 
 def block_permutation(depth: int, width: int) -> np.ndarray:
@@ -293,8 +301,105 @@ class ConvolutionalInterleaver:
         return branches
 
 
+# ---------------------------------------------------------------------------
+# CCSDS symbol (byte) interleaver
+# ---------------------------------------------------------------------------
+
+def symbol_interleave(bits: np.ndarray, depth: int, n_bytes: int = 255) -> np.ndarray:
+    """CCSDS 131.0-B symbol interleaving, expressed on a bit stream.
+
+    THIS IS NOT THE BLOCK INTERLEAVER WITH DIFFERENT NUMBERS, and the
+    difference is the whole reason this family exists. `block_interleave`
+    permutes individual BITS. CCSDS permutes SYMBOLS - bytes of a Reed-Solomon
+    codeword - so the eight bits of a symbol always travel together and only
+    their position moves. Take `depth` consecutive n-byte codewords as a
+    (depth x n) matrix and transmit it column-wise: byte 0 of every codeword,
+    then byte 1 of every codeword, and so on.
+
+    Why the standard does it that way: a channel burst damages a run of
+    CONSECUTIVE transmitted bytes, and column-wise transmission puts those
+    consecutive bytes in `depth` DIFFERENT codewords. RS(255,223) corrects 16
+    symbol errors per codeword, so spreading a 16*depth-byte burst over depth
+    codewords is the difference between correctable and not.
+
+    Trailing bytes that do not fill a whole depth x n group are dropped, the
+    same convention every other family here uses.
+    """
+    data = _to_bytes(bits)
+    group = depth * n_bytes
+    n_groups = len(data) // group
+    if n_groups == 0:
+        return np.zeros(0, dtype=np.uint8)
+    mat = data[: n_groups * group].reshape(n_groups, depth, n_bytes)
+    return np.unpackbits(np.ascontiguousarray(mat.transpose(0, 2, 1)).ravel())
+
+
+def symbol_deinterleave(bits: np.ndarray, depth: int, n_bytes: int = 255) -> np.ndarray:
+    """Inverse of `symbol_interleave`: read the (n x depth) matrix back out.
+
+    A receiver does not know `depth`, which is what makes this searchable
+    rather than given - but CCSDS_DEPTHS has six members, so the search is six
+    candidates and the Reed-Solomon decoder settles it (pipeline/s6_frame/
+    ccsds.py). Note the rank test cannot help here at all: a permutation
+    preserves rank over GF(2), and RS puts its binary-image constraints at
+    L = 2040 anyway, far past MAX_PERIOD.
+    """
+    data = _to_bytes(bits)
+    group = depth * n_bytes
+    n_groups = len(data) // group
+    if n_groups == 0:
+        return np.zeros(0, dtype=np.uint8)
+    mat = data[: n_groups * group].reshape(n_groups, n_bytes, depth)
+    return np.unpackbits(np.ascontiguousarray(mat.transpose(0, 2, 1)).ravel())
+
+
+def _to_bytes(bits: np.ndarray) -> np.ndarray:
+    """Bit stream -> byte array, dropping a trailing partial byte.
+
+    Packing a partial byte would zero-pad it on the right and invent a symbol
+    that was never transmitted, which RS would then decline - a confusing way
+    to fail. Dropping it is the same convention as the row/block trims above.
+    """
+    arr = np.asarray(bits, dtype=np.uint8).ravel()
+    arr = arr[: len(arr) // RS_SYMBOL_BITS * RS_SYMBOL_BITS]
+    return np.packbits(arr) if arr.size else np.zeros(0, dtype=np.uint8)
+
+
+class CCSDSSymbolInterleaver:
+    name = "ccsds-symbol"
+    detail = ("CCSDS 131.0-B symbol (byte) interleaver, depth I in 1..8, "
+              "settled by the Reed-Solomon decoder rather than by rank")
+
+    @staticmethod
+    def candidate_params(n_bits: int, n_bytes: int = 255, **_):
+        """The standard's own depths, largest group first excluded by length.
+
+        Depth 1 IS offered here, unlike the block family, and that is not an
+        oversight: CCSDS I=1 is a legal profile meaning "no interleaving", and
+        a receiver that cannot report it has to call a real I=1 downlink
+        "no interleaver found" instead of "interleaved at depth 1".
+        """
+        for depth in CCSDS_DEPTHS:
+            if n_bits >= depth * n_bytes * RS_SYMBOL_BITS:
+                yield {"depth": depth, "n_bytes": n_bytes}
+
+    @staticmethod
+    def deinterleave(bits, depth: int, n_bytes: int = 255):
+        return symbol_deinterleave(bits, depth, n_bytes)
+
+    @staticmethod
+    def rank_signature(depth: int, n_bytes: int = 255) -> int:
+        """There is no rank signature, and returning a number here would be a
+        lie the orchestrator would act on. A permutation preserves rank over
+        GF(2) and RS's constraints sit at 2040 bits, so no row length in the
+        searched range collapses. 0 means "the sweep will not find this - use
+        the functional test", and `blind_recover` treats it that way."""
+        return 0
+
+
 # One registration line per family - the whole point of the registry. The
 # orchestrator iterates INTERLEAVERS and never names a scheme.
 register_interleaver(BlockInterleaver())
 register_interleaver(DiagonalInterleaver())
 register_interleaver(ConvolutionalInterleaver())
+register_interleaver(CCSDSSymbolInterleaver())

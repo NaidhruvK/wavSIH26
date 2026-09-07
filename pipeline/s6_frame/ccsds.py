@@ -57,14 +57,17 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from pipeline.s4_recover.gf2 import rank_gf2, reshape_rows
-from pipeline.s4_recover.interleavers import block_deinterleave
+from pipeline.s4_recover.interleavers import (
+    block_deinterleave, symbol_deinterleave, CCSDS_DEPTHS)
 from pipeline.s4_recover.rank_collapse import ROW_MARGIN, blind_recover
-from pipeline.s6_frame.descramble import recover_scrambler
+from pipeline.s6_frame.descramble import (
+    recover_scrambler, descramble_known, STANDARD_RANDOMISERS)
 from pipeline.s6_frame.payload import extract_text
 from pipeline.s5_decode.rs_code import _bits_to_bytes, _try_profile
 from registry import CODES
 
-__all__ = ["CCSDSResult", "find_scrambler_period_blind", "recover_ccsds"]
+__all__ = ["CCSDSResult", "find_scrambler_period_blind", "recover_ccsds",
+           "RS_CODEWORD_BYTES"]
 
 # Bounds. Every one of these exists so the chain cannot run away on a file
 # whose content it does not understand (risk #5).
@@ -76,6 +79,8 @@ DECODE_CAP_BITS = 48_000           # coded bits into Viterbi; commpy is pure
 MAX_SCRAMBLER_SHIFT = 2048         # self-difference search, in bits
 MIN_RS_BLOCKS = 4                  # fewer than this and "it decoded" means little
 RS_SCREEN_OFFSETS = 8              # byte alignments tried in the cheap screen
+RS_CODEWORD_BYTES = 255            # symbol interleaving is defined per codeword
+SCRAMBLER_SHIFT_CANDIDATES = 6     # shifts that may pay for a full blind_recover
 
 # Row length for the cheap "is this a codeword?" screen in the scrambler
 # search. It must be deficient for EVERY code in the declared envelope and
@@ -107,6 +112,7 @@ class CCSDSResult:
     generators_octal: tuple | None = None
     interleaver: dict | None = None
     scrambler_poly: int | None = None
+    randomiser: str | None = None     # which STANDARD_RANDOMISERS entry, if any
     rs_params: object | None = None
     payload: bytes = b""
     text: str = ""
@@ -119,7 +125,8 @@ class CCSDSResult:
 
 
 def find_scrambler_period_blind(bits: np.ndarray, stride: int = 2,
-                                max_shift: int = MAX_SCRAMBLER_SHIFT):
+                                max_shift: int = MAX_SCRAMBLER_SHIFT,
+                                max_candidates: int = SCRAMBLER_SHIFT_CANDIDATES):
     """Smallest shift whose self-difference shows a code, or None.
 
     Needs no parity check, which is the point - it is what breaks the
@@ -129,21 +136,62 @@ def find_scrambler_period_blind(bits: np.ndarray, stride: int = 2,
     """
     bits = np.asarray(bits, dtype=np.uint8).ravel()
     limit = min(max_shift, len(bits) // 3)
+
+    # THE SCREEN RANKS, IT DOES NOT THRESHOLD, and that is a 6 September fix to
+    # a 5 September fix of mine. `b431082` moved SCREEN_ROW_LEN from 14 to 60
+    # because 14 is the span of rate-1/2 K=7 and nothing else, so the screen
+    # was a false-negative generator for every other code in the envelope.
+    # That was right. What it did NOT notice is that the test on the other side
+    # of it - "deficiency > 0" - stopped screening anything at all. Measured on
+    # the scrambled fixture, 255 shifts searched:
+    #
+    #     SCREEN_ROW_LEN = 14    1 of 255 shifts passed
+    #     SCREEN_ROW_LEN = 60  255 of 255 shifts passed
+    #
+    # so every shift paid for a full `blind_recover` and the search went from
+    # about a second to 268 s - past the 90 s core-lock budget on its own, with
+    # `reports/ccsds_chain.md` still quoting the pre-fix 55.8 s.
+    #
+    # The reason is structural, not a tuning miss. The sum of two codewords is
+    # a codeword at EVERY shift that is a whole number of symbols - that is the
+    # premise the whole method rests on - so the code's own deficiency is
+    # present everywhere and only the residual scrambler distinguishes the
+    # shifts. At L = 14 the code contributes a deficiency of just 1, so the
+    # residual buries it except at the true shift; the old screen worked by
+    # sitting exactly on that margin, which is not a property to rely on. At
+    # L = 60 the code contributes 24 and survives the residual everywhere.
+    #
+    # What still separates them is the SIZE of the collapse, cleanly:
+    #
+    #     254 wrong shifts   deficiency 16   (min = median = max)
+    #     the true shift     deficiency 24   ( = L/n - m for rate 1/2 K=7)
+    #     wrong shifts scoring >= the true one:  0 of 254
+    #
+    # So sweep the deficiency for every shift - 255 ranks, about 0.1 s - take
+    # the median as the floor the residual imposes, and pay for a recovery only
+    # on shifts that stand above it. No knowledge of n or m is used, the
+    # expensive oracle still makes every claim, and a stream with no scrambler
+    # produces a flat profile, no candidates, and a cheap honest "no".
+    profile: list[tuple[int, int]] = []
     for shift in range(stride, limit + 1, stride):
         diff = bits[:-shift] ^ bits[shift:]
         if len(diff) < 8192:
             break
-        # A cheap necessary condition before paying for a full recovery: the
-        # difference must be rank deficient. See SCREEN_ROW_LEN - this used to
-        # test row length 14, which is the span of rate-1/2 K=7 and NOTHING
-        # else, so the whole scrambler path silently failed for every other
-        # code in the declared envelope.
         M = reshape_rows(diff, SCREEN_ROW_LEN, 0,
                          max_rows=SCREEN_ROW_LEN + ROW_MARGIN)
-        if M.size and SCREEN_ROW_LEN - rank_gf2(M) > 0:
-            res = blind_recover(diff, statistical_fallback=False)
-            if res.status == "ok" and res.generators_octal:
-                return shift, res
+        if M.size:
+            profile.append((shift, SCREEN_ROW_LEN - rank_gf2(M)))
+
+    if not profile:
+        return None, None
+
+    floor = float(np.median([d for _shift, d in profile]))
+    candidates = [sh for sh, d in profile if d > floor][:max_candidates]
+    for shift in candidates:
+        diff = bits[:-shift] ^ bits[shift:]
+        res = blind_recover(diff, statistical_fallback=False)
+        if res.status == "ok" and res.generators_octal:
+            return shift, res
     return None, None
 
 
@@ -214,6 +262,78 @@ def _rs_screen(de: np.ndarray, offsets: int = RS_SCREEN_OFFSETS) -> bool:
     return False
 
 
+def _randomiser_candidates(decoded):
+    """(name, poly, stream) to test, "no randomiser" first and always.
+
+    Ordering is not cosmetic. This project's own layer order puts the
+    scrambler on the CHANNEL, outside the convolutional code, where
+    `find_scrambler_period_blind` has already dealt with it before Viterbi
+    ran - so by here the stream carries no randomiser and the first candidate
+    is the answer. The real CCSDS 131.0-B order puts the randomiser INSIDE the
+    code instead, so it survives Viterbi and is still sitting on this stream.
+    Trying the null hypothesis first means the existing path costs nothing and
+    cannot change the answer it already gave.
+    """
+    yield None, None, decoded
+    for name, poly, seed in STANDARD_RANDOMISERS:
+        yield name, poly, descramble_known(decoded, poly, seed)
+
+
+def _peel_symbol_layers(decoded, rs):
+    """The CCSDS transmit order: randomiser over a BYTE-interleaved RS stream.
+
+    Five permuting depths times two randomiser hypotheses is ten
+    de-interleavings, each rejected by the cheap screen in about 0.04 s, plus
+    one extra full `blind_recover` for the un-permuted randomised stream. So
+    this whole phase costs about one expensive confirmation, and it runs
+    before the 465-pair bit-level grid rather than after it.
+
+    Returns (interleaver_dict, rs_params, de_stream, randomiser_name) or None.
+    """
+    for name, poly, stream in _randomiser_candidates(decoded):
+        if name is not None:
+            # The un-interleaved case has to be tried per randomiser too:
+            # CCSDS I=1 is a legal profile, and on that stream there is a
+            # randomiser to remove but no permutation to undo.
+            direct = rs.blind_recover(stream)
+            if direct is not None:
+                return None, direct, stream, name
+        for depth in CCSDS_DEPTHS:
+            if depth == 1:
+                continue                      # identity - covered by `direct`
+            de = symbol_deinterleave(stream, depth, RS_CODEWORD_BYTES)
+            if len(de) < RS_CODEWORD_BYTES * 8 * MIN_RS_BLOCKS:
+                continue
+            if not _rs_screen(de):
+                continue                      # cheap rejection
+            prm = rs.blind_recover(de)        # expensive confirmation
+            if prm is not None:
+                return ({"family": "ccsds-symbol", "depth": depth,
+                         "n_bytes": RS_CODEWORD_BYTES}, prm, de, name)
+    return None
+
+
+def _peel_bit_layers(decoded, rs):
+    """This project's own order: RS bit-interleaved beneath the code.
+
+    The 465-pair grid, 16.9 s. Unchanged from the 5 September chain except
+    that it now also runs against each known randomiser - which only happens
+    after every cheaper hypothesis has already been declined.
+    """
+    for name, poly, stream in _randomiser_candidates(decoded):
+        for depth, width in _interleaver_candidates(stream):
+            de = block_deinterleave(stream, depth, width)
+            if len(de) < RS_CODEWORD_BYTES * 8 * MIN_RS_BLOCKS:
+                continue
+            if not _rs_screen(de):
+                continue
+            prm = rs.blind_recover(de)
+            if prm is not None:
+                return ({"family": "block", "depth": depth, "width": width},
+                        prm, de, name)
+    return None
+
+
 def recover_ccsds(bits, decode_cap: int = DECODE_CAP_BITS) -> CCSDSResult:
     """Peel RS <- interleaver <- convolutional <- scrambler, blind.
 
@@ -269,33 +389,53 @@ def recover_ccsds(bits, decode_cap: int = DECODE_CAP_BITS) -> CCSDSResult:
     decoded = np.asarray(decoded, dtype=np.uint8)
     res.stages["viterbi"] = True
 
-    # --- layer 2 and 1: interleaver, settled by the RS decoder ----------
+    # --- layers 2 and 1: randomiser and interleaver, RS as sole judge ---
+    #
+    # TWO LAYER ORDERS ARE SEARCHED HERE, not one, and that is the 6 September
+    # change. Until today this chain assumed the Command Center's stated order
+    # (RS -> bit-interleave -> convolutional -> scrambler), which puts the
+    # scrambler on the channel and the interleaver on BITS. The real
+    # CCSDS 131.0-B transmit order is
+    #
+    #     RS -> byte-interleave -> randomise -> convolutional
+    #
+    # so the randomiser is INSIDE the code and survives Viterbi, and the
+    # interleaver permutes SYMBOLS rather than bits. Measured against a corpus
+    # file built to the real standard, the old chain peeled the convolutional
+    # layer correctly and then stopped at "no de-interleaving produced a
+    # Reed-Solomon codeword" - a true statement about a search that could not
+    # have succeeded, which is the failure mode worth removing.
+    #
+    # Cheapest hypothesis first: the symbol phase is ten screened
+    # de-interleavings at about 0.04 s each plus one full confirmation; the
+    # bit-level grid below it is 465 pairs.
     rs = CODES["reed-solomon"]
     best = None
     direct = rs.blind_recover(decoded)
     if direct is not None:
-        best = (None, direct, decoded)                 # no interleaver at all
-    else:
-        for depth, width in _interleaver_candidates(decoded):
-            de = block_deinterleave(decoded, depth, width)
-            if len(de) < 255 * 8 * MIN_RS_BLOCKS:
-                continue
-            if not _rs_screen(de):
-                continue                               # cheap rejection
-            prm = rs.blind_recover(de)                 # expensive confirmation
-            if prm is not None:
-                best = ({"family": "block", "depth": depth, "width": width}, prm, de)
-                break
+        best = (None, direct, decoded, None)           # no interleaver at all
+    if best is None:
+        best = _peel_symbol_layers(decoded, rs)
+    if best is None:
+        best = _peel_bit_layers(decoded, rs)
 
     if best is None:
         res.status = "partial"
         res.reason = ("convolutional layer recovered and decoded, but no "
-                      "de-interleaving produced a Reed-Solomon codeword")
+                      "combination of the known randomisers and the block or "
+                      "CCSDS-symbol interleavers produced a Reed-Solomon "
+                      "codeword")
         return res
 
-    res.interleaver, res.rs_params, de = best
+    res.interleaver, res.rs_params, de, randomiser = best
     if res.interleaver:
         res.stages["deinterleave"] = True
+    if randomiser is not None:
+        res.stages["derandomise"] = True
+        res.randomiser = randomiser
+        if res.scrambler_poly is None:
+            res.scrambler_poly = dict(
+                (n, poly) for n, poly, _seed in STANDARD_RANDOMISERS)[randomiser]
 
     # --- the payload ----------------------------------------------------
     # ReedSolomonCode.decode returns the DATA bits, 0/1 uint8 - not bytes.

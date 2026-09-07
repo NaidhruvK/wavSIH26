@@ -1899,6 +1899,368 @@ layers peel; not a standards claim.
 
 ---
 
+## 6 Sep - both asks to Dheeraj landed. One is verified clean, one is now built
+## against, and there is a hole under the first that his report does not cover.
+
+`main` moved eight commits while this branch sat unpushed; merged it, no
+conflicts, 657 tests collect. Branch is `nehal/6sep` off `nehal/rs-runtime`.
+
+### 1. DHERAJ - YOUR FSK CFO FIX IS RIGHT. I RE-MEASURED IT MYSELF.
+
+`55cb628`, verified the same way I measured the bug on 5 Sep: through
+`estimate()` itself, per scheme, against `cfo_norm * fs` from the truth JSON,
+all 252 corpus files. **At >= 10 dB: 168 of 168 files inside 100 Hz, zero
+failures.**
+
+| scheme | files >=10 dB | fail | worst |
+|---|---|---|---|
+| bpsk, qpsk, 8psk, 16qam | 112 | **0** | 0.0 Hz |
+| 2fsk | 28 | **0** | 54.9 Hz |
+| 4fsk | 28 | **0** | 84.5 Hz |
+
+Your 54.9 and 84.5 reproduce exactly on my side. The per-scheme reporting is
+what I asked for and it is the right change - it is what makes the next two
+paragraphs visible instead of invisible.
+
+**THE HOLE: BELOW 10 dB, 28 OF THE 84 FSK FILES ARE STILL WRONG, AND IT IS NOT
+YOUR ESTIMATOR.** (84 = 42 per FSK scheme, 6 SNRs x 7 seeds; the 28 are every
+one at 4 and 8 dB. My 5 Sep note said "56 FSK files" - that was the >= 10 dB
+slice, 28 per scheme, and it is not the denominator here.) The same run,
+extended to the whole corpus rather than the >= 10 dB slice:
+
+| scheme | 4 dB | 8 dB | 10 dB | 13 dB | 15 dB | 20 dB |
+|---|---|---|---|---|---|---|
+| 2fsk worst err | **25 000 Hz** | **25 000 Hz** | 54.9 | 30.1 | 18.3 | 18.5 |
+| 4fsk worst err | **25 000 Hz** | **25 000 Hz** | 84.5 | 47.1 | 28.8 | 31.6 |
+| 8psk worst err | **9 675 Hz** (7/7) | **3 482 Hz** (2/7) | 0.0 | 0.0 | 0.0 | 0.0 |
+
+Every one of the 28 FSK files at 4 and 8 dB reports the identical
+`symbol_rate/2` alias - the exact shape of the bug you just fixed.
+**`estimate_cfo_fsk` is never called on them.** `estimate()` routes on `std(|x|)/mean(|x|) < 0.25`, and I measured
+that ratio per file:
+
+| SNR | 4 dB | 8 dB | 10 dB | 13 dB | 15 dB | 20 dB |
+|---|---|---|---|---|---|---|
+| FSK envelope CV | 0.377 | 0.264 | **0.215** | 0.155 | 0.125 | 0.070 |
+| routed as | linear | linear | constant-envelope | c-e | c-e | c-e |
+
+**That statistic is measuring SNR, not envelope structure.** For a
+constant-envelope carrier in AWGN the envelope CV is ~1/sqrt(2*SNR): predicted
+0.224 at 10 dB against 0.215 measured, 0.281 at 8 dB against 0.264. The
+modulation contributes nothing to it. So the threshold 0.25 is in effect
+"SNR > 9 dB", the fix passes at 10 dB by **0.035 of margin in a quantity that
+moves monotonically with noise**, and when it flips there is no failure signal
+at all - just a confident 25 kHz. My chain survives it because
+`search.receive_best` always carries `cfo = 0` as a candidate, but an
+orchestrator that trusts `S2Result.cfo_hz` loses 4-FSK below 10 dB exactly as
+it did last week.
+
+Not filed as a defect in your column because 10 dB may well be the declared S2
+floor - but if it is, that floor belongs in the report next to the 168/168, and
+the routing statistic should not be the thing that enforces it silently.
+
+### 2. THE REAL CCSDS ORDER NOW PEELS. `zoo/ccsds.py` was worth asking for.
+
+`bcd0a88` gave me a generator built to the standard order. Run my 5 Sep chain
+against it unchanged, depths 1 and 4:
+
+    status = partial | stages = conv, viterbi | G = (0o171, 0o133) correct
+    reason = "no de-interleaving produced a Reed-Solomon codeword"
+
+**Two of four layers.** A true statement about a search that could not have
+succeeded. Both assumptions broke at once, and neither is tuning:
+
+- the randomiser is INSIDE the convolutional code, so it survives Viterbi.
+  `recover_scrambler` cannot touch it - it needs a parity check to take a
+  syndrome against, and the only code left after Viterbi is RS, whose
+  constraints sit at L = 2040, far past anything the sweep reaches.
+- the interleaver permutes BYTES. No bit-level (depth, width) can undo it.
+
+Fixed with two bounded additions, both judged by the RS decoder and nothing
+else. `CCSDSSymbolInterleaver` is a fourth registered family whose
+`rank_signature()` returns **0** - "the sweep will not find this one" - because
+returning a row length there would be a number the orchestrator would act on
+and it would be false. `STANDARD_RANDOMISERS` is the same move
+`rs_code.STANDARD_PROFILES` already makes: try the published profiles of the
+declared envelope, decline anything that matches none. The null hypothesis is
+tried first, so the 5 Sep path pays about one extra confirmation and cannot
+change the answer it already gave.
+
+**Result - every standard depth, blind, payload byte-exact:**
+
+| depth I | 1 | 2 | 3 | 4 | 5 | 8 |
+|---|---|---|---|---|---|---|
+| status | ok | ok | ok | ok | ok | ok |
+| interleaver found | - (I=1 identity) | 2 | 3 | 4 | 5 | 8 |
+| payload | exact | exact | exact | exact | exact | exact |
+
+`reports/ccsds_chain.md` (extended), `tests/unit/test_ccsds_real_order.py`
+(16 tests, 84 s). Both new primitives are pinned against **Dheeraj's**
+implementation rather than a second copy of my own assumptions:
+`symbol_interleave` reproduces `zoo.ccsds.ccsds_interleave` bit for bit at all
+six depths, and `additive_keystream` reproduces `zoo.bits_only.lfsr_scramble`
+bit for bit with its period **measured** at 255 rather than assumed from the
+degree - this repo has already shipped a polynomial mislabelled as
+maximal-length once.
+
+I also corrected the 5 Sep report rather than leaving it to be misread: its
+table is now explicitly labelled as the Command Center's order, because "the
+concatenated CCSDS profile decodes byte-exact" was true of a chain that is not
+the standard's.
+
+### 3. Merge break, fixed. `reports/end_to_end_study.py`
+
+`anvith/s3-robustness` deleted `tests/fixtures/rf_channel.py` as promised.
+Only one file still imported it - the tests on `main` were already ported -
+and it is now on `tests.fixtures.corpus.synth`. **The channel implementation
+changed underneath it**, so `reports/end_to_end.md`'s numbers were measured by
+code that no longer exists and have to be re-measured before they are quoted
+again. Smoke-tested at 16 dB seed 1: raw BER 0.0, recovered, interleaver
+correct, text readable, printable 0.9993 against the 1.000 previously
+published - a small delta, and exactly why the re-run is not optional.
+
+### 4. MY 5 SEP FIX PUT A 268-SECOND FUNCTION IN THE CHAIN AND EVERY TEST PASSED
+
+Found by reading the suite's `--durations`, not by a failure. The scrambled
+CCSDS arm took **364 s** tonight against the **55.8 s** in my own report. First
+two hypotheses were both wrong and both worth recording: it is not my 6 Sep
+change (measured in isolation, `_peel_symbol_layers` costs **2.4 s**), and it is
+not the machine (the unscrambled arm is 50 s tonight against 54.2 s published -
+unchanged).
+
+It is `b431082`, my last commit of 5 September. Moving `SCREEN_ROW_LEN` from 14
+to 60 was **right** - 14 is the span of rate-1/2 K=7 and nothing else, so the
+screen was rejecting most of the declared envelope. But the condition on the
+other side of it was still `deficiency > 0`, and at L=60 that is true of
+everything:
+
+| `SCREEN_ROW_LEN` | shifts searched | passing the screen |
+|---|---|---|
+| 14 (before the fix) | 255 | **1** |
+| 60 (after the fix) | 255 | **255** |
+
+Every shift then paid for a full `blind_recover`. **`find_scrambler_period_blind`
+alone: 268 s - past the 90 s core-lock budget for the whole seven-stage
+analysis, in one function.** I shipped that last night and wrote a commit
+message about correctness without timing what I had done.
+
+Why no better row length exists: the sum of two codewords is a codeword at
+EVERY shift that is a whole number of symbols - that is the premise the method
+rests on - so code structure is present at every shift and only its SIZE picks
+out the true one. At L=14 the code's deficiency is 1 and the residual scrambler
+buries it; the old screen worked by sitting exactly on that margin. Measured at
+L=60: **254 wrong shifts all at deficiency 16, the true shift at 24, zero
+overlap.**
+
+So the screen now **ranks instead of thresholding** - sweep all 255
+deficiencies (~0.1 s), take the median as the floor, and pay for a recovery
+only above it, capped at 6 candidates. No knowledge of n or m, the expensive
+oracle still makes every claim, and a stream with no scrambler gives a flat
+profile and a cheap honest no.
+
+| | before | after |
+|---|---|---|
+| `find_scrambler_period_blind` | 268.1 s | **5.1 s** |
+| scrambled arm end to end | 364.3 s | **48.7 s** |
+| `test_ccsds_chain.py` | 640 s+ | **205 s** |
+| answer | shift 510, `(0o171, 0o133)` | **identical** |
+
+`b431082`'s correctness fix is kept in full - still L=60, still covers every
+code in the envelope.
+
+**The guard that was missing is now there.**
+`test_the_scrambler_screen_actually_screens` asserts the search returns 510 AND
+finishes inside 60 s. The screen had a test for the half of its job that fails
+loudly - "never a cheap yes" - and none for the half that fails silently. A
+screen that admits everything is not a screen, and a green suite will not tell
+you. Only the clock knew. Fourth time this week that a number I did not measure
+was a number I had wrong.
+
+**This also means the OneDrive note below did NOT cause the 364 s** - I checked
+that first and it was the wrong tree. Both findings are real and they are
+independent.
+
+### 4b. DHERAJ - THE CORPUS RANDOMISER IS NOT THE CCSDS RANDOMISER
+
+Checked the constant against the blue book rather than against our own code.
+`zoo/bits_only.py` has `CCSDS_SCRAMBLER = 0o435` under a comment naming
+h(x) = x^8+x^7+x^5+x^3+1. Those are different polynomials:
+
+    0o435 = 285 = 0x11D = x^8 + x^4 + x^3 + x^2 + 1   <- RS GF(256) field poly
+    0o651 = 425 = 0x1A9 = x^8 + x^7 + x^5 + x^3 + 1   <- CCSDS 131.0-B
+
+The reciprocal of 0o435 is 0o561, so no convention reconciles them. 0x11D is
+the Reed-Solomon field polynomial - an extremely easy thing to reach for while
+writing an RS-and-randomiser generator.
+
+**Mislabel, not malfunction.** Both are primitive of degree 8 - I measured both
+periods at 255 - so the corpus is a valid additive scrambler, self-consistent
+between your generator and my receiver, and no recovery number moves.
+
+**But I had copied the constant into `STANDARD_RANDOMISERS` without checking
+it**, and that table exists precisely to catch a REAL downlink. A standard-
+profiles table whose standard entry is not the standard declines the one stream
+it was written for. Mine carried that error for about an hour today. Both
+polynomials are now in the table, blue book first, pinned by a test that
+asserts the tap sets explicitly.
+
+Your call which way to fix it: correct the comment (cheap, nothing moves) or
+correct the constant (regenerate `zoo/corpus/ccsds/` and re-measure anything
+against it). My chain works either way. What should not survive is a corpus
+file labelled CCSDS-conformant that is not - that is the exact claim I spent
+5 Sep being careful *not* to make about my own fixture.
+
+**And one line of `.gitattributes`, because it is the autocrlf hole again.**
+Your fix covers `*.wav`, `*.npy` and the three `models/` files. It does not
+cover `*.bin`, and the new corpus ships eight `.payload.bin`:
+
+    git check-attr text binary -- zoo/corpus/ccsds/...payload.bin
+    text: unspecified   binary: unspecified
+
+so git falls back to the content heuristic, and those files are pure ASCII with
+**zero NUL bytes** - it will call them text. **Nothing is corrupted today**: I
+checked all eight against their blobs and all match, because they also contain
+zero newline bytes, so the conversion is a no-op. But `payload_text` is
+caller-supplied and the first payload with a newline in it gets mangled on
+every Windows checkout - the exact failure mode `models/classifier.txt` already
+cost us. `*.bin binary` closes it.
+
+### 5. NAIDHRUV - THE SERVICE NEVER REGISTERS THE PLUG-INS. S3 AND S5 CANNOT RUN.
+
+Audited `naidhruv/integration` (a9602d6) tonight because the core-lock gate
+needs the orchestrator and it has never been run against current `main`. This
+is the most severe thing in the repo right now and it fails **silently**.
+
+The registry is populated by import side-effect - that is my design and it is
+in `registry/protocols.py`: `register_modulation()` runs when
+`pipeline.s3_receive` is imported, `register_code()` when
+`pipeline.s5_decode.conv_code` and `rs_code` are. Grepped every `.py` in his
+`service/` and `eval/`; there are exactly four pipeline imports:
+
+    orchestrator.py:87   pipeline.s0_ingest.ingest
+    orchestrator.py:95   pipeline.s1_detect.detect
+    orchestrator.py:125  pipeline.s4_recover.rank_collapse.blind_recover
+    orchestrator.py:133  pipeline.s6_frame.payload.extract_text
+
+None of them registers a modulation or a code. Reproduced with his exact import
+set:
+
+    at service start / S3 time : {'modulations': 0, 'interleavers': 0, 'codes': 0}
+    after his lazy S4 import   : {'modulations': 0, 'interleavers': 4, 'codes': 0}
+
+- `orchestrator.py:675` `MODULATIONS.get(scheme)` -> None -> **S3 never runs**
+- `orchestrator.py:725` `CODES.get("conv")` -> None -> **S5 never runs**
+- `main.py` `GET /registry` -> **0 / 0 / 0**, and that is the endpoint the
+  31 Aug gate reads. It would report an empty system while every unit test in
+  the repo passes, because the tests import the plug-in modules directly and
+  the service does not.
+
+Four import lines fix it. What matters more is the assertion after them: a
+service whose registry reports zero should **refuse to start**. This is exactly
+the failure class I built the registration-time protocol check for - "a plug-in
+missing a method should fail when the module is imported, not three stages into
+an analysis in front of a judge" - and it walked straight past it, because
+nothing was imported at all.
+
+**His branch is also 22 commits behind `main`** (base `c3ba631`, 4 Sep 17:09).
+It predates both S2 CFO fixes, all of Anvith's `lockcheck.py` and `search.py`,
+Dheeraj's classifier fix and the CCSDS corpus, and my 4-6 Sep work.
+
+**And `orchestrator.py:658` trusts S2's single CFO** and calls
+`plugin.receive()` directly rather than `receive_best`, which is the "any
+orchestrator that trusts S2 loses 4-FSK" case I wrote on 5 Sep. `search.py`
+postdates his branch point so this is staleness, not an oversight - but it is
+the call to make on the rebase. Minor, same file: `orchestrator.py:114` imports
+`tests.fixtures.local_s2`, deleted on `main` - verified `ImportError`, so that
+fallback is dead.
+
+### 6. ANVITH - I AUDITED YOUR LANE AND FOUND NOTHING, WHICH IS ALSO A RESULT
+
+Recording it so "no finding" is distinguishable from "not checked".
+`S3Result.as_stage_result()` matches Naidhruv's `contracts.StageResult` shape
+exactly, and the status vocabularies line up - S3 emits
+`ok | low_confidence | failed`, his `StageStatus` carries those plus
+`out_of_envelope`. No validation break at the seam. `receive_best` is in
+`pipeline.s3_receive.__all__`, so it is discoverable and the orchestrator's not
+using it is Naidhruv's staleness rather than a discoverability problem.
+
+The gap I would prioritise is his own declared one: 16-QAM and FSK have not
+been taken through to S4, while we claim six modulations end to end and the
+junction study covers three.
+
+### Still open, stated plainly
+
+- **The RF arm of the CCSDS corpus is untouched, and it is mine.** The eight
+  WAVs in `zoo/corpus/ccsds/` have not been driven from the waveform. Dheeraj's
+  note on `bcd0a88` says a full RS decode through the real channel needs a
+  byte-alignment search across a non-conv-aligned offset from the RRC filter's
+  edge transients. That is frame synchronisation, it is the same gap as the
+  absent sync marker, and it is the next thing.
+- **The randomiser phase is assumed to be 0.** Period 255 is coprime with both
+  the 8-bit symbol and the rate-1/2 code, so a capture not starting on the
+  randomiser's first bit descrambles to noise. Holds here only because the
+  convolutional encoder starts on that bit.
+- **`tests/fixtures/local_zoo.py` is still alive and is now overdue.** My own
+  standing instruction in `docs/HANDOFF.md` is to delete it the moment the zoo
+  lands, and the zoo has now landed in full - including the CCSDS profile that
+  was its last excuse. Counted rather than estimated: **12 test files, 7
+  studies, and one pipeline module**. The two generators are genuinely
+  independent implementations - neither imports the other, only comments
+  reference across - which is exactly the two-sources-of-truth risk I wrote
+  that instruction about. Not done today: it is a day of work with real
+  coverage at stake, and it should be a decision rather than a drive-by.
+- **`pipeline/s4_recover/cli.py:167` imports `tests.fixtures.local_zoo`**, and
+  that one is not just a cleanup item. It is shipping pipeline code reaching
+  into `tests/`, on the `--demo` path - which is both the plan's "if only 48
+  hours remain" floor AND the container's default `CMD`. It works today:
+  `.dockerignore` does not exclude `tests/`, so `COPY . .` carries the fixture
+  into the image. But it means **deleting `local_zoo.py` breaks the image's
+  default command**, and the two jobs have to be done together.
+
+  I started to point it at `zoo.bits_only` and stopped, because it is not the
+  small change it looks like. `zoo.bits_only.make_stream` has **no
+  `payload_text` and no `mean_burst`**, and its `Truth` carries the interleaver
+  as a nested dict rather than `.period` / `.depth` / `.width`. So the port
+  either drops `--text` - which is the "blind in, message out" demo, the one
+  in the pitch - and `--burst`, or it needs those two parameters added to
+  Dheeraj's generator first. **DHERAJ: that is the ask.** Two keyword arguments
+  on `make_stream`, and then `local_zoo` has nothing left that the zoo cannot
+  do. Until then the CLI keeps its `tests/` import and it is written down here
+  rather than discovered on 8 September.
+
+- **MOVING THE REPO OFF ONEDRIVE DID NOT STOP ONEDRIVE, and this affects
+  tomorrow's timed gate.** Measured tonight while the suite was running:
+  OneDrive.exe burned **19.0 CPU-seconds in a 20-second window** - a full core,
+  continuously - against pytest's own 19.7 in the same window. It is matching
+  the test suite 1:1. Cumulative CPU on the process was **158,313 s**, against
+  the 83,600 s recorded in HANDOFF on 4 September. And the suite itself
+  averaged only ~17 % of one core over 37 minutes wall, so it is not CPU-bound;
+  it is waiting.
+
+  I cannot prove the churn is the two stale copies - I did not isolate it, and
+  a `du` over them did not finish in five minutes, which is its own data point.
+  What is certain is that HANDOFF says to delete `OneDrive\\Desktop\\raaya` and
+  `OneDrive\\Desktop\\SIH` once `C:\\dev\\raaya` is trusted, both are still
+  there, and **the core-lock gate is "under 90 s, twice consecutively"** - which
+  cannot be measured honestly on a machine in this state, repo location
+  notwithstanding. My own fault in part: I ran the old SIH suite once tonight
+  before finding the live clone, which wrote `.pytest_cache` into the synced
+  folder. Deleting the two copies is a destructive step and I have not taken
+  it.
+
+**NAIDHRUV - one thing for the 6 Sep clean rebuild, measured not guessed.** The
+Docker build context is **124 MB, of which 113 MB is `zoo/corpus/`** (93 MB rf,
+8.3 MB the new ccsds files) plus 5.5 MB of `models/` training CSVs. None of it
+is needed at runtime - `models/classifier.txt` is, the datasets are not, and
+the corpus is test input. That is 91 % of the context shipped to the daemon and
+baked into a layer on every build. Your call and your file; I have not touched
+it, because excluding `zoo/` would break the `--demo` CMD above and the two
+decisions are the same decision.
+
+**Blocked on:** nothing.
+
+---
+
 ## Naidhruv — contract · service · UI · integration
 
 _(not started here)_

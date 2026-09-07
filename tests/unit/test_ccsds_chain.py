@@ -33,6 +33,7 @@ TWO THINGS TODAY OVERTURNED, both of them mine:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -185,6 +186,44 @@ def test_the_rs_screen_rejects_wrong_de_interleavings(clean):
     hits = [(d, w) for d, w in _interleaver_candidates(decoded)
             if _rs_screen(block_deinterleave(decoded, d, w))]
     assert hits == [(DEPTH, WIDTH)], "screen hits were %s" % hits
+
+
+def test_the_scrambler_screen_actually_screens(scrambled):
+    """The guard that was missing, and its absence cost a 53x slowdown.
+
+    `b431082` moved SCREEN_ROW_LEN from 14 to 60 - correctly, because 14 is the
+    span of rate-1/2 K=7 and nothing else, so the screen rejected every other
+    code in the envelope. Nothing tested the OTHER half of the screen's job.
+    With the test still written as "deficiency > 0", L=60 admitted **255 of 255
+    shifts**, every one paid for a full `blind_recover`, and this search went
+    from about a second to 268 s - on its own, past the 90 s core-lock budget
+    for the entire seven-stage analysis. Every test still passed. Only the
+    clock knew.
+
+    The reason a bare threshold cannot work here is structural: the sum of two
+    codewords is a codeword at EVERY shift that is a whole number of symbols -
+    that is the premise the method rests on - so the code's own deficiency is
+    present at every shift, and only its SIZE separates the true one. Measured:
+    254 wrong shifts at deficiency 16, the true shift at 24, no overlap.
+
+    So this asserts the property, not the implementation: the search must
+    return the right answer AND must not pay for the whole space to do it.
+    The bound is deliberately loose - it is there to catch a 50x regression on
+    a busy machine, not to measure performance.
+    """
+    bits, truth, _payload = scrambled
+
+    t0 = time.time()
+    shift, res = find_scrambler_period_blind(bits)
+    elapsed = time.time() - t0
+
+    assert shift == 510, "expected lcm(255, 2); got %s" % shift
+    assert res.generators_octal == tuple(truth.polys_octal)
+    assert elapsed < 60.0, (
+        "the self-difference search took %.0f s. It searches 255 shifts and "
+        "only a handful should ever reach `blind_recover` - check that the "
+        "deficiency screen still separates the true shift from the floor "
+        "rather than admitting everything." % elapsed)
 
 
 def test_uncoded_noise_is_not_claimed_as_a_ccsds_profile():
