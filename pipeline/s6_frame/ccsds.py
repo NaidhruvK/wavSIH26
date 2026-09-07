@@ -81,6 +81,8 @@ MIN_RS_BLOCKS = 4                  # fewer than this and "it decoded" means litt
 RS_SCREEN_OFFSETS = 8              # byte alignments tried in the cheap screen
 RS_CODEWORD_BYTES = 255            # symbol interleaving is defined per codeword
 SCRAMBLER_SHIFT_CANDIDATES = 6     # shifts that may pay for a full blind_recover
+PAYLOAD_ENTROPY_MARGIN = 1.0       # bits/byte between randomiser hypotheses
+                                   # before one is claimed - see _resolve_randomiser
 
 # Row length for the cheap "is this a codeword?" screen in the scrambler
 # search. It must be deficient for EVERY code in the declared envelope and
@@ -113,6 +115,8 @@ class CCSDSResult:
     interleaver: dict | None = None
     scrambler_poly: int | None = None
     randomiser: str | None = None     # which STANDARD_RANDOMISERS entry, if any
+    randomiser_ambiguous: bool = False  # RS accepted several; payload could not
+    randomiser_note: str = ""           # how the randomiser was settled, if at all
     rs_params: object | None = None
     payload: bytes = b""
     text: str = ""
@@ -288,8 +292,12 @@ def _peel_symbol_layers(decoded, rs):
     this whole phase costs about one expensive confirmation, and it runs
     before the 465-pair bit-level grid rather than after it.
 
-    Returns (interleaver_dict, rs_params, de_stream, randomiser_name) or None.
+    Returns EVERY surviving (interleaver, rs_params, de_stream, randomiser)
+    rather than the first. See `_resolve_randomiser`: for the real CCSDS
+    randomiser the RS decoder cannot tell the hypotheses apart, so stopping at
+    the first acceptance is how the chain returned confident garbage.
     """
+    hits = []
     for name, poly, stream in _randomiser_candidates(decoded):
         if name is not None:
             # The un-interleaved case has to be tried per randomiser too:
@@ -297,7 +305,8 @@ def _peel_symbol_layers(decoded, rs):
             # randomiser to remove but no permutation to undo.
             direct = rs.blind_recover(stream)
             if direct is not None:
-                return None, direct, stream, name
+                hits.append((None, direct, stream, name))
+                continue                      # this randomiser is settled
         for depth in CCSDS_DEPTHS:
             if depth == 1:
                 continue                      # identity - covered by `direct`
@@ -308,9 +317,10 @@ def _peel_symbol_layers(decoded, rs):
                 continue                      # cheap rejection
             prm = rs.blind_recover(de)        # expensive confirmation
             if prm is not None:
-                return ({"family": "ccsds-symbol", "depth": depth,
-                         "n_bytes": RS_CODEWORD_BYTES}, prm, de, name)
-    return None
+                hits.append(({"family": "ccsds-symbol", "depth": depth,
+                              "n_bytes": RS_CODEWORD_BYTES}, prm, de, name))
+                break                         # one depth per randomiser
+    return hits
 
 
 def _peel_bit_layers(decoded, rs):
@@ -318,8 +328,10 @@ def _peel_bit_layers(decoded, rs):
 
     The 465-pair grid, 16.9 s. Unchanged from the 5 September chain except
     that it now also runs against each known randomiser - which only happens
-    after every cheaper hypothesis has already been declined.
+    after every cheaper hypothesis has already been declined. Collects every
+    surviving randomiser, for the reason given in `_peel_symbol_layers`.
     """
+    hits = []
     for name, poly, stream in _randomiser_candidates(decoded):
         for depth, width in _interleaver_candidates(stream):
             de = block_deinterleave(stream, depth, width)
@@ -329,9 +341,86 @@ def _peel_bit_layers(decoded, rs):
                 continue
             prm = rs.blind_recover(de)
             if prm is not None:
-                return ({"family": "block", "depth": depth, "width": width},
-                        prm, de, name)
-    return None
+                hits.append(({"family": "block", "depth": depth,
+                              "width": width}, prm, de, name))
+                break                         # one pair per randomiser
+    return hits
+
+
+# ---------------------------------------------------------------------------
+# Resolving a randomiser the Reed-Solomon decoder cannot see
+# ---------------------------------------------------------------------------
+
+def _payload_bytes(rs, de, params) -> bytes:
+    """The RS data bits of one hypothesis, packed. `decode` returns bits."""
+    return np.packbits(np.asarray(rs.decode(de, params), dtype=np.uint8)).tobytes()
+
+
+def _byte_entropy(raw: bytes) -> float:
+    """Shannon entropy over byte values, bits per byte. 8.0 is structureless.
+
+    WHY ENTROPY AND NOT THE PRINTABLE FRACTION, which is what the rest of this
+    repo reaches for. Printability answers "is this text", and the payload of a
+    real downlink very often is not. Entropy answers the question actually being
+    asked - "did removing this layer expose structure, or destroy it" - and it
+    has the property that matters here: on a payload that was random to begin
+    with it CANNOT separate the hypotheses, and it says so by tying, rather than
+    by picking one. A discriminator that fails loudly on the case it cannot
+    judge is the whole point; see `_resolve_randomiser`.
+    """
+    if not raw:
+        return 8.0
+    counts = np.bincount(np.frombuffer(raw, dtype=np.uint8), minlength=256)
+    p = counts[counts > 0] / len(raw)
+    return float(-(p * np.log2(p)).sum())
+
+
+def _resolve_randomiser(hits, rs):
+    """Pick among hypotheses the RS decoder accepted, or decline to.
+
+    THE REED-SOLOMON DECODER IS BLIND TO THE CCSDS RANDOMISER, and this
+    function exists because of it. Measured: the randomiser's LFSR period is
+    255 BITS, an RS(255,223) block is 255 bytes = 2040 bits = exactly eight
+    whole periods, so every codeword is XORed with the same 255-byte pattern K
+    - and K is ITSELF an exact RS codeword. RS is linear over GF(256), so
+
+        C + K  is a codeword, exactly, with nothing to correct.
+
+    "Every block decoded at errata_rate 0.0" therefore says NOTHING about
+    whether the randomiser came off, and the ambiguity is symmetric: applying
+    the randomiser to an un-randomised stream also produces codewords, so no
+    ordering of the hypotheses fixes it. Pinned by
+    `test_the_ccsds_randomiser_is_invisible_to_the_reed_solomon_decoder`.
+
+    Only the payload can separate them, so that is where the decision is made -
+    and it is reported as such rather than folded into the RS verdict.
+
+    Returns (best, ambiguous, note).
+    """
+    if not hits:
+        return None, False, ""
+    if len(hits) == 1:
+        return hits[0], False, ""
+
+    scored = sorted(((_byte_entropy(_payload_bytes(rs, de, prm)), il, prm, de, nm)
+                     for il, prm, de, nm in hits), key=lambda t: t[0])
+    lo, hi = scored[0], scored[1]
+    margin = hi[0] - lo[0]
+    names = ", ".join("%s (%.2f b/byte)" % (t[4] or "no-randomiser", t[0])
+                      for t in scored)
+
+    if margin < PAYLOAD_ENTROPY_MARGIN:
+        return None, True, (
+            "%d randomiser hypotheses all produced valid Reed-Solomon "
+            "codewords and the payload cannot separate them (%s; margin %.2f "
+            "< %.2f bits/byte). The CCSDS randomiser's keystream is itself an "
+            "RS codeword, so RS acceptance carries no information about it - "
+            "declining rather than guessing" % (len(hits), names, margin,
+                                                PAYLOAD_ENTROPY_MARGIN))
+
+    _e, il, prm, de, nm = lo
+    return (il, prm, de, nm), False, (
+        "randomiser settled at the payload layer, not by RS: %s" % names)
 
 
 def recover_ccsds(bits, decode_cap: int = DECODE_CAP_BITS) -> CCSDSResult:
@@ -410,21 +499,31 @@ def recover_ccsds(bits, decode_cap: int = DECODE_CAP_BITS) -> CCSDSResult:
     # de-interleavings at about 0.04 s each plus one full confirmation; the
     # bit-level grid below it is 465 pairs.
     rs = CODES["reed-solomon"]
-    best = None
-    direct = rs.blind_recover(decoded)
-    if direct is not None:
-        best = (None, direct, decoded, None)           # no interleaver at all
-    if best is None:
-        best = _peel_symbol_layers(decoded, rs)
-    if best is None:
-        best = _peel_bit_layers(decoded, rs)
 
-    if best is None:
+    # EVERY surviving randomiser at the cheapest layer configuration that has
+    # any, not the first one to be accepted. RS cannot judge the randomiser
+    # (see `_resolve_randomiser`), so first-accept silently returned garbage.
+    hits = [(None, prm, stream, name)
+            for name, _poly, stream in _randomiser_candidates(decoded)
+            for prm in (rs.blind_recover(stream),) if prm is not None]
+    if not hits:
+        hits = _peel_symbol_layers(decoded, rs)
+    if not hits:
+        hits = _peel_bit_layers(decoded, rs)
+
+    if not hits:
         res.status = "partial"
         res.reason = ("convolutional layer recovered and decoded, but no "
                       "combination of the known randomisers and the block or "
                       "CCSDS-symbol interleavers produced a Reed-Solomon "
                       "codeword")
+        return res
+
+    best, ambiguous, note = _resolve_randomiser(hits, rs)
+    res.randomiser_ambiguous, res.randomiser_note = ambiguous, note
+    if best is None:
+        res.status = "partial"
+        res.reason = note
         return res
 
     res.interleaver, res.rs_params, de, randomiser = best

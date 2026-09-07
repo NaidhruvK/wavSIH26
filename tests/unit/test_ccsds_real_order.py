@@ -193,7 +193,7 @@ def test_the_symbol_family_is_registered():
 
 # --------------------------------------------------------------------------
 def test_the_ccsds_randomiser_is_invisible_to_the_reed_solomon_decoder():
-    """WHY THE 7 SEP GATE IS xfail. Measured, and it is structural, not chance.
+    """WHY THE RANDOMISER IS SETTLED ON THE PAYLOAD. Structural, not chance.
 
     The CCSDS 131.0-B randomiser is an LFSR of period 255 BITS. An RS(255,223)
     block is 255 bytes = 2040 bits = exactly 8 whole periods, so every codeword
@@ -215,7 +215,9 @@ def test_the_ccsds_randomiser_is_invisible_to_the_reed_solomon_decoder():
     `0o435` did not have this property, which is the only reason the 6 September
     gate passed: the chain was being judged by a randomiser that happened to
     break the code. `9b4c524` corrected the constant to the real one and the
-    property arrived with it.
+    property arrived with it - the chain then accepted the no-randomiser
+    hypothesis at errata_rate 0.0 and returned a payload XORed with a fixed
+    pattern, while reporting status=ok. `_resolve_randomiser` is the fix.
     """
     import reedsolo
 
@@ -243,15 +245,6 @@ def test_the_ccsds_randomiser_is_invisible_to_the_reed_solomon_decoder():
 # the gate: four layers off a stream built to the real standard
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "7 Sep: 9b4c524 corrected zoo's randomiser to the real 0o651, whose "
-    "keystream is itself an exact RS(255,223) codeword - so a randomised "
-    "stream is still a valid codeword and recover_ccsds accepts the "
-    "no-randomiser hypothesis at errata_rate 0.0, returning a payload XORed "
-    "with a fixed pattern while reporting status=ok. See "
-    "test_the_ccsds_randomiser_is_invisible_to_the_reed_solomon_decoder. "
-    "Needs a payload-level discriminator; RS cannot settle it in either "
-    "direction. NOT a test-expectation problem - the chain is wrong."))
 @pytest.mark.parametrize("depth", (1, 4))
 def test_the_real_transmit_order_peels_to_a_byte_exact_payload(depth):
     """The 6 Sep gate. Nothing about any of the four layers is supplied.
@@ -276,6 +269,11 @@ def test_the_real_transmit_order_peels_to_a_byte_exact_payload(depth):
     assert res.generators_octal == (0o171, 0o133)
     assert res.stages.get("derandomise") is True
     assert res.randomiser == "ccsds-131.0-B"
+    # RS accepted the no-randomiser hypothesis too, at errata_rate 0.0 - the
+    # payload is what separated them. Assert that, or a regression to
+    # first-accept would pass this test again on garbage.
+    assert res.randomiser_ambiguous is False
+    assert "payload layer" in res.randomiser_note
     assert res.rs_params.n == 255 and res.rs_params.k == 223
     assert res.rs_params.errata_rate == 0.0
 
@@ -286,6 +284,35 @@ def test_the_real_transmit_order_peels_to_a_byte_exact_payload(depth):
                                    "n_bytes": 255}
 
     assert res.payload[:len(payload)] == payload
+
+
+def test_a_random_payload_is_declined_rather_than_guessed():
+    """The other half of `_resolve_randomiser`, and the reason it uses entropy.
+
+    On a payload that was random to begin with, removing the randomiser exposes
+    no structure - both hypotheses decode to something incompressible, both are
+    valid RS codewords, and NOTHING can separate them. That is not a gap in the
+    discriminator, it is a true statement about the stream.
+
+    So the chain must decline. A confident answer here would be a coin flip
+    reported as a measurement, which is precisely the failure that made this
+    function necessary. `partial` with the candidates named is the honest
+    result, and it is what an orchestrator can act on.
+
+    This is also why the measure is entropy rather than the printable fraction
+    used elsewhere: printability would have answered "neither is text" and said
+    nothing about which is right.
+    """
+    bits, _payload, _meta = make_ccsds_stream(n_blocks=8, depth=1,
+                                              payload_text=None, seed=11)
+    res = recover_ccsds(bits)
+
+    assert res.status == "partial"
+    assert res.randomiser_ambiguous is True
+    assert res.randomiser is None, "declined, so no randomiser may be claimed"
+    assert "cannot separate them" in res.reason
+    # and it must say so because the margin was small, not for some other reason
+    assert "margin" in res.reason
 
 
 def test_uncoded_noise_is_not_claimed_as_a_real_order_profile():

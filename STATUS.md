@@ -2236,15 +2236,50 @@ Pinned by `test_the_ccsds_randomiser_is_invisible_to_the_reed_solomon_decoder`
 (passing - it asserts the property in both directions) and the gate is
 `xfail(strict=True)` so it cannot be quietly declared fixed.
 
-**Not fixed tonight, and deliberately not.** The fix is a design decision about
-what this chain is allowed to claim - a payload-level discriminator, or an
-honest "randomiser ambiguous" in the result - and picking one at 2am on a
-branch I want to merge is how the 268 s function got shipped. **DHERAJ /
-NAIDHRUV: `recover_ccsds` currently returns confident garbage on a real CCSDS
-downlink. Do not wire it into the orchestrator's payload path until this is
-resolved.** Everything else on the branch stands: the symbol interleaver, the
-scrambler screen ranking, all six depths peeling, and the 268 s -> 5.1 s fix
-are unaffected - this is the randomiser layer alone.
+**FIXED, and the fix is both of the options I was weighing, because either one
+alone reproduces the bug in a new costume.** A payload discriminator on its own
+answers the random-payload case with no evidence to answer from - confident
+garbage again, just chosen differently. "Always ambiguous" on its own throws
+away an answer the evidence does support and loses the blind-in/message-out
+demo. So:
+
+1. `_peel_*` now return **every** surviving randomiser instead of the first.
+   First-accept was the actual defect; RS was never able to rank them.
+2. `_resolve_randomiser` decides on the PAYLOAD, and only when the evidence is
+   decisive. RS acceptance stays a hard necessary condition - the payload never
+   admits anything, it only chooses among what RS already accepted.
+3. When the evidence ties, the chain returns `partial` with
+   `randomiser_ambiguous=True` and both candidates named. It never guesses.
+
+**The measure is byte entropy, not the printable fraction this repo reaches for
+elsewhere, and that choice is the point.** Printability asks "is this text",
+which a real downlink often is not. Entropy asks "did removing this layer expose
+structure or destroy it" - and on a payload that was random to begin with it
+CANNOT separate the hypotheses, so it ties and forces the honest answer instead
+of inventing one. Measured, both depths:
+
+| payload | `ccsds-131.0-B` | no randomiser | margin | result |
+|---|---|---|---|---|
+| text | **4.07** b/byte | 7.90 | **3.83** | resolved, payload byte-exact |
+| random | 7.89 | 7.88 | **0.01** | `partial`, declined |
+
+Threshold `PAYLOAD_ENTROPY_MARGIN = 1.0` b/byte sits ~380x clear of the tie and
+~4x clear of the decision, so it is not balanced on a margin the way the L=14
+scrambler screen was. Both depths peel byte-exact again, depth 4 still recovers
+the interleaver, and `test_a_random_payload_is_declined_rather_than_guessed`
+pins the half that must fail.
+
+**Known limit, stated rather than discovered later: a real downlink whose
+payload is compressed or encrypted will tie, and this chain will return
+`partial` on it.** That is correct - the information is genuinely not in the
+stream - but it means the randomiser cannot be settled blind for such a mission.
+CCSDS 131.0-B mandates the randomiser, so the profile itself is the missing
+prior; wiring that in is a deliberate "assume the standard" step and I have not
+taken it unilaterally. **DHERAJ / NAIDHRUV: that is the open question, not the
+correctness of the chain.**
+
+Everything else on the branch was unaffected throughout: the symbol interleaver,
+the scrambler screen ranking, all six depths, and the 268 s -> 5.1 s fix.
 
 **And one line of `.gitattributes`, because it is the autocrlf hole again.**
 Your fix covers `*.wav`, `*.npy` and the three `models/` files. It does not

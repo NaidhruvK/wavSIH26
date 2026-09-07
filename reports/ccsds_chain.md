@@ -419,7 +419,7 @@ this receiver against the generator's live constant caught the change as a red
 assertion (`285 == 425`) on merge rather than as a silent descramble to noise.
 
 Cost of the extra hypothesis is one screened pass on the failure path. Pinned
-by `test_the_blue_books_randomiser_is_in_the_table_and_is_not_the_corpus_one`,
+by `test_the_blue_book_randomiser_is_the_generators_and_the_legacy_one_is_kept`,
 which asserts the tap sets `{8,7,5,3,0}` and `{8,4,3,2,0}` explicitly and
 re-measures both periods, so neither can be quietly swapped back.
 
@@ -429,3 +429,92 @@ means regenerating `zoo/corpus/ccsds/` and re-running anything measured against
 it. My receiver works either way. What must not survive is a corpus file
 labelled CCSDS-conformant that is not, because that is precisely the claim this
 whole report is careful not to make.
+
+
+---
+
+# 7 September — the randomiser the Reed-Solomon decoder cannot see
+
+**Nehal · 7 September 2026.** Gated by `tests/unit/test_ccsds_real_order.py`
+(18 tests). Found by merging `9b4c524`, which corrected the corpus randomiser
+to the real `0o651` and immediately turned the 6 September gate red — in the
+worst possible shape:
+
+```
+status = ok    stages = conv, viterbi, reed-solomon
+rs_params = RSParams(n=255, k=223, offset=0, blocks_checked=8, errata_rate=0.0)
+printable_fraction = 0.3957        payload == expected : False
+```
+
+Eight blocks at offset 0, **zero corrections** — the strongest signal the RS
+layer can emit — on a wrong payload. `derandomise` is absent: the chain took
+the no-randomiser hypothesis and never tried one.
+
+## Why, and it is algebra rather than luck
+
+The randomiser's LFSR period is 255 **bits**. An RS(255,223) block is 255
+bytes = 2040 bits = **exactly eight whole periods**, so every codeword is XORed
+with the same 255-byte pattern K. Measured on K itself:
+
+| keystream | K as an RS(255,223) block |
+|---|---|
+| `0o651`, the real CCSDS one | **decodes, errata = 0 — K *is* a codeword** |
+| `0o435`, the old mislabel | rejects |
+
+Reed-Solomon is linear over GF(256), so for any codeword C, **C + K is a
+codeword, exactly.** "Every block decoded at errata_rate 0.0" therefore carries
+**no information** about whether the randomiser came off. The ambiguity is
+symmetric — applying the randomiser to an un-randomised stream also yields
+codewords — so no ordering of the hypotheses fixes it.
+
+This killed the premise the 6 September design rested on, which was that both
+new primitives were *"judged by the RS decoder and nothing else"*. For the real
+standard's randomiser that judge is blind. The 6 September gate passed only
+because `0o435` happened to break the code: I was being marked by an examiner
+that could not read.
+
+## The fix is both of the obvious ones, because either alone re-creates the bug
+
+A payload discriminator alone answers the random-payload case with no evidence
+to answer from — confident garbage again, chosen differently. Declaring the
+result permanently ambiguous throws away an answer the evidence does support.
+
+1. `_peel_symbol_layers` / `_peel_bit_layers` return **every** surviving
+   randomiser rather than the first. First-accept was the defect.
+2. `_resolve_randomiser` decides on the **payload**, and only when decisive. RS
+   acceptance remains a hard necessary condition — the payload never admits
+   anything, it only ranks what RS already accepted.
+3. On a tie: `partial`, `randomiser_ambiguous = True`, both candidates named.
+
+**The measure is byte entropy, not the printable fraction used elsewhere in
+this repo, and that is the point.** Printability asks *"is this text"*, which a
+real downlink often is not. Entropy asks *"did removing this layer expose
+structure or destroy it"* — and on a payload that was random to begin with it
+**cannot** separate the hypotheses, so it ties and forces the honest answer
+instead of inventing one.
+
+| payload | `ccsds-131.0-B` | no randomiser | margin | result |
+|---|---|---|---|---|
+| text | **4.07** b/byte | 7.90 | **3.83** | resolved, payload byte-exact |
+| random | 7.89 | 7.88 | **0.01** | `partial`, declined |
+
+`PAYLOAD_ENTROPY_MARGIN = 1.0` b/byte sits ~380× clear of the tie and ~4× clear
+of the decision — deliberately not balanced on a margin, which is how the L=14
+scrambler screen failed.
+
+Both depths peel byte-exact again and depth 4 still recovers the interleaver.
+`test_a_random_payload_is_declined_rather_than_guessed` pins the half that must
+fail, and
+`test_the_ccsds_randomiser_is_invisible_to_the_reed_solomon_decoder` pins the
+algebra in both directions so the premise cannot quietly return.
+
+## Limit, stated here rather than discovered later
+
+**A real downlink whose payload is compressed or encrypted will tie, and this
+chain will return `partial` on it.** That is the correct answer — the
+information is genuinely not in the stream — but it means the randomiser cannot
+be settled blind for such a mission. CCSDS 131.0-B *mandates* the randomiser,
+so the standard itself is the missing prior; using it would be an explicit
+"assume the declared profile" step of the same kind as `STANDARD_PROFILES`, and
+it is deliberately **not** taken here. It changes what the chain claims about a
+real spacecraft, which is a decision for the team rather than for this report.
