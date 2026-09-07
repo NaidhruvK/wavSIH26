@@ -2007,6 +2007,50 @@ disproved it**: all six clean `zoo/corpus/bits_only/` files carry non-zero
 offsets (72, 34, 78, 30, 44, 21) and all six recover. My sweep had changed two
 variables at once. The true claim is narrower and is item 6 above.
 
+### 9. THE GATE IS NOT AT RISK, AND THE ONEDRIVE THEORY WAS WRONG. BOTH MEASURED.
+
+**The core-lock number, on `main` at `100a30c`, twice consecutively:**
+
+| | run 1 | run 2 |
+|---|---|---|
+| `--demo --text`, OneDrive running | **25.8 s** | **24.7 s** |
+| same, OneDrive stopped | 22.7 s | 21.6 s |
+
+Budget is 90 s. Both `ok` at confidence 0.95, payload printable 100 %. **That is
+a 3.5x margin on the noisy machine.** My 6 Sep note said the gate "cannot be
+measured honestly on a machine in this state" - it can, and it passes. Caveat
+that matters: this is S4->S6 from bits. **The full S0->S6 number cannot be
+measured at all yet, because the orchestrator is Naidhruv's and still cannot
+run S3 or S5.**
+
+**THE STALE-COPY THEORY IS DEAD. Do not spend time on it.**
+`OneDrive\Desktopaaya` is already gone and `OneDrive\Desktop\SIH` contains
+**zero entries** - an empty Files On-Demand placeholder (reparse tag
+0x9000e01a), not a real copy. Deleting it frees nothing and would only remove
+it from the cloud. The churn is `OneDrive\Desktop` holding **~250 000 files
+across a dozen unrelated projects** (RAG App 50k+, lychee 36k, HA-QCNN 36k,
+LLM Red-Team Lab 32k, BlockVerify 22k). That is other work and it is not ours
+to delete. HANDOFF's instruction rests on a premise that is no longer true.
+
+OneDrive is nonetheless real: **112 % of one core, sustained, on an idle
+machine** (22.47 CPU-s in a 20-s window). Cumulative 83 600 s (4 Sep) ->
+158 313 s (6 Sep) -> **202 906 s (7 Sep)**. Stopping it buys ~12 %. Worth doing
+before a timed run; not worth deleting anything for.
+
+**AND THE PREDICTION I MADE FROM IT WAS WRONG.** 21.4 s x 0.88 = 18.8 s should
+have fitted Anvith's 20 s budget and killed his flake. It did not:
+
+| | passed | failed |
+|---|---|---|
+| Anvith's S3 test, OneDrive running | 2 | 6 |
+| same, OneDrive stopped | 2 | 4 |
+
+**4 passes in 14 runs either way.** The search's own run-to-run variance is
+wider than the headroom, so the flake is intrinsic, not load-induced. **Nobody
+can make it go away with a quiet machine - it has to be fixed in the code.**
+That raises the priority of his item rather than lowering it, and it is in what
+I sent him.
+
 **Blocked on:** nothing.
 
 ---
