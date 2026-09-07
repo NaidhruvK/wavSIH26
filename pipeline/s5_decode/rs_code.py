@@ -86,7 +86,8 @@ def _bits_to_bytes(bits: np.ndarray) -> np.ndarray:
     return np.packbits(arr) if arr.size else np.zeros(0, dtype=np.uint8)
 
 
-def _try_profile(data: np.ndarray, n: int, k: int, offset: int):
+def _try_profile(data: np.ndarray, n: int, k: int, offset: int,
+                 stop_on_first_failure: bool = False):
     """Try every block; return (blocks_tried, decoded_fraction, errata_rate).
 
     Returns the FRACTION of blocks that decode rather than rejecting on the
@@ -100,6 +101,19 @@ def _try_profile(data: np.ndarray, n: int, k: int, offset: int):
     wins" therefore picked the wrong code and returned wrong data. Decode
     fraction has no such bias: the true profile decodes every block, a wrong
     one only gets lucky on some.
+
+    `stop_on_first_failure` is a pure speed switch for the one caller that
+    cannot use a partial fraction anyway. blind_recover accepts an alignment
+    only at frac == 1.0, so a single failed block already settles it and the
+    remaining 23 decodes only make the answer more precisely negative. The
+    search is 255 alignments x 3 profiles x 24 blocks and a WRONG alignment
+    fails on its first block essentially always, so this is close to a 24x cut
+    on the dominant cost. It was ~12 minutes of the unit suite and would not
+    have fit the 90 s per-analysis budget either.
+
+    The ranking argument above is untouched: it applies to profiles that
+    decode EVERY block, and those never take the early exit, so their errata
+    rate is still measured over all of them.
     """
     import reedsolo
 
@@ -115,6 +129,8 @@ def _try_profile(data: np.ndarray, n: int, k: int, offset: int):
         try:
             _, _, pos = rs.decode(block)
         except Exception:
+            if stop_on_first_failure:
+                return n_blocks, ok / float(n_blocks), 1.0
             continue
         ok += 1
         errata += len(pos)
@@ -144,7 +160,10 @@ class ReedSolomonCode:
         best, best_key = None, None
         for n, k in STANDARD_PROFILES:
             for offset in range(n):          # bounded: at most n alignments
-                blocks, frac, rate = _try_profile(data, n, k, offset)
+                # frac < 1.0 is rejected two lines down, so there is nothing
+                # to learn from the blocks after the first failure.
+                blocks, frac, rate = _try_profile(data, n, k, offset,
+                                                  stop_on_first_failure=True)
                 if blocks < MIN_BLOCKS or frac < 1.0 or rate > ERRATA_TOLERANCE:
                     continue
                 # Rank: every block must decode (already required), then prefer

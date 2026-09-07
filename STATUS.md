@@ -554,6 +554,66 @@ anchored at ≥10dB everywhere else too.
 `models/classifier.txt` frozen this morning per the 6 Sep plan, config
 hash `132fc1d21777` unchanged since 3 Sep — no retraining today.
 
+### 7 Sep — Nehal's review of yesterday's work: one documentation ask, one real bug, one gap closed
+
+Nehal independently re-verified the FSK CFO fix (168/168 at ≥10dB,
+worst cases reproduced exactly) and, separately, pressure-tested
+`zoo/ccsds.py` against his own S4-S6 chain — three findings, all
+addressed:
+
+**1. The 10dB CFO floor was a silent routing artifact, now stated as a
+number.** He measured that `estimate()`'s `constant_envelope` check
+(`std/mean < 0.25`) tracks `1/sqrt(2·SNR_linear)` almost exactly for
+FSK — it is measuring SNR, not envelope structure, and the modulation
+contributes nothing to it. Below ~9dB it silently misroutes to the
+linear CFO path with no failure signal (`status="ok"`, confidently
+wrong). Not a defect chasable by a threshold tweak — `s2_envelope.md`
+already proved that crossover can't be widened without breaking clean
+high-SNR PSK/QAM. Fixed by documentation, per his explicit ask: added
+to `reports/envelope_study.py` / `envelope.md` §3, stating plainly that
+S2's declared CFO floor for FSK is 10dB and `cfo_hz` shouldn't be
+trusted below it regardless of `status`.
+
+**2. `CCSDS_SCRAMBLER` was mislabelled — a real bug, now fixed.**
+`zoo/bits_only.py`'s `CCSDS_SCRAMBLER = 0o435` was actually 0x11D, the
+GF(256) Reed-Solomon field polynomial, not the CCSDS 131.0-B randomiser
+(0o651 = 0x1A9 = x^8+x^7+x^5+x^3+1) its own comment and name describe —
+an easy constant to reach for while writing an RS-and-randomiser
+generator in the same file. Both are primitive degree-8 (period 255
+either way), so nothing was corrupted — the corpus was a valid,
+self-consistent scrambler between this generator and Nehal's receiver
+checking against the same constant — but the label was wrong. Fixed
+the constant (not just the comment), matching the whole point of
+`zoo/ccsds.py` being the *standards-accurate* alternative to the
+existing fixture. `zoo/corpus/ccsds/` regenerated with the corrected
+polynomial; `tests/unit/test_bits_only.py` pins the fix (checks the
+exact tap positions match h(x), and that the sequence has period
+exactly 255, not some smaller divisor that would also have satisfied
+"primitive of degree 8").
+
+**3. `.gitattributes` had a gap Nehal caught before it bit anyone:**
+`*.payload.bin` (the new CCSDS corpus's raw payload bytes) had no
+`-text`/`binary` marking, the exact autocrlf hole that corrupted
+`models/classifier.txt` before. Today's eight files are pure ASCII
+with no newline bytes, so the heuristic's "text" guess happened to be
+a no-op — the first `payload_text` containing a newline would have
+been silently mangled on any Windows checkout otherwise. Added
+`*.bin binary`.
+
+**Also landed: `payload_text` and `mean_burst` on `zoo.bits_only.make_stream`**,
+the two remaining things `tests/fixtures/local_zoo.py` could do that
+the real zoo couldn't — the reason Nehal still had 12 test files, 7
+report studies, and `pipeline/s4_recover/cli.py` importing from
+`tests/`. Ported `gilbert_elliott_mask`/`inject_burst_errors` from that
+fixture (his own description of the model, unchanged) rather than
+reimplementing the physics differently. `payload_text` repeats real
+text to fill `n_source_bits`, same construction as the fixture's
+version, so a caller switching from one to the other sees identical
+bits. This doesn't retire the fixture itself — that's Nehal's call, on
+his own files — but the blocker on his side is gone.
+
+Full regression suite re-run after all of the above.
+
 ---
 
 ## Anvith — S3 receiver chain
@@ -1658,8 +1718,1026 @@ the code-XOR-scrambler composite, which annihilates the stream exactly and so
 cannot be rejected by any residual test. K=7 under a degree-8 scrambler reads
 back as K=15. Such results are downgraded and labelled, never announced.
 
-**Tomorrow (2 Sep):** Reed-Solomon (255,223) registered, and the LLR contract
-test with Anvith. `docs/HANDOFF.md` has the LLR convention.
+**2 Sep gate: PASS.** Reed-Solomon (255,223) registered. Exact bit match on 20
+streams per code at 0 % BER, both against *recovered* parameters - conv 20/20,
+RS 20/20. Weak profiles (255,247) and (255,251) were REMOVED from the search
+after they produced confidently wrong answers: a 4-parity code fits almost
+anything within distance 2 of a codeword. A genuine RS(255,251) stream is
+therefore outside the searched set and is declined rather than guessed at.
+
+**3 Sep gate: PASS**, and the day found the bug it existed to find.
+`blind_recover` assumed 0/1 and never hard-sliced, so real LLRs - which is what
+S3 actually emits - had float values packed through `np.packbits`. A *perfect*
+demodulation came back as "period=4, K=2, G=(0o1, 0o0)" at 0.95 confidence: a
+confident wrong answer on the one input the whole pipeline exists to consume,
+and it would have done that on every real file. Hardened at the entry
+(`harden()`), two regression tests.
+
+---
+
+**4 Sep. The correction is mine, and it matters more than the fix.**
+
+Last night's `reports/end_to_end.md` put the text arm at **0 of 18** - including
+16 dB with a bit-perfect demodulation - and blamed `detect_signature` for taking
+the smallest rank collapse. I re-measured that before fixing it and **the
+diagnosis was wrong**. `detect_signature` returns the true period 96 on every
+rotation of every file in that arm, and the transmitted stream recovers cleanly
+at every start offset. The numbers were real; the mechanism I attached to them
+was not. Three separate defects were lined up behind one symptom:
+
+1. **A false positive won the rotation ranking.** On the *wrong* rotations the
+   statistical fallback returned `ok` at 0.59 with "period=4, rate 1/2 K=2" - a
+   memory-1 artefact of ASCII, not a code. The study ranks rotations by shortest
+   span, so span 4 beat the true span 14 and the garbage rotation won. The
+   correct rotations were sitting there returning `period=96, block(8,12),
+   G=(0o171, 0o133)` the whole time.
+2. **De-interleaving destroyed the LLRs.** Every function in `interleavers.py`
+   began `np.asarray(bits, dtype=np.uint8)`. A permutation does not care what it
+   is permuting, so that cast bought nothing and truncated every soft value.
+   De-interleaving a real receiver's output returned **an array of zeros**, and
+   Viterbi decoded zeros into zeros. This is the 3 Sep `harden` bug one stage
+   further along, and it hid because the recovery path hard-slices by design -
+   only the *decode* path needed the soft values, and every test before today
+   de-interleaved zoo bits.
+3. **Polarity - risk #9, arriving in the register's own words.** With the LLRs
+   surviving, the chain decoded to the *complement* of the message. A coherent
+   receiver cannot tell 0 deg from 180, both polarities recover identical
+   parameters, and both decode without complaint. One file: rotation 2 printable
+   1.000, rotation 0 printable 0.001, same parameters.
+
+**Results, measured against `origin/main` at 093f431 so Anvith's roll-off fix is
+in the path** (`reports/end_to_end.md`):
+
+| | yesterday | today |
+|---|---|---|
+| interleaver + code recovered | 15/36 | **30/36** |
+| text arm recovered | 0/18 | **15/18** |
+| text arm printing the message | 0/18 | **15/18** at printable 1.000 |
+
+Whole chain per file, median 24 s, max 50 s - inside the 90 s budget.
+
+**Blind in, message out, through the real receiver - for the first time.**
+Yesterday's file said the readable-text demo "has never run through the real
+receiver". It has now: real modulator, real channel, blind S3, blind S4, Viterbi,
+readable text.
+
+**I first wrote that as "nothing about the file was supplied". That was an
+overclaim and I am correcting it here.** The study calls
+`MODULATIONS["qpsk"].receive(iq, {"fs": ..., "symbol_rate": ...})`, so the
+modulation family and the symbol rate ARE supplied. Both are S2's job and S2
+does not exist yet. What is genuinely blind: RRC roll-off, carrier phase and
+CFO, symbol timing, the rotation ambiguity, the interleaver family, period and
+depth x width, the block alignment, the code rate, the constraint length, both
+generator polynomials, and the payload polarity.
+
+**The honest sentence for the demo is "everything from the matched filter
+onward is blind"** - not "nothing was supplied". When Dheeraj's S2 lands, this
+study must stop taking `fs` and `symbol_rate` from the ChannelSpec and take
+them from S2, and every number here must be re-measured.
+
+**And nothing here is evidence about REAL signals.** `rf_channel.py` is a
+channel we wrote: RRC, AWGN, one constant CFO, one fixed timing offset. No
+multipath, no interference, no AGC transient, no phase noise, no fading. No
+off-air capture has ever been through this pipeline. That is risk #8, and the
+plan's answer is the 21 Sep - 20 Oct window (RTL-SDR, SatNOGS, gr-satellites as
+an independent oracle). Anyone presenting this must not let "real receiver" be
+heard as "real signal".
+
+**Four paths could report `ok` on a structured source. All four are closed**, and
+the guards now meet at one exit (`_finalise`) instead of living in whichever
+branch happened to run. The recurring lesson, third instance: *deficiency cannot
+DECIDE - only a functional test can.* The discriminator turned out to be
+structural rather than a threshold - a real code has a **one**-dimensional null
+space at its span, and the ASCII artefacts have 4, 7 and 19.
+
+Also: a scrambled stream was walking around the K<=9 composite guard by coming
+back through the *interleaver* path as `block(depth=1,width=32)`. Depth 1 is the
+identity permutation - the direct reading wearing a hat, meeting a guard that
+only existed in the branch it did not take. Guard moved to the exit; depth 1 is
+no longer offered.
+
+**4 Sep column done: hypothesis fallback across the registry product, bounded.**
+`iter_signatures` walks successive collapse periods instead of only the first,
+resuming the sweep so an ordinary file costs exactly what it did before. Bounded
+by 6 candidates and a 12 s wall clock. Uncoded data produces *no* candidates at
+all, so the judge's first input is untouched - still 8.4 s, still `failed`.
+
+**Still open, and now measured rather than assumed.** An interleaved stream with a
+*short repeating* payload is refused, not recovered. The block-boundary offset is
+picked by argmax of deficiency, and on a structured source that argmax carries no
+signal: across three fixtures the true offset sits within **one** of the maximum
+while ranking 39th, 59th and 71st of 96. It needs a functional test per offset,
+which is a family search per offset, which does not fit the budget. Logged with a
+test that fails loudly if it ever improves on its own. Does not affect the demo
+message (its period is longer than the interleaver's) or random payloads; would
+affect real telemetry with short repeating frame headers.
+
+**Anvith:** your roll-off fix and tap caps are in my numbers and changed nothing
+in the recovery outcome - the 6 dB rows fail on non-zero BER, which is physics.
+Your 3 Sep claim 1 reproduces from my side: the threshold is **zero bit errors**,
+not low BER. And your shortest-span rotation rule is sound, but it was being
+handed a false positive to rank; that was my bug, not yours.
+
+**Dheeraj:** second time in three days that real payloads found something random
+bits cannot. The zoo needs text payloads AND short repeating ones - the second
+kind is what real telemetry frame headers look like and it is where this still
+breaks.
+
+**Naidhruv:** `PayloadReport` now carries `inverted` - the UI should say when a
+payload was read in inverted polarity, because blind, we cannot tell 0 deg from
+180 without a sync marker. That marker is 7 Sep framing work.
+
+**Also 4 Sep: the RS runtime, which was blocking the 6 Sep gate. Fixed.**
+`blind_recover` searched 255 alignments x 3 profiles, RS-decoding 24 blocks each,
+but it accepts an alignment only at decoded fraction 1.0 - so one failed block
+already settles it and the other 23 decodes only make the answer more precisely
+negative. A wrong alignment fails on block one essentially always.
+
+| | before | after |
+|---|---|---|
+| `blind_recover`, worst case (random data) | ~113 s | **1.8 s** |
+| `blind_recover`, true RS stream | - | **3.7 s** |
+| the RS false-positive test | 112.9 s | **5.2 s** |
+| RS exact on 20 streams | 209.9 s | **52.3 s** |
+
+Behaviour-preserving: the accepting path never takes the early exit, so the
+errata rate that ranks profiles is still measured over every block, and a test
+asserts both paths agree on frac == 1.0 for every alignment. Pinned with a wall
+clock rather than a status, the way Anvith pinned his S3 tap cap.
+
+**Next (5 Sep):** concatenated CCSDS chain - RS outer, interleaver,
+convolutional inner, scrambler, recovered in sequence. Blocked on nothing; the
+scrambled-stream composite is guarded and labelled rather than announced, and
+1 Sep established that scrambling does not hide the code from rank collapse.
+
+**4 Sep, later: I ran the 8 Sep adversarial gate early, and it was failing.**
+
+The existing false-positive tests all used UNIFORM random data, which is the one
+input a rank test finds easy. Nobody had tested DEGENERATE or merely PATTERNED
+streams. Twelve adversarial inputs, none of them convolutionally coded - six came
+back `status=ok`:
+
+| input | claimed, at 0.63-0.70 confidence |
+|---|---|
+| all ones | `block(depth=...)` |
+| alternating 0101 | `G=(0o1, 0o1)` plus an interleaver |
+| period-8 pattern | `block(depth=...)` |
+| uncoded ASCII, short repeat | a convolutional interleaver |
+| uncoded ASCII, interleaved | `block(depth=...)` |
+| biased 70/30 coin | `rate 1/1 K=4, inferred BER 0.3015` |
+
+**None of these was a regression** - I checked by running the identical battery
+against a worktree at yesterday's commit, and all six predate 3 September. They
+have been there the whole time.
+
+The last row is the one worth reading twice: 0.3015 is 1 - 0.7 to three
+decimals. The syndrome test was measuring the SOURCE's own bias and reporting it
+back as the channel's error rate. A biased i.i.d. stream makes every parity
+check biased.
+
+Three structural guards close all six, and **the audit now passes 12 of 12 with
+zero `ok`**:
+
+- `code_signature_holds()` - a rate-1/n code constrains its stream ONLY at
+  multiples of n and is full rank everywhere else. This module's docstring has
+  said exactly that since 29 August and nothing ever checked it. Degenerate
+  streams are deficient at odd lengths too. Only lengths BELOW the span are
+  checked, and that bound is load-bearing: a structured source adds odd-length
+  deficiency at and above its own period, so checking the whole profile would
+  reject the very streams the candidate walk exists to recover.
+- `MIN_CODE_MEMORY` on the INTERLEAVER path, which never had it. `_finalise`
+  treats "an interleaver was identified" as sufficient evidence, so a hypothesis
+  backed by a memory-0 "code" walked through the exit guard untouched.
+- `n >= 2` and an implied-BER bound on the statistical path. A rate-1/1 code has
+  no redundancy to have recovered, and an implied error rate outside the
+  method's own measured 3 % ceiling is not a code seen through noise.
+
+**Also found by the same run: `summary()` raised KeyError** on a convolutional
+hypothesis - it formatted `p["depth"]` and `p["width"]`, which every family has
+except convolutional. That is the one method whose docstring promises it never
+raises, and it is called from the UI on every result including the failures it
+exists to explain. No test caught it because no test had ever printed one.
+
+All of it is now `tests/unit/test_adversarial_s4.py`, 29 tests, ~98 s. **416
+passed, 4 skipped** across unit + contract, and the end-to-end study is unchanged
+at 30/36 and 15/18 - the guards cost nothing on the working path.
+
+**Naidhruv / everyone - the general lesson:** a false-positive test is only as
+good as its inputs, and uniform random is the easy case. The gate says "uncoded
+random data must NOT produce a false code detection" and we were passing it while
+claiming codes in all-ones.
+
+---
+
+**4 Sep, later still: Dheeraj's zoo landed and I ran every gate against it.**
+Full write-up in `reports/zoo_gate.md`. Nothing below reads
+`tests/fixtures/local_zoo.py`.
+
+**First, is the zoo itself right?** Contract compliance I can read off the JSON,
+but a corpus that merely labels itself is not ground truth. So for every clean
+file I de-interleaved at the STATED offset with the STATED depth x width and
+multiplied by the parity check of the STATED generators: **residual 0.000000 on
+every one.** The data matches its own labels independently of anything my code
+believes. Lengths 159 845-160 000 (contract: >=150 000), all fields present,
+both same-period factorisations (8x12 and 16x6) there, uncoded file present,
+start offsets deliberately off-boundary. **Dheeraj - this is a clean delivery.**
+
+**Bits-only, 73 files.** Clean unscrambled: period 6/6, depth x width 6/6,
+generators 6/6. BER 0.001-0.02: 0/30. Scrambled: 0/36, all declined or
+downgraded. Uncoded random: declined. **Confidently wrong answers: 0.**
+
+6 of 73 recover, and that is the published envelope meeting a corpus built
+deliberately outside it - 36 files scrambled, 30 noisy, both documented open
+problems. **But it means the 4 Sep gate ("at least 40% of the corpus decodes")
+is unreachable against a corpus composed this way**, not because recovery is
+weak but because 92% of the files are outside the declared envelope. Someone
+has to decide whether the corpus gets weighted toward the envelope or the gate
+gets stated against the in-envelope subset. That is a standup decision, not
+something to reinterpret quietly on the day.
+
+**RF corpus, 36 WAVs, 6 modulations x 6 SNRs.** Dheeraj's modulator -> Anvith's
+S3 -> my S4, three different authors, which is the first time this chain has
+been measured without my own fixture on the transmit side:
+
+| | bpsk | 2fsk | 4fsk | qpsk | 8psk | 16qam |
+|---|---|---|---|---|---|---|
+| full recovery | **6/6** | 5/6 | 5/6 | 5/6 | 3/6 | 2/6 |
+
+**26 of 36, all six modulations, zero confidently wrong.** 6/6 at 15 and 20 dB,
+5/6 at 13, 4/6 at 10 and 8, 1/6 at 4 dB. Two honesty notes: it is PARAMETER
+recovery, not exact-bit decode, so do not quote it against the scorecard's
+"end-to-end exact-bit" row; and the corpus sets cfo=0, phase=0, timing=0, so
+these files are EASIER than my own fixture.
+
+**Where the cliff actually is - measured, with the zoo's own generator.** The
+corpus BER grid is 0.0 then 0.001, so every file is either perfect or hopeless
+and the grid cannot see our own edge:
+
+| injected BER | period | depth x width | generators |
+|---|---|---|---|
+| 0 | 3/3 | 3/3 | 3/3 |
+| **2e-5** | 3/3 | **0/3** | **0/3** |
+| 2e-3 | 3/3 | 0/3 | 0/3 |
+| 5e-3 | 0/3 | 0/3 | 0/3 |
+
+Two limits three orders of magnitude apart. Period detection survives to ~2e-3,
+**which confirms the 0.30 % ceiling in `ber_ceiling.md` against real data**.
+Factorisation and generators die at the FIRST bit error - about three flipped
+bits in 160 000.
+
+**Dheeraj, the one request:** BER points at 2e-5, 5e-5, 1e-4, 2e-4, 5e-4. The
+entire operating envelope lives between your 0.0 and your 0.001 and no corpus
+file lands in it.
+
+**S3 ALREADY KNOWS WHETHER S4 WILL SUCCEED, and this is Anvith's number.**
+Sorting all 36 RF files by S3's own `estimated_output_ber` separates the
+outcomes completely - every recovery <= 1.5e-6, every failure >= 7.5e-5, a
+fifty-fold gap with nothing in between. **EVM does not separate them at all**
+(BPSK at 33 % EVM recovers; 16-QAM at 11.7 % fails). So the orchestrator can
+decide, for free and BEFORE paying up to 32 s for the S4 search, whether the
+search can succeed - and the stage card can say "this capture demodulates at
+3e-4, recovery needs better than about 1e-5" instead of declining silently.
+**Anvith: nothing to fix, S3 locked 6/6 on every file. Please keep
+`estimated_output_ber` as a first-class output rather than a diagnostic.**
+
+**The rotation search was burning 70 s to learn nothing.** 8-PSK files were
+taking 63-72 s against a 90 s WHOLE-analysis budget. The cost was not recovery:
+S3 offers one LLR array per unresolvable phase rotation (2 for BPSK, 4 QPSK,
+8 for 8-PSK) and `blind_recover` ran on each WITH the statistical fallback,
+which spends 8 s proving a negative - on rotations that are wrong by
+construction. Every status was identical without it, on all 36 files.
+`pipeline/s4_recover/rotations.py` now screens cheaply and pays only when
+screening found nothing, under a 25 s bound:
+
+| | before | after |
+|---|---|---|
+| worst single file | 72.1 s | **32.3 s** |
+| whole corpus | 746 s | **258 s** |
+| recovery | 26/36 | **26/36** |
+
+**Naidhruv:** that is a callable entry point, `recover_over_rotations()`, so the
+orchestrator does not have to rediscover either the shortest-span rule or the
+screening rule. It returns which rotation won and whether the budget ran out.
+
+**I did NOT delete `tests/fixtures/local_zoo.py`, against my own instruction.**
+Doing it today would delete coverage rather than duplication: `zoo/bits_only.py`
+has no `payload_text` (every 3-4 Sep finding depends on structured payloads), no
+`mean_burst` (bursts move the ceiling ~16x), and only block interleavers (so the
+1 Sep diagonal gate cannot run against it). The rule behind the instruction -
+two sources of truth must not coexist - is met a better way: the GATES now run
+on the real corpus, `local_zoo` is demoted to a parametric generator for cases
+the corpus cannot express, and the two were checked against each other and
+agree. Delete it the day those three knobs exist in `zoo/`.
+
+**423 passed, 4 skipped.**
+
+---
+
+**4 Sep, end of day: the chain is blind end to end, and S2 has a bug that costs
+us the recovery.** Full write-up in `reports/blind_chain.md`.
+
+**The overclaim I made yesterday is retired by measurement.** Every study of
+mine passed `fs` and `symbol_rate` to S3 from the truth sidecar, because S2 did
+not exist. It does now. The study reads ONLY the WAV, through S0; the truth JSON
+is opened once at the end to score, never to produce.
+
+| | S2 rate | true | err | runs | scheme | interleaver | generators |
+|---|---|---|---|---|---|---|---|
+| bpsk 20 dB | 50000 | 50000 | 0.000 % | 1 | bpsk | YES | YES |
+| qpsk 20 dB | 50000 | 50000 | 0.000 % | 2 | qpsk | YES | YES |
+| 8psk 20 dB | 50000 | 50000 | 0.000 % | 3 | 8psk | YES | YES |
+| 16qam 20 dB | 50000 | 50000 | 0.000 % | 4 | 16qam | YES | YES |
+| 2fsk 20 dB | 50000 | 50000 | 0.000 % | 5 | 2fsk | YES | YES |
+| 4fsk 20 dB | 50000 | 50000 | 0.000 % | 6 | 4fsk | YES | YES |
+
+**6 of 6, all six modulations, nothing supplied.** The modulation is found by
+iterating the registry and keeping whatever produces a rank collapse - the
+column's own wording - and **no wrong modulation ever produced a confident
+answer**. Anvith: that is the direct answer to your subset trap from my side.
+S4 rejected every incorrect constellation on its own, 0 false positives.
+
+**DHERAJ - TWO THINGS, ONE PERFECT AND ONE BROKEN.**
+
+Your symbol rate is exact to three decimals on all six files. Nothing to fix.
+
+Your CFO estimate is wrong on every file, and it costs us the recovery. True CFO
+on this corpus is **0 Hz**. S2 reports:
+
+| scheme | S2 CFO | equals |
+|---|---|---|
+| bpsk | 25 000 Hz | symbol_rate / 2 |
+| qpsk | 12 500 Hz | symbol_rate / 4 |
+| 8psk | 6 250 Hz | symbol_rate / 8 |
+| 16qam | 12 500 Hz | symbol_rate / 4 |
+
+That is the M-th-power branch ambiguity: the estimator resolves `M*cfo` modulo
+2*pi, so it recovers the offset only modulo `symbol_rate/M`, and with a true
+offset of zero it locks onto the modulation's own spectral line. **Zero is never
+offered at any rank** - every ranked hypothesis is an alias - so "decode via the
+second hypothesis" cannot rescue it.
+
+Applying it breaks recovery on **4 of 4** files that recover perfectly without
+it, and S3 still says `ok`:
+
+| file | with S2 CFO | without |
+|---|---|---|
+| bpsk | EVM 37.5 %, no recovery | EVM 5.2 %, recovered |
+| qpsk | EVM 6.1 %, **no recovery** | EVM 5.2 %, recovered |
+| 8psk | EVM 5.4 %, **no recovery** | EVM 5.1 %, recovered |
+| 16qam | EVM 6.5 %, **no recovery** | EVM 5.6 %, recovered |
+
+Read the middle three twice: **EVM looks fine and the recovery is dead.** Third
+time this week EVM has failed as a quality signal. The fix is small - offer the
+alias set `cfo + k*symbol_rate/M` as ranked hypotheses, or include zero and let
+a downstream test choose. Today it reports one alias at high confidence with no
+way back.
+
+**My side survives it** by treating CFO as a hypothesis rather than a fact: the
+null (no pre-correction, let S3's carrier loop work) is tried first, S2's
+estimate second.
+
+**THE 4 SEP VERIFY LINE, both ways.** *"Corrupt S2's top hypothesis; the
+pipeline still decodes via the second."* Naturally - S2's top CFO hypothesis IS
+wrong on every file and the chain still recovered 6/6, which is the line
+satisfied by a real upstream error rather than a synthetic one. And
+deliberately - replacing S2's winning symbol rate with 1.5x the truth,
+**4 of 6 still recovered** via a later hypothesis. The two that did not hit the
+120 s search budget at 130.5 s and 123.8 s; they ran out of time, they did not
+fail to recover.
+
+**NAIDHRUV / DHERAJ - THE COST FINDING, and it decides 6 Sep.** Clean-path blind
+times: bpsk 2.3 s, 4fsk 9.8 s, qpsk 20.1 s, 2fsk 46.7 s, 8psk 49.1 s, 16qam
+75.1 s. The cost tracks **registry position**, not difficulty - each miss pays a
+full S3 demodulation plus an S4 rotation search, and worst case with a corrupted
+hypothesis is 24 chain runs. The core-lock gate is 90 s for the WHOLE
+seven-stage analysis, and S2-S4 alone is already 75 s on 16-QAM.
+
+**So the classifier is not a nice-to-have, it is what makes the fallback
+affordable.** Dheeraj's LightGBM model and Anvith's ranked `search.py` prune the
+modulation dimension from six to one or two - the difference between 75 s and
+about 12 s. The exhaustive loop stays as the fallback for when the classifier is
+unsure, and it is now measured so we know what it costs when it fires.
+
+**Heads-up on a merge break:** `anvith/s3-robustness` deletes
+`tests/fixtures/rf_channel.py`, which `reports/end_to_end_study.py` (mine)
+imports. It will break the moment that branch lands. His `tests/fixtures/
+corpus.py` has `synth()` as the replacement; I will port it when the branch
+merges rather than guess at it now.
+
+---
+
+## 5 Sep - the concatenated CCSDS chain. Gate met, both arms.
+
+`reports/ccsds_chain.md`, `pipeline/s6_frame/ccsds.py`,
+`tests/unit/test_ccsds_chain.py`. Four coding layers, none supplied.
+
+| | unscrambled | scrambled |
+|---|---|---|
+| layers peeled | conv, viterbi, deint, RS | **scrambler, descramble**, conv, viterbi, deint, RS |
+| generators | (0o171, 0o133) OK | (0o171, 0o133) OK |
+| interleaver | block(8,12) OK | block(8,12) OK |
+| outer code | RS(255,223) OK | RS(255,223) OK |
+| printable | **100.0 %** | **100.0 %** |
+| payload vs transmit | **byte-exact** | **byte-exact** |
+| time | 54.2 s | 55.8 s |
+
+**502 passed, 4 skipped, 1 xfailed.**
+
+**TWO THINGS I HAD WRONG AND HAD TO OVERTURN TODAY.**
+
+**1. The interleaver is INVISIBLE to the rank test in the CCSDS ordering.** Every
+earlier study here interleaved the convolutional CODEWORD, whose constraints are
+local (span 14), so permuting them moves the collapse to the interleaver period -
+that is why S4 has read depth x width off the curve since 29 Aug. CCSDS
+interleaves the RS codeword instead, and **a permutation preserves rank over
+GF(2)**. RS puts its binary-image constraints at L=2040, far past MAX_PERIOD, so
+there is nothing at any searchable L to find.
+
+I did not reason that out. I measured a collapse at 96 on one file and reported
+"better than I predicted - the interleaver IS visible". **That was wrong.** Those
+deficiencies were the ASCII payload's own structure and they MOVED when I changed
+the message: message A gave 96/122/183/192, message B gave 112/147/168/192/196,
+and a RANDOM payload gives nothing at any length up to 81,600 bits. My first
+version of the candidate search ranked off that curve and could never have
+worked. Fourth time this week that reading a curve where only a functional test
+can decide produced a wrong answer. The interleaver is now found functionally
+with the RS decoder as sole judge.
+
+**2. The scrambler chicken-and-egg is broken.** `recover_scrambler` needs the
+code's parity check and the scrambler hides the code - open in HANDOFF since
+2 Sep. But an additive scrambler is periodic, so for a shift P that is a multiple
+of both its period and the symbol size, `r[n] XOR r[n+P] = c[n] XOR c[n+P]` - the
+scrambler cancels and the XOR of two codewords is a codeword. Search P with the
+RANK test on the self-difference, which needs no parity check, and the code from
+the difference unlocks the rest. That is why the scrambled arm peels four layers.
+
+**Cost, and the one number that is a problem.** Viterbi is 80 % of the 55 s and
+it is commpy being pure Python (163 kbit takes 167 s), so the chain caps input at
+48,000 coded bits. The interleaver grid nearly killed it: full RS blind_recover
+is ~2.2 s per candidate, so reaching 8x12 at grid index 190 would cost **421 s**.
+A cheap screen - one RS profile at 8 byte alignments, early exit on the first bad
+block - rejects a wrong candidate in **0.038 s**, taking the 465-pair grid to
+**16.9 s with exactly one hit, the true (8,12), and no false positives**.
+
+**DHERAJ - YOUR CFO FIX IS RIGHT, AND IT IS INCOMPLETE.** Your root cause is
+better than my report: the demean before the FFT nulled the DC bin, which is
+exactly where the line sits at zero CFO. Verified across the corpus at >=10 dB:
+
+| scheme | files | \|CFO err\| >= 100 Hz |
+|---|---|---|
+| bpsk, qpsk, 8psk, 16qam | 112 | **0** |
+| **2fsk** | 28 | **28** |
+| **4fsk** | 28 | **28** |
+
+Your "112/112 clean files" is exactly the four LINEAR schemes. **All 56 FSK files
+still report 25,000 Hz where the truth is 0** - the same rate/2 alias. It is not
+cosmetic: I measured recovery with and without the estimate applied, and
+
+    2fsk 20 dB / 13 dB   survives it (recovers either way)
+    4fsk 20 dB / 13 dB   RECOVERS without it, FAILS with it
+
+So the estimator is still blind for FSK and it costs us 4-FSK outright. My chain
+survives because it treats CFO as a hypothesis and tries the null first, but any
+orchestrator that trusts S2 loses 4-FSK.
+
+**And I owe you one.** When I saw `models/classifier.txt` show a checksum
+difference on checkout I called it "a phantom CRLF diff, not a content change"
+and moved on. You found it was real - autocrlf breaking LightGBM's line parser
+with "Model format error, expect a tree here". I saw the symptom and misjudged
+it. Your `.gitattributes` fix is the right one.
+
+**ASK: a concatenated profile in the corpus.** The zoo has conv-only and RS-only
+streams; CCSDS is the only layer of the declared envelope with no corpus file, so
+this runs against `local_zoo.make_ccsds_stream`. Also note my fixture is NOT
+bit-for-bit CCSDS 131.0-B - the blue book randomises BEFORE the convolutional
+encoder and interleaves SYMBOLS (bytes, depth I in 1..8), where I follow the
+Command Center's stated order and interleave bits. Fine for testing whether four
+layers peel; not a standards claim.
+
+### 7. THE FULL SUITE, RUN FOR THE FIRST TIME THIS WEEK - AND S3 IS FLAKY ON A CLOCK
+
+**678 passed, 1 failed, 4 skipped, 1 xfailed in 27m14s.** I had been quoting
+"the CCSDS suites are green" and calling the full run too slow to bother with.
+It was worth 27 minutes.
+
+**ANVITH - `test_s3_runs_on_blind_estimates_with_no_labels_in_the_path` is
+flaky: 2 passes in 8 fresh processes.** Not my branch - `search.py`,
+`lockcheck.py`, `linear.py`, `s2_estimate.py` and the test file are all
+bit-identical to `origin/main` on this branch; I checked before saying so.
+
+I first called it a deterministic failure and said main was red. **Both wrong** -
+the first two samples agreed and I generalised from them. Inside one process it
+is perfectly stable (5 calls, 5 x `ok`); the variation is BETWEEN processes.
+
+**Mechanism, measured.** `receive_best` enforces `SEARCH_BUDGET_S = 20.0` via a
+deadline checked at `search.py:425` and `:485`. Same signal, only the budget
+varied:
+
+| `budget_s` | status | modulation | exhausted | elapsed |
+|---|---|---|---|---|
+| **20.0 (default)** | ok | qpsk | False | **21 437 ms** |
+| 5.0 | low_confidence | **8psk** | True | 6 877 ms |
+| 30.0 | ok | qpsk | False | 21 375 ms |
+
+**The right answer costs ~21.4 s against a 20.0 s budget.** It passes only when
+the overshoot lands between two deadline checks. When the budget bites, S3
+returns **8psk for a QPSK signal** - and Anvith's evenness guard catches it and
+refuses to say `ok`. **That guard is doing its job and must not be loosened to
+make the test green**; the defect is upstream, in the search not reaching qpsk
+inside the budget.
+
+**Why this outranks one flaky test: the core-lock gate is "under 90 s, twice
+consecutively".** A stage whose correctness depends on how much wall clock it
+gets will pass or fail that gate for reasons unrelated to the code. And the
+OneDrive measurement below means the margin that exists on a quiet machine is
+not there on the demo machine. Written up for Anvith with a reproduction.
+
+### 8. Two of my own numbers were stale, and one of my findings was wrong
+
+Re-audited Naidhruv against his CURRENT tip `5530a2b`, not the `a9602d6` I
+wrote up on 6 Sep. The registry bug is still real and still reproduces
+(`{'modulations': 0, 'interleavers': 0, 'codes': 0}` at S3 time), but
+**`orchestrator.py:675/725` are now `693/742`, and his branch is 24 commits
+behind main, not 22.** Corrected in what I sent him.
+
+And I briefly concluded S4 could not handle non-zero start offsets, which would
+have sent Dheeraj chasing a generator bug that does not exist. **The corpus
+disproved it**: all six clean `zoo/corpus/bits_only/` files carry non-zero
+offsets (72, 34, 78, 30, 44, 21) and all six recover. My sweep had changed two
+variables at once. The true claim is narrower and is item 6 above.
+
+**Blocked on:** nothing.
+
+---
+
+## 6 Sep - both asks to Dheeraj landed. One is verified clean, one is now built
+## against, and there is a hole under the first that his report does not cover.
+
+`main` moved eight commits while this branch sat unpushed; merged it, no
+conflicts, 657 tests collect. Branch is `nehal/6sep` off `nehal/rs-runtime`.
+
+### 1. DHERAJ - YOUR FSK CFO FIX IS RIGHT. I RE-MEASURED IT MYSELF.
+
+`55cb628`, verified the same way I measured the bug on 5 Sep: through
+`estimate()` itself, per scheme, against `cfo_norm * fs` from the truth JSON,
+all 252 corpus files. **At >= 10 dB: 168 of 168 files inside 100 Hz, zero
+failures.**
+
+| scheme | files >=10 dB | fail | worst |
+|---|---|---|---|
+| bpsk, qpsk, 8psk, 16qam | 112 | **0** | 0.0 Hz |
+| 2fsk | 28 | **0** | 54.9 Hz |
+| 4fsk | 28 | **0** | 84.5 Hz |
+
+Your 54.9 and 84.5 reproduce exactly on my side. The per-scheme reporting is
+what I asked for and it is the right change - it is what makes the next two
+paragraphs visible instead of invisible.
+
+**THE HOLE: BELOW 10 dB, 28 OF THE 84 FSK FILES ARE STILL WRONG, AND IT IS NOT
+YOUR ESTIMATOR.** (84 = 42 per FSK scheme, 6 SNRs x 7 seeds; the 28 are every
+one at 4 and 8 dB. My 5 Sep note said "56 FSK files" - that was the >= 10 dB
+slice, 28 per scheme, and it is not the denominator here.) The same run,
+extended to the whole corpus rather than the >= 10 dB slice:
+
+| scheme | 4 dB | 8 dB | 10 dB | 13 dB | 15 dB | 20 dB |
+|---|---|---|---|---|---|---|
+| 2fsk worst err | **25 000 Hz** | **25 000 Hz** | 54.9 | 30.1 | 18.3 | 18.5 |
+| 4fsk worst err | **25 000 Hz** | **25 000 Hz** | 84.5 | 47.1 | 28.8 | 31.6 |
+| 8psk worst err | **9 675 Hz** (7/7) | **3 482 Hz** (2/7) | 0.0 | 0.0 | 0.0 | 0.0 |
+
+Every one of the 28 FSK files at 4 and 8 dB reports the identical
+`symbol_rate/2` alias - the exact shape of the bug you just fixed.
+**`estimate_cfo_fsk` is never called on them.** `estimate()` routes on `std(|x|)/mean(|x|) < 0.25`, and I measured
+that ratio per file:
+
+| SNR | 4 dB | 8 dB | 10 dB | 13 dB | 15 dB | 20 dB |
+|---|---|---|---|---|---|---|
+| FSK envelope CV | 0.377 | 0.264 | **0.215** | 0.155 | 0.125 | 0.070 |
+| routed as | linear | linear | constant-envelope | c-e | c-e | c-e |
+
+**That statistic is measuring SNR, not envelope structure.** For a
+constant-envelope carrier in AWGN the envelope CV is ~1/sqrt(2*SNR): predicted
+0.224 at 10 dB against 0.215 measured, 0.281 at 8 dB against 0.264. The
+modulation contributes nothing to it. So the threshold 0.25 is in effect
+"SNR > 9 dB", the fix passes at 10 dB by **0.035 of margin in a quantity that
+moves monotonically with noise**, and when it flips there is no failure signal
+at all - just a confident 25 kHz. My chain survives it because
+`search.receive_best` always carries `cfo = 0` as a candidate, but an
+orchestrator that trusts `S2Result.cfo_hz` loses 4-FSK below 10 dB exactly as
+it did last week.
+
+Not filed as a defect in your column because 10 dB may well be the declared S2
+floor - but if it is, that floor belongs in the report next to the 168/168, and
+the routing statistic should not be the thing that enforces it silently.
+
+### 2. THE REAL CCSDS ORDER NOW PEELS. `zoo/ccsds.py` was worth asking for.
+
+`bcd0a88` gave me a generator built to the standard order. Run my 5 Sep chain
+against it unchanged, depths 1 and 4:
+
+    status = partial | stages = conv, viterbi | G = (0o171, 0o133) correct
+    reason = "no de-interleaving produced a Reed-Solomon codeword"
+
+**Two of four layers.** A true statement about a search that could not have
+succeeded. Both assumptions broke at once, and neither is tuning:
+
+- the randomiser is INSIDE the convolutional code, so it survives Viterbi.
+  `recover_scrambler` cannot touch it - it needs a parity check to take a
+  syndrome against, and the only code left after Viterbi is RS, whose
+  constraints sit at L = 2040, far past anything the sweep reaches.
+- the interleaver permutes BYTES. No bit-level (depth, width) can undo it.
+
+Fixed with two bounded additions, both judged by the RS decoder and nothing
+else. `CCSDSSymbolInterleaver` is a fourth registered family whose
+`rank_signature()` returns **0** - "the sweep will not find this one" - because
+returning a row length there would be a number the orchestrator would act on
+and it would be false. `STANDARD_RANDOMISERS` is the same move
+`rs_code.STANDARD_PROFILES` already makes: try the published profiles of the
+declared envelope, decline anything that matches none. The null hypothesis is
+tried first, so the 5 Sep path pays about one extra confirmation and cannot
+change the answer it already gave.
+
+**Result - every standard depth, blind, payload byte-exact:**
+
+| depth I | 1 | 2 | 3 | 4 | 5 | 8 |
+|---|---|---|---|---|---|---|
+| status | ok | ok | ok | ok | ok | ok |
+| interleaver found | - (I=1 identity) | 2 | 3 | 4 | 5 | 8 |
+| payload | exact | exact | exact | exact | exact | exact |
+
+`reports/ccsds_chain.md` (extended), `tests/unit/test_ccsds_real_order.py`
+(16 tests, 84 s). Both new primitives are pinned against **Dheeraj's**
+implementation rather than a second copy of my own assumptions:
+`symbol_interleave` reproduces `zoo.ccsds.ccsds_interleave` bit for bit at all
+six depths, and `additive_keystream` reproduces `zoo.bits_only.lfsr_scramble`
+bit for bit with its period **measured** at 255 rather than assumed from the
+degree - this repo has already shipped a polynomial mislabelled as
+maximal-length once.
+
+I also corrected the 5 Sep report rather than leaving it to be misread: its
+table is now explicitly labelled as the Command Center's order, because "the
+concatenated CCSDS profile decodes byte-exact" was true of a chain that is not
+the standard's.
+
+### 3. Merge break, fixed. `reports/end_to_end_study.py`
+
+`anvith/s3-robustness` deleted `tests/fixtures/rf_channel.py` as promised.
+Only one file still imported it - the tests on `main` were already ported -
+and it is now on `tests.fixtures.corpus.synth`. **The channel implementation
+changed underneath it**, so `reports/end_to_end.md`'s numbers were measured by
+code that no longer exists and have to be re-measured before they are quoted
+again. Smoke-tested at 16 dB seed 1: raw BER 0.0, recovered, interleaver
+correct, text readable, printable 0.9993 against the 1.000 previously
+published - a small delta, and exactly why the re-run is not optional.
+
+### 4. MY 5 SEP FIX PUT A 268-SECOND FUNCTION IN THE CHAIN AND EVERY TEST PASSED
+
+Found by reading the suite's `--durations`, not by a failure. The scrambled
+CCSDS arm took **364 s** tonight against the **55.8 s** in my own report. First
+two hypotheses were both wrong and both worth recording: it is not my 6 Sep
+change (measured in isolation, `_peel_symbol_layers` costs **2.4 s**), and it is
+not the machine (the unscrambled arm is 50 s tonight against 54.2 s published -
+unchanged).
+
+It is `b431082`, my last commit of 5 September. Moving `SCREEN_ROW_LEN` from 14
+to 60 was **right** - 14 is the span of rate-1/2 K=7 and nothing else, so the
+screen was rejecting most of the declared envelope. But the condition on the
+other side of it was still `deficiency > 0`, and at L=60 that is true of
+everything:
+
+| `SCREEN_ROW_LEN` | shifts searched | passing the screen |
+|---|---|---|
+| 14 (before the fix) | 255 | **1** |
+| 60 (after the fix) | 255 | **255** |
+
+Every shift then paid for a full `blind_recover`. **`find_scrambler_period_blind`
+alone: 268 s - past the 90 s core-lock budget for the whole seven-stage
+analysis, in one function.** I shipped that last night and wrote a commit
+message about correctness without timing what I had done.
+
+Why no better row length exists: the sum of two codewords is a codeword at
+EVERY shift that is a whole number of symbols - that is the premise the method
+rests on - so code structure is present at every shift and only its SIZE picks
+out the true one. At L=14 the code's deficiency is 1 and the residual scrambler
+buries it; the old screen worked by sitting exactly on that margin. Measured at
+L=60: **254 wrong shifts all at deficiency 16, the true shift at 24, zero
+overlap.**
+
+So the screen now **ranks instead of thresholding** - sweep all 255
+deficiencies (~0.1 s), take the median as the floor, and pay for a recovery
+only above it, capped at 6 candidates. No knowledge of n or m, the expensive
+oracle still makes every claim, and a stream with no scrambler gives a flat
+profile and a cheap honest no.
+
+| | before | after |
+|---|---|---|
+| `find_scrambler_period_blind` | 268.1 s | **5.1 s** |
+| scrambled arm end to end | 364.3 s | **48.7 s** |
+| `test_ccsds_chain.py` | 640 s+ | **205 s** |
+| answer | shift 510, `(0o171, 0o133)` | **identical** |
+
+`b431082`'s correctness fix is kept in full - still L=60, still covers every
+code in the envelope.
+
+**The guard that was missing is now there.**
+`test_the_scrambler_screen_actually_screens` asserts the search returns 510 AND
+finishes inside 60 s. The screen had a test for the half of its job that fails
+loudly - "never a cheap yes" - and none for the half that fails silently. A
+screen that admits everything is not a screen, and a green suite will not tell
+you. Only the clock knew. Fourth time this week that a number I did not measure
+was a number I had wrong.
+
+**This also means the OneDrive note below did NOT cause the 364 s** - I checked
+that first and it was the wrong tree. Both findings are real and they are
+independent.
+
+### 4b. DHERAJ - THE CORPUS RANDOMISER IS NOT THE CCSDS RANDOMISER
+
+Checked the constant against the blue book rather than against our own code.
+`zoo/bits_only.py` has `CCSDS_SCRAMBLER = 0o435` under a comment naming
+h(x) = x^8+x^7+x^5+x^3+1. Those are different polynomials:
+
+    0o435 = 285 = 0x11D = x^8 + x^4 + x^3 + x^2 + 1   <- RS GF(256) field poly
+    0o651 = 425 = 0x1A9 = x^8 + x^7 + x^5 + x^3 + 1   <- CCSDS 131.0-B
+
+The reciprocal of 0o435 is 0o561, so no convention reconciles them. 0x11D is
+the Reed-Solomon field polynomial - an extremely easy thing to reach for while
+writing an RS-and-randomiser generator.
+
+**Mislabel, not malfunction.** Both are primitive of degree 8 - I measured both
+periods at 255 - so the corpus is a valid additive scrambler, self-consistent
+between your generator and my receiver, and no recovery number moves.
+
+**But I had copied the constant into `STANDARD_RANDOMISERS` without checking
+it**, and that table exists precisely to catch a REAL downlink. A standard-
+profiles table whose standard entry is not the standard declines the one stream
+it was written for. Mine carried that error for about an hour today. Both
+polynomials are now in the table, blue book first, pinned by a test that
+asserts the tap sets explicitly.
+
+Your call which way to fix it: correct the comment (cheap, nothing moves) or
+correct the constant (regenerate `zoo/corpus/ccsds/` and re-measure anything
+against it). My chain works either way. What should not survive is a corpus
+file labelled CCSDS-conformant that is not - that is the exact claim I spent
+5 Sep being careful *not* to make about my own fixture.
+
+**ANSWERED 7 SEP - `9b4c524` corrected the CONSTANT and regenerated the
+corpus.** `zoo.bits_only.CCSDS_SCRAMBLER` is now 0o651, so the generator and
+the blue book agree and the corpus is CCSDS-conformant on this layer for real.
+My receiver follows it: `CORPUS_RANDOMISER` is renamed `LEGACY_ZOO_RANDOMISER`
+and demoted in `STANDARD_RANDOMISERS` to what it actually is - not a standard,
+the RS field polynomial, carried only so a pre-`9b4c524` capture still
+descrambles instead of reading as noise. Tried last, RS still the judge.
+
+**The pin did its job.** `test_known_randomiser_matches_the_generators_lfsr`
+asserted `CORPUS_RANDOMISER == CCSDS_SCRAMBLER` against Dheeraj's live constant
+rather than a second copy of my own, so the change surfaced as a red test on
+merge (`assert 285 == 425`) instead of as a silent descramble-to-noise. That
+was the whole point of pinning against their implementation, and it is the
+first time this week a cross-lane change announced itself.
+
+Dheeraj also took the `.gitattributes` line in the same commit, so my version
+of it was dropped in the merge in favour of theirs - same rule, `*.bin binary`,
+verified still `binary: set` after resolving.
+
+### 4c. AND FIXING THE MISLABEL BROKE MY GATE, FOR A REASON WORTH THE WHOLE DAY
+
+**The 6 Sep gate now xfails, and it is not the test that is wrong.** Merging
+`9b4c524` turned `test_the_real_transmit_order_peels_to_a_byte_exact_payload`
+red at both depths, with the worst possible shape:
+
+    status = ok    stages = conv, viterbi, reed-solomon
+    rs_params = RSParams(n=255, k=223, offset=0, blocks_checked=8,
+                         errata_rate=0.0)
+    printable_fraction = 0.3957        <- garbage
+    payload == expected : False
+
+Eight blocks, offset 0, **zero corrections** - the strongest confidence signal
+the RS layer can produce - on a payload that is wrong. `derandomise` is absent
+from `stages`: the chain accepted the NO-RANDOMISER hypothesis and never tried
+one.
+
+**Root cause, measured, and it is structural rather than bad luck.** The CCSDS
+randomiser is an LFSR of period 255 BITS. An RS(255,223) block is 255 bytes =
+2040 bits = **exactly eight whole periods**, so every codeword is XORed with the
+same 255-byte pattern K. I tested K itself:
+
+| keystream | K as an RS(255,223) block |
+|---|---|
+| `0o651`, the real CCSDS one | **decodes, errata = 0 - K IS a codeword** |
+| `0o435`, the old mislabel | rejects |
+
+RS is linear over GF(256). If K is a codeword then for any codeword C,
+**C + K is a codeword, exactly.** So "RS decoded every block at errata_rate
+0.0" carries *no information whatsoever* about whether the randomiser came off.
+The randomiser maps the code onto itself.
+
+**This kills the premise I built 6 Sep on.** I wrote that both new primitives
+were "judged by the RS decoder and nothing else". For the real standard's
+randomiser that judge is blind, and reordering the hypotheses does not help:
+applying the randomiser to an un-randomised stream also yields codewords, so
+the ambiguity is symmetric. **Only the payload can separate them.**
+
+And the 6 Sep gate passed only because `0o435` happened to break the code. I
+was being marked by an examiner who could not read - which is exactly the
+"green suite tells you nothing" failure I wrote up twice this week, arriving a
+third time in a form no timing check would have caught.
+
+Pinned by `test_the_ccsds_randomiser_is_invisible_to_the_reed_solomon_decoder`
+(passing - it asserts the property in both directions) and the gate is
+`xfail(strict=True)` so it cannot be quietly declared fixed.
+
+**FIXED, and the fix is both of the options I was weighing, because either one
+alone reproduces the bug in a new costume.** A payload discriminator on its own
+answers the random-payload case with no evidence to answer from - confident
+garbage again, just chosen differently. "Always ambiguous" on its own throws
+away an answer the evidence does support and loses the blind-in/message-out
+demo. So:
+
+1. `_peel_*` now return **every** surviving randomiser instead of the first.
+   First-accept was the actual defect; RS was never able to rank them.
+2. `_resolve_randomiser` decides on the PAYLOAD, and only when the evidence is
+   decisive. RS acceptance stays a hard necessary condition - the payload never
+   admits anything, it only chooses among what RS already accepted.
+3. When the evidence ties, the chain returns `partial` with
+   `randomiser_ambiguous=True` and both candidates named. It never guesses.
+
+**The measure is byte entropy, not the printable fraction this repo reaches for
+elsewhere, and that choice is the point.** Printability asks "is this text",
+which a real downlink often is not. Entropy asks "did removing this layer expose
+structure or destroy it" - and on a payload that was random to begin with it
+CANNOT separate the hypotheses, so it ties and forces the honest answer instead
+of inventing one. Measured, both depths:
+
+| payload | `ccsds-131.0-B` | no randomiser | margin | result |
+|---|---|---|---|---|
+| text | **4.07** b/byte | 7.90 | **3.83** | resolved, payload byte-exact |
+| random | 7.89 | 7.88 | **0.01** | `partial`, declined |
+
+Threshold `PAYLOAD_ENTROPY_MARGIN = 1.0` b/byte sits ~380x clear of the tie and
+~4x clear of the decision, so it is not balanced on a margin the way the L=14
+scrambler screen was. Both depths peel byte-exact again, depth 4 still recovers
+the interleaver, and `test_a_random_payload_is_declined_rather_than_guessed`
+pins the half that must fail.
+
+**Known limit, stated rather than discovered later: a real downlink whose
+payload is compressed or encrypted will tie, and this chain will return
+`partial` on it.** That is correct - the information is genuinely not in the
+stream - but it means the randomiser cannot be settled blind for such a mission.
+CCSDS 131.0-B mandates the randomiser, so the profile itself is the missing
+prior; wiring that in is a deliberate "assume the standard" step and I have not
+taken it unilaterally. **DHERAJ / NAIDHRUV: that is the open question, not the
+correctness of the chain.**
+
+Everything else on the branch was unaffected throughout: the symbol interleaver,
+the scrambler screen ranking, all six depths, and the 268 s -> 5.1 s fix.
+
+**And one line of `.gitattributes`, because it is the autocrlf hole again.**
+Your fix covers `*.wav`, `*.npy` and the three `models/` files. It does not
+cover `*.bin`, and the new corpus ships eight `.payload.bin`:
+
+    git check-attr text binary -- zoo/corpus/ccsds/...payload.bin
+    text: unspecified   binary: unspecified
+
+so git falls back to the content heuristic, and those files are pure ASCII with
+**zero NUL bytes** - it will call them text. **Nothing is corrupted today**: I
+checked all eight against their blobs and all match, because they also contain
+zero newline bytes, so the conversion is a no-op. But `payload_text` is
+caller-supplied and the first payload with a newline in it gets mangled on
+every Windows checkout - the exact failure mode `models/classifier.txt` already
+cost us. `*.bin binary` closes it.
+
+### 5. NAIDHRUV - THE SERVICE NEVER REGISTERS THE PLUG-INS. S3 AND S5 CANNOT RUN.
+
+Audited `naidhruv/integration` (a9602d6) tonight because the core-lock gate
+needs the orchestrator and it has never been run against current `main`. This
+is the most severe thing in the repo right now and it fails **silently**.
+
+The registry is populated by import side-effect - that is my design and it is
+in `registry/protocols.py`: `register_modulation()` runs when
+`pipeline.s3_receive` is imported, `register_code()` when
+`pipeline.s5_decode.conv_code` and `rs_code` are. Grepped every `.py` in his
+`service/` and `eval/`; there are exactly four pipeline imports:
+
+    orchestrator.py:87   pipeline.s0_ingest.ingest
+    orchestrator.py:95   pipeline.s1_detect.detect
+    orchestrator.py:125  pipeline.s4_recover.rank_collapse.blind_recover
+    orchestrator.py:133  pipeline.s6_frame.payload.extract_text
+
+None of them registers a modulation or a code. Reproduced with his exact import
+set:
+
+    at service start / S3 time : {'modulations': 0, 'interleavers': 0, 'codes': 0}
+    after his lazy S4 import   : {'modulations': 0, 'interleavers': 4, 'codes': 0}
+
+- `orchestrator.py:675` `MODULATIONS.get(scheme)` -> None -> **S3 never runs**
+- `orchestrator.py:725` `CODES.get("conv")` -> None -> **S5 never runs**
+- `main.py` `GET /registry` -> **0 / 0 / 0**, and that is the endpoint the
+  31 Aug gate reads. It would report an empty system while every unit test in
+  the repo passes, because the tests import the plug-in modules directly and
+  the service does not.
+
+Four import lines fix it. What matters more is the assertion after them: a
+service whose registry reports zero should **refuse to start**. This is exactly
+the failure class I built the registration-time protocol check for - "a plug-in
+missing a method should fail when the module is imported, not three stages into
+an analysis in front of a judge" - and it walked straight past it, because
+nothing was imported at all.
+
+**His branch is also 22 commits behind `main`** (base `c3ba631`, 4 Sep 17:09).
+It predates both S2 CFO fixes, all of Anvith's `lockcheck.py` and `search.py`,
+Dheeraj's classifier fix and the CCSDS corpus, and my 4-6 Sep work.
+
+**And `orchestrator.py:658` trusts S2's single CFO** and calls
+`plugin.receive()` directly rather than `receive_best`, which is the "any
+orchestrator that trusts S2 loses 4-FSK" case I wrote on 5 Sep. `search.py`
+postdates his branch point so this is staleness, not an oversight - but it is
+the call to make on the rebase. Minor, same file: `orchestrator.py:114` imports
+`tests.fixtures.local_s2`, deleted on `main` - verified `ImportError`, so that
+fallback is dead.
+
+### 6. ANVITH - I AUDITED YOUR LANE AND FOUND NOTHING, WHICH IS ALSO A RESULT
+
+Recording it so "no finding" is distinguishable from "not checked".
+`S3Result.as_stage_result()` matches Naidhruv's `contracts.StageResult` shape
+exactly, and the status vocabularies line up - S3 emits
+`ok | low_confidence | failed`, his `StageStatus` carries those plus
+`out_of_envelope`. No validation break at the seam. `receive_best` is in
+`pipeline.s3_receive.__all__`, so it is discoverable and the orchestrator's not
+using it is Naidhruv's staleness rather than a discoverability problem.
+
+The gap I would prioritise is his own declared one: 16-QAM and FSK have not
+been taken through to S4, while we claim six modulations end to end and the
+junction study covers three.
+
+### Still open, stated plainly
+
+- **The RF arm of the CCSDS corpus is untouched, and it is mine.** The eight
+  WAVs in `zoo/corpus/ccsds/` have not been driven from the waveform. Dheeraj's
+  note on `bcd0a88` says a full RS decode through the real channel needs a
+  byte-alignment search across a non-conv-aligned offset from the RRC filter's
+  edge transients. That is frame synchronisation, it is the same gap as the
+  absent sync marker, and it is the next thing.
+- **The randomiser phase is assumed to be 0.** Period 255 is coprime with both
+  the 8-bit symbol and the rate-1/2 code, so a capture not starting on the
+  randomiser's first bit descrambles to noise. Holds here only because the
+  convolutional encoder starts on that bit.
+- **`tests/fixtures/local_zoo.py` is still alive and is now overdue.** My own
+  standing instruction in `docs/HANDOFF.md` is to delete it the moment the zoo
+  lands, and the zoo has now landed in full - including the CCSDS profile that
+  was its last excuse. Counted rather than estimated: **12 test files, 7
+  studies, and one pipeline module**. The two generators are genuinely
+  independent implementations - neither imports the other, only comments
+  reference across - which is exactly the two-sources-of-truth risk I wrote
+  that instruction about. Not done today: it is a day of work with real
+  coverage at stake, and it should be a decision rather than a drive-by.
+- **`pipeline/s4_recover/cli.py:167` imports `tests.fixtures.local_zoo`**, and
+  that one is not just a cleanup item. It is shipping pipeline code reaching
+  into `tests/`, on the `--demo` path - which is both the plan's "if only 48
+  hours remain" floor AND the container's default `CMD`. It works today:
+  `.dockerignore` does not exclude `tests/`, so `COPY . .` carries the fixture
+  into the image. But it means **deleting `local_zoo.py` breaks the image's
+  default command**, and the two jobs have to be done together.
+
+  I started to point it at `zoo.bits_only` and stopped, because it is not the
+  small change it looks like. `zoo.bits_only.make_stream` has **no
+  `payload_text` and no `mean_burst`**, and its `Truth` carries the interleaver
+  as a nested dict rather than `.period` / `.depth` / `.width`. So the port
+  either drops `--text` - which is the "blind in, message out" demo, the one
+  in the pitch - and `--burst`, or it needs those two parameters added to
+  Dheeraj's generator first. **DHERAJ: that is the ask.** Two keyword arguments
+  on `make_stream`, and then `local_zoo` has nothing left that the zoo cannot
+  do. Until then the CLI keeps its `tests/` import and it is written down here
+  rather than discovered on 8 September.
+
+- **MOVING THE REPO OFF ONEDRIVE DID NOT STOP ONEDRIVE, and this affects
+  tomorrow's timed gate.** Measured tonight while the suite was running:
+  OneDrive.exe burned **19.0 CPU-seconds in a 20-second window** - a full core,
+  continuously - against pytest's own 19.7 in the same window. It is matching
+  the test suite 1:1. Cumulative CPU on the process was **158,313 s**, against
+  the 83,600 s recorded in HANDOFF on 4 September. And the suite itself
+  averaged only ~17 % of one core over 37 minutes wall, so it is not CPU-bound;
+  it is waiting.
+
+  I cannot prove the churn is the two stale copies - I did not isolate it, and
+  a `du` over them did not finish in five minutes, which is its own data point.
+  What is certain is that HANDOFF says to delete `OneDrive\\Desktop\\raaya` and
+  `OneDrive\\Desktop\\SIH` once `C:\\dev\\raaya` is trusted, both are still
+  there, and **the core-lock gate is "under 90 s, twice consecutively"** - which
+  cannot be measured honestly on a machine in this state, repo location
+  notwithstanding. My own fault in part: I ran the old SIH suite once tonight
+  before finding the live clone, which wrote `.pytest_cache` into the synced
+  folder. Deleting the two copies is a destructive step and I have not taken
+  it.
+
+**NAIDHRUV - one thing for the 6 Sep clean rebuild, measured not guessed.** The
+Docker build context is **124 MB, of which 113 MB is `zoo/corpus/`** (93 MB rf,
+8.3 MB the new ccsds files) plus 5.5 MB of `models/` training CSVs. None of it
+is needed at runtime - `models/classifier.txt` is, the datasets are not, and
+the corpus is test input. That is 91 % of the context shipped to the daemon and
+baked into a layer on every build. Your call and your file; I have not touched
+it, because excluding `zoo/` would break the `--demo` CMD above and the two
+decisions are the same decision.
 
 **Blocked on:** nothing.
 

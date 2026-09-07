@@ -164,18 +164,44 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     if args.demo:
-        from tests.fixtures.local_zoo import make_stream
+        # zoo.bits_only, NOT tests.fixtures.local_zoo. This is shipping code on
+        # the container's default CMD, and it was reaching into tests/ - which
+        # worked only because .dockerignore does not exclude tests/, and which
+        # made deleting the fixture break the image. The port was blocked until
+        # 9b4c524 added payload_text and mean_burst to the zoo's generator;
+        # they are the last two things the fixture could do that it could not.
+        from zoo.bits_only import make_stream
         msg = ("RAAYA SIH26147 -- blind recovery of modulation, interleaver and "
                "code. Nothing about this file was supplied in advance. ")
+        # start_offset=0 KEEPS THIS DEMO EXACTLY AS IT WAS, and is not a
+        # convenience. `tests.fixtures.local_zoo.make_stream` never applied a
+        # start offset; `zoo.bits_only.make_stream` defaults to a RANDOM one
+        # (start_offset=None -> rng.integers(0, period)). Porting without
+        # pinning it would have silently changed what --demo generates.
+        #
+        # It matters only for --text, and the reason is worth stating: a
+        # REPEATING text payload plus a NON-ZERO start offset defeats the rank
+        # collapse. Measured, depth 8 width 12, offsets 0/1/2/4/12/16/24/48/
+        # 81/95: random payload recovers 10 of 10 at every offset, repeating
+        # text recovers 1 of 10 - only offset 0. Neither condition alone does
+        # it; the source structure and the misalignment have to arrive
+        # together. Pinned by
+        # tests/unit/test_structured_source.py::
+        #   test_a_structured_source_at_a_nonzero_offset_is_a_known_gap
+        # which is xfail(strict=True), so this cannot be quietly "fixed" by
+        # accident or quietly regress further.
         bits, truth = make_stream(80_000, args.depth, args.width, ber=args.ber,
                                   seed=0, mean_burst=args.burst,
-                                  scramble=args.scramble,
+                                  scramble=args.scramble, start_offset=0,
                                   payload_text=msg if args.text else None)
         print("DEMO - generated locally, truth withheld from the recovery below")
-        print("truth             : period=%d depth=%d width=%d G=(0o171, 0o133) "
+        # zoo's Truth carries the interleaver as a nested dict rather than as
+        # .period / .depth / .width, which is the only shape difference.
+        il = truth.interleaver or {}
+        print("truth             : period=%s depth=%s width=%s G=(0o171, 0o133) "
               "BER=%.4f burst=%g scrambled=%s"
-              % (truth.period, truth.depth, truth.width, truth.injected_ber,
-                 truth.mean_burst, bool(args.scramble)))
+              % (il.get("period"), il.get("depth"), il.get("width"),
+                 truth.injected_ber, truth.mean_burst, bool(args.scramble)))
         print()
         return report(bits, args.statistical)
 

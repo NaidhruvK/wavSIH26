@@ -1,7 +1,7 @@
 # Handoff — Nehal's stream (S4–S6)
 
-**Started 31 August 2026, kept current. Last updated 2 September, end of
-day 5 of 12. For whoever picks this up next.**
+**Started 31 August 2026, kept current. Last updated 4 September, end of
+day 7 of 12. For whoever picks this up next.**
 
 Read this first, then crawl the three planning artifacts listed below. This
 document says what exists and what is true *right now*; the artifacts say what
@@ -56,14 +56,38 @@ Ignore it.
 ## 3. Where the code lives
 
 - **Repo:** `https://github.com/NaidhruvK/wavSIH26.git`
-- **Local clone:** `C:\Users\aneha\OneDrive\Desktop\raaya` — work here
-- **`main` is current as of 2 Sep**, carrying S4, S5, S6, the three
-  interleaver families, the burst-error study and the Dockerfile. Everything up
-  to `s6-payload` was merged on 2 Sep; the branches are deleted.
-- **One branch is open: `nehal/reed-solomon`** — the 2 Sep gate (RS registered,
-  20/20 per code). Not yet merged.
+- **Local clone:** `C:\dev\raaya` — work here.
+
+  **NEVER PUT THIS REPO UNDER ONEDRIVE.** It lived at
+  `C:\Users\aneha\OneDrive\Desktop\raaya` until 4 September and was moved for
+  cause. OneDrive syncs every test write, every `.pyc` and every regenerated
+  report, and it becomes the top process on the machine: measured at 83,600
+  CPU-seconds while the suite ran. The damage lands on the TEST SUITE, which
+  does thousands of small writes — the full suite went 18 minutes to 60, and
+  `test_conv_exact_on_twenty_streams`, which baselines at 218–296 s, took
+  **17,790 s** (4 h 57 m) in one run. Re-run in `C:\dev` it takes 279 s and
+  239 s on consecutive runs.
+
+  The 6 September core-lock gate is *"under 90 s, twice consecutively"*. That
+  cannot be measured on a synced folder, and a mid-write sync can also lock or
+  corrupt a file during a timed run.
+
+  Worth knowing what was NOT affected: the `reports/` studies are CPU-bound and
+  write little, so their per-file timings were the same in both locations
+  (zoo_rf worst 27.6 s vs 28.0 s; blind chain 16-QAM 75.1 s vs 74.4 s). No
+  published study number changed. Only suite timings were untrustworthy.
+- **`main` is current as of 4 Sep at `093f431`**, carrying S4, S5, S6, the
+  three interleaver families, the burst-error study, the Dockerfile, Anvith's
+  S3 receiver chain and his 4 Sep pinning/roll-off work.
+- **One branch is open: `nehal/candidate-periods`** — the 4 Sep column
+  (hypothesis fallback across the registry product) plus the structured-source
+  guards and the soft-path fix. Rebased onto `093f431`, 385 passed / 4 skipped
+  across `tests/unit` + `tests/contract`. Not yet merged.
 - **Start your own branch** for new work — `nehal/<feature>`. Never commit to
   `main` directly, even though nothing currently stops you (see section 5).
+- **Two stale copies remain under OneDrive and should be deleted** once you
+  are satisfied with `C:\dev\raaya`: `OneDrive\Desktop\raaya` (the pre-move
+  clone, fully pushed — nothing unique in it) and the one below.
 - **`C:\Users\aneha\OneDrive\Desktop\SIH`** is the pre-repo working copy,
   fully superseded. It should be deleted — two copies is how they diverge, and
   the IDE has already been observed opening the stale one.
@@ -165,20 +189,74 @@ that bursts make *decoding* harder, not easier.
 
 No method has ever returned a confidently wrong answer. They fail to *nothing*.
 
-**Test suite:** 225 tests, ~19 min.
+**S4-S6 THROUGH A REAL RECEIVER — the 4 Sep state.** `reports/end_to_end.md`.
+Real modulator, real channel, blind S3, blind S4, Viterbi, text out.
 
-**That runtime is a problem and it is new.** RS `blind_recover` searches up
-to 255 byte alignments x 3 profiles, RS-decoding 24 blocks each, and that
-alone is ~12 min of the suite. It needs a cheap pre-filter on alignment
-before the 6 Sep clean-rebuild gate, or it will not fit the 90 s
-per-analysis budget either. Logged, not fixed.
+| | 3 Sep | 4 Sep |
+|---|---|---|
+| interleaver + code recovered | 15/36 | **30/36** |
+| text arm recovered | 0/18 | **15/18** |
+| text arm printing the message | 0/18 | **15/18**, printable 1.000 |
+
+Median 24 s per file end to end, max 50 s. **The readable-text demo now works
+on a received signal, not only on a zoo file** — that sentence was false until
+4 Sep and the report said so plainly.
+
+**Say "everything from the matched filter onward is blind", NOT "nothing was
+supplied".** The study hands S3 the modulation family and the symbol rate,
+because both are S2's job and S2 does not exist. And `rf_channel.py` is a
+channel we wrote — AWGN, one constant CFO, one fixed timing offset, no
+multipath or fading. **No off-air signal has ever been through this pipeline**
+(risk #8). Full breakdown of blind-vs-supplied in `reports/end_to_end.md`.
+
+The 3 Sep report blamed the 0/18 on `detect_signature` taking the smallest
+collapse. **That diagnosis was wrong** — it returns the true period 96 on every
+rotation of every file in that arm. Three defects were stacked behind one
+symptom; all three are fixed and all three are in section 6.
+
+**Test suite:** 336 unit + 53 contract, 23 min for both.
+
+**That runtime was a problem and it is FIXED (4 Sep).** RS `blind_recover`
+searched up to 255 byte alignments x 3 profiles, RS-decoding 24 blocks each,
+which was ~12 min of the suite and would not have fitted the 90 s
+per-analysis budget either.
+
+`blind_recover` accepts an alignment only at decoded fraction 1.0, so
+`_try_profile` now abandons an alignment on its FIRST failing block instead
+of grinding through all 24 — a wrong alignment fails on block one essentially
+always. Behaviour-preserving for the one caller, and the accepting path never
+takes the exit, so the errata rate that ranks profiles is still measured over
+every block.
+
+| | before | after |
+|---|---|---|
+| `blind_recover`, true RS stream | — | **3.7 s** |
+| `blind_recover`, random data (worst case) | ~113 s | **1.8 s** |
+| `test_random_data_is_not_claimed_as_reed_solomon` | 112.9 s | **5.2 s** |
+| `test_rs_exact_on_twenty_streams` | 209.9 s | **52.3 s** |
+
+Pinned by `test_blind_recover_declines_random_data_quickly` (a wall clock, not
+a status) and `test_early_exit_agrees_with_the_full_sweep_on_what_matters`.
 
 ## 5. What is NOT done
 
 - **Framing is not implemented.** S6 has descrambling and payload
   extraction; there is no frame sync, no header/payload split, no ASM matching.
-- **No concatenated CCSDS chain yet** (5 Sep). RS and conv both exist and
-  are registered, but they have never been chained.
+- ~~No concatenated CCSDS chain yet~~ **DONE 5 Sep.** RS outer, block
+  interleaver, convolutional inner and a randomiser, peeled blind and decoded
+  to byte-exact payload in both the scrambled and unscrambled arms - about
+  55 s. `pipeline/s6_frame/ccsds.py`, `reports/ccsds_chain.md`.
+
+  Two findings from it that generalise beyond CCSDS. **An interleaver sitting
+  on a Reed-Solomon codeword is invisible to the rank test** - a permutation
+  preserves rank over GF(2), and RS constraints live at L=2040, far past
+  MAX_PERIOD. It is only visible in this repo's earlier studies because those
+  interleaved a CONVOLUTIONAL codeword, whose constraints are local. Find it
+  functionally, with the RS decoder as judge, never off the curve. And **the
+  scrambler chicken-and-egg is breakable**: `r[n] XOR r[n+P]` cancels an
+  additive scrambler at any shift P that is a multiple of its period and the
+  symbol size, leaving the XOR of two codewords, so P can be found with the
+  rank test alone and no parity check.
 - **RS beyond its correction limit declines rather than decoding**, which is
   correct: t = 16 symbols per 255-byte block, so ~0.5 % BER is the ceiling.
   Weak profiles (255,247) and (255,251) were REMOVED from the search after
@@ -201,13 +279,32 @@ per-analysis budget either. Logged, not fixed.
   fallback handles the *code*, not the factorisation — a dozen statistical
   searches per file does not fit the time budget. Deferred to the Oct–Nov
   robustness window, deliberately.
-- **Zero integration.** Nothing has touched another stage. No S3 LLRs have ever
-  reached S4. The riskiest junction in the project (3 Sep, real bursty errors)
-  is untested by definition.
-- **Everything is measured against `tests/fixtures/local_zoo.py`,** a temporary
-  stand-in for Dheeraj's zoo. **Delete it the moment the real zoo lands** and
-  re-run the gates against the real corpus. Two sources of ground truth must
-  not coexist.
+- **Integration with S3 is done and measured** (3-4 Sep), see the table in
+  section 4 and `reports/end_to_end.md`. Anvith's `tests/contract/`
+  `test_s3_s4_s5_chain.py` drives modulate -> channel -> S3 -> S4 -> S5 ->
+  source bits and asserts exactness, which is what actually settles the LLR
+  sign convention. Nothing has touched S0-S2 or the service.
+- **The gates now run against Dheeraj's real zoo** (`reports/zoo_gate.md`,
+  4 Sep). The corpus was verified structurally rather than trusted: every clean
+  file, de-interleaved at its stated offset with its stated parameters, is
+  annihilated exactly by the parity check of its stated generators.
+  `tests/fixtures/local_zoo.py` is **deliberately NOT deleted** - see the note
+  in section 6 - because `zoo/bits_only.py` has no `payload_text`, no
+  `mean_burst` and only block interleavers, so removing it would delete
+  coverage rather than duplication. It is demoted from ground truth to a
+  parametric generator; the gates are the corpus's job now.
+- **An interleaved stream carrying a SHORT REPEATING payload is refused, not
+  recovered**, and the reason is measured rather than assumed. Two things
+  defeat it. Its own periodicity collapses before the interleaver's (an
+  11-character payload collapses at L=44 against a true period of 96) — the
+  candidate walk handles that. But the block-boundary offset is chosen by
+  argmax of deficiency, and on a structured source that argmax carries **no
+  signal at all**: across three fixtures the true offset sits within ONE of
+  the maximum while ranking 39th, 59th and 71st of 96. Resolving it needs a
+  functional test per offset, which is a family search per offset, which does
+  not fit the 90 s budget. Deferred, with a test that fails loudly if it ever
+  improves on its own. Real telemetry has repeating frame headers, so this is
+  the gap most likely to matter on non-synthetic data.
 - **Nothing from the other three streams exists yet.** As of 2 Sep, `main`
   contains Naidhruv's `README.md` and `requirements.txt` and this stream's
   work, and nothing else — no stage contract, no orchestrator, no service, no
@@ -277,6 +374,96 @@ direct reading of an interleaved stream is also consistent under the one-sided
 test, and returning early claimed six interleaved streams as un-interleaved.
 Both routes now compete on shortest span.
 
+**A PERMUTATION MUST NOT CAST ITS INPUT.** Every function in
+`interleavers.py` began `np.asarray(bits, dtype=np.uint8)`. A permutation does
+not care what it is permuting, so the cast bought nothing and silently
+truncated every LLR handed to it — de-interleaving a real receiver's output
+returned an array of ZEROS, and Viterbi decoded zeros into zeros. This is the
+3 Sep `harden` bug one stage further along: that one was `blind_recover`
+assuming hard bits at its entry, this is the de-interleavers assuming them at
+theirs. It hid because the RECOVERY path hard-slices by design, so only the
+DECODE path was affected, and every test before 4 Sep de-interleaved zoo bits.
+`tests/contract/test_llr_contract.py` had carried the rule since 2 Sep — "an
+integer dtype destroys the soft information" — and asserted it of S3's output,
+never of anything consuming that output. Pinned by
+`test_deinterleave_preserves_soft_values`.
+
+**GUARDS BELONG AT THE EXIT, NOT IN A BRANCH.** Found twice on 4 Sep. Four
+paths could return `status=ok` on a structured source; each branch had its own
+guards and each was individually reasonable, but there was nowhere they all
+had to hold. `_finalise` is now that place and every return goes through it.
+The same day, a scrambled stream walked around the `K <= 9` composite guard by
+coming back through the INTERLEAVER path as `block(depth=1,width=32)` — depth 1
+is the identity permutation, so that was the direct reading wearing a hat,
+meeting a guard that only existed in the branch it did not take. Depth 1 is no
+longer offered as a candidate, and the composite guard moved to `_finalise`
+with the others.
+
+**DEFICIENCY CANNOT DECIDE — ONLY A FUNCTIONAL TEST CAN.** Third and fourth
+instances on 4 Sep, after the family one on 1 Sep. The smallest collapse is not
+always the interleaver's (`iter_signatures` walks candidates), and
+`recover_code_structure` took `deficient[0]` unconditionally so the walk could
+not help the direct path until `min_span` existed. The discriminator that
+finally worked is structural rather than a threshold: **a real code has a
+ONE-dimensional null space at its own span**, and the ASCII artefacts have 4, 7
+and 19. `parity_check_at_span` returns None for anything else.
+
+**SCREEN ROTATIONS CHEAPLY BEFORE PAYING FOR ANY OF THEM.** S3 emits one LLR
+array per unresolvable phase rotation - 2 for BPSK, 4 for QPSK, 8 for 8-PSK -
+and all but one are wrong BY CONSTRUCTION. Running `blind_recover` on each with
+the statistical fallback enabled spends 8 s proving a negative per rotation,
+which is the most expensive path on the least promising inputs: 8-PSK files
+were taking 70 s against a 90 s WHOLE-analysis budget. Screening with the
+fallback off and re-running only when screening found nothing took the worst
+file from 72.1 s to 32.3 s and the corpus from 746 s to 258 s **with every
+status unchanged on all 36 files**. Use
+`pipeline/s4_recover/rotations.recover_over_rotations()`; do not hand-roll the
+loop again.
+
+**S3'S `estimated_output_ber` PREDICTS WHETHER S4 CAN SUCCEED.** Measured over
+the 36-file RF corpus: every recovery had <= 1.5e-6, every failure >= 7.5e-5, a
+fifty-fold gap with nothing between. EVM does NOT separate them. Check it before
+paying for the search, and say so on the stage card rather than declining
+silently. 36 files on one channel model - a strong correlation, not a law.
+
+**A RATE-1/n CODE IS FULL RANK AT NON-MULTIPLES OF n, AND THAT IS A TEST.**
+Stated in this module's docstring since 29 August - "deficiency = L/2 - 6 at
+even L >= 14, zero at odd L" - and never enforced until 4 Sep, when an
+adversarial battery found six streams claiming `ok` with no code in them at
+all: all-ones, alternating 0101, a period-8 pattern, uncoded ASCII repeated
+short, the same interleaved, and a 70/30 biased coin. A degenerate stream is
+deficient EVERYWHERE and is annihilated by almost any check, so the residual
+test is vacuous on it. `code_signature_holds()` checks only lengths BELOW the
+span, and that bound is load-bearing: a structured source adds odd-length
+deficiency at and above its own period (a 2-character payload first collapses
+at L=31 against a span of 14), so checking the whole profile would reject
+exactly the streams the candidate walk exists to recover. See
+`tests/unit/test_adversarial_s4.py`.
+
+**A FALSE-POSITIVE TEST IS ONLY AS GOOD AS ITS INPUTS.** Every such test in
+this repo used UNIFORM random data, which is the case a rank test handles
+easily and correctly. The six false positives above were all DEGENERATE or
+PATTERNED, they all predate 3 September, and they survived a week of
+false-positive testing because nobody fed the module the easy-looking inputs
+that are actually hard. When adding a guard, add the adversarial input too.
+
+**A CLAIM MUST BE CHECKABLE, AND K IS BOUNDED ON BOTH SIDES.** `ok` requires an
+interleaver, or generators, or memory >= 2. `MIN_CODE_MEMORY = 2` is the lower
+half of the `K <= 9` guard that has existed since 1 Sep: a bare code claim is
+only made for 3 <= K <= 9. A memory-0 or memory-1 "code" is what a structured
+source looks like read as one, and the statistical fallback returned exactly
+that — "period=4, rate 1/2 K=2" at 0.59 — which then WON the shortest-span
+rotation ranking and cost the whole text arm.
+
+**POLARITY IS RESOLVED BY PRINTABILITY, AND ONLY WHEN THERE IS TEXT.** Risk #9,
+arriving in the register's own words. A coherent receiver cannot tell 0 deg
+from 180, so half of S3's rotations carry the stream inverted; the rank test is
+blind to inversion, so both recover identical parameters and both decode
+without complaint. `extract_text` reads both polarities and keeps the better,
+reporting which in `PayloadReport.inverted`. **For a random payload the two are
+equally plausible and nothing here can separate them** — that needs a sync
+marker, which is 7 Sep framing work.
+
 **The note below is partly superseded — the reasoning still holds for the
 other direction.**
 
@@ -333,10 +520,18 @@ the verification step, which the Day Clock compresses.
 and so is a good deal beyond it, off-plan: the realistic burst-error model,
 blind descrambling, and readable payload output.
 
-The immediate open items are the **2 September** column (Reed-Solomon
-(255,223) registered, and the LLR contract test with Anvith) and then the
-5 September concatenated CCSDS chain, which is blocked on the scrambled-stream
-problem in section 5.
+2, 3 and 4 September are complete. The immediate open items are, in order:
+
+1. **The RS runtime**, before the 6 Sep clean-rebuild gate. The fix is
+   identified and small — see section 5.
+2. **The 5 September concatenated CCSDS chain**, which is blocked on the
+   scrambled-stream problem in section 5.
+
+The 4 September column (hypothesis fallback across the registry product,
+bounded) is done: `iter_signatures` walks successive collapse periods,
+resuming the sweep so an ordinary file costs what it always did, bounded by 6
+candidates and a 12 s wall clock. Uncoded data produces no candidates at all,
+so the input that must stay cheap is untouched.
 
 Two standing jobs that are not on any day's list:
 
