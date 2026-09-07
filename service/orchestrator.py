@@ -584,17 +584,44 @@ def adapt_s6(raw: Any, elapsed_ms: float) -> StageResult:
         raw.elapsed_ms = elapsed_ms
         return raw
 
-    printable = float(getattr(raw, "printable_fraction", 0.0))
-    looks_like_text = bool(getattr(raw, "looks_like_text", False))
+    def _val(attr: str, default: Any) -> Any:
+        if isinstance(raw, dict):
+            return raw.get(attr, default)
+        return getattr(raw, attr, default)
+
+    printable = float(_val("printable_fraction", 0.0))
+    looks_like_text = bool(_val("looks_like_text", False))
+    n_bytes = int(_val("n_bytes", 0))
+    entropy = float(_val("entropy", 0.0))
+    has_header = bool(_val("has_header", False))
+    header_hex = str(_val("header_hex", ""))
+    header_entropy = float(_val("header_entropy", 0.0))
+    payload_entropy = float(_val("payload_entropy", 0.0))
+
+    payload_text_val = _val("payload_text", None)
+    if payload_text_val is None:
+        payload_text_val = _val("text", "")
+    payload_text = str(payload_text_val)
+    text = str(_val("text", payload_text))
+
+    values = {
+        "n_bytes": n_bytes,
+        "printable_fraction": printable,
+        "looks_like_text": looks_like_text,
+        "text": text,
+        "entropy": entropy,
+        "has_header": has_header,
+        "header_hex": header_hex,
+        "header_entropy": header_entropy,
+        "payload_entropy": payload_entropy,
+        "payload_text": payload_text,
+    }
+
     return StageResult(
         stage="s6_frame",
         status=StageStatus.OK,
         confidence=printable,
-        values={
-            "n_bytes": getattr(raw, "n_bytes", 0),
-            "printable_fraction": printable,
-            "looks_like_text": looks_like_text,
-        },
+        values=values,
         hypotheses=[
             Hypothesis(
                 value="ascii_text" if looks_like_text else "binary_data",
@@ -1014,11 +1041,25 @@ def orchestrate(
     else:
         verdict = "in_envelope"
 
+    def _s6_val(attr: str, default: Any) -> Any:
+        if isinstance(s6_raw, dict):
+            return s6_raw.get(attr, default)
+        return getattr(s6_raw, attr, default)
+
+    s6_payload_text = _s6_val("payload_text", None)
+    if s6_payload_text is None:
+        s6_payload_text = _s6_val("text", "")
+
     final_payload = {
-        "payload_text": getattr(s6_raw, "text", ""),
-        "printable_fraction": getattr(s6_raw, "printable_fraction", 0.0),
-        "looks_like_text": getattr(s6_raw, "looks_like_text", False),
+        "payload_text": str(s6_payload_text),
+        "printable_fraction": float(_s6_val("printable_fraction", 0.0)),
+        "looks_like_text": bool(_s6_val("looks_like_text", False)),
         "bits_count": len(decoded_bits) if decoded_bits is not None else 0,
+        "entropy": float(_s6_val("entropy", 0.0)),
+        "has_header": bool(_s6_val("has_header", False)),
+        "header_hex": str(_s6_val("header_hex", "")),
+        "header_entropy": float(_s6_val("header_entropy", 0.0)),
+        "payload_entropy": float(_s6_val("payload_entropy", 0.0)),
     }
 
     report = AnalysisReport(

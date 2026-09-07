@@ -251,6 +251,91 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(s6.stage, "s6_frame")
         self.assertEqual(s6.values["n_bytes"], 40)
         self.assertTrue(s6.values["looks_like_text"])
+        self.assertEqual(s6.values["payload_text"], "RAAYA TELEMETRY LOCK CONFIRMED")
+        self.assertEqual(s6.values["entropy"], 0.0)
+        self.assertFalse(s6.values["has_header"])
+        self.assertEqual(s6.values["header_hex"], "")
+        self.assertEqual(s6.values["header_entropy"], 0.0)
+        self.assertEqual(s6.values["payload_entropy"], 0.0)
+
+    def test_adapt_s6_with_framing_and_entropy(self):
+        """adapt_s6 forwards all six S6 framing and entropy fields to StageResult.values."""
+        class FramedReport:
+            n_bytes = 48
+            printable_fraction = 0.98
+            text = "\x1a\xcf\xfc\x1dTELEMETRY_PAYLOAD_VALID_2026"
+            looks_like_text = True
+            inverted = False
+            entropy = 3.82
+            has_header = True
+            header_hex = "1ACFFC1D"
+            header_entropy = 2.0
+            payload_entropy = 3.65
+            payload_text = "TELEMETRY_PAYLOAD_VALID_2026"
+
+        s6 = adapt_s6(FramedReport(), 42.0)
+        self.assertEqual(s6.stage, "s6_frame")
+        self.assertEqual(s6.status, StageStatus.OK)
+        self.assertEqual(s6.values["n_bytes"], 48)
+        self.assertAlmostEqual(s6.values["printable_fraction"], 0.98)
+        self.assertTrue(s6.values["looks_like_text"])
+        self.assertEqual(s6.values["text"], "\x1a\xcf\xfc\x1dTELEMETRY_PAYLOAD_VALID_2026")
+        self.assertAlmostEqual(s6.values["entropy"], 3.82)
+        self.assertTrue(s6.values["has_header"])
+        self.assertEqual(s6.values["header_hex"], "1ACFFC1D")
+        self.assertAlmostEqual(s6.values["header_entropy"], 2.0)
+        self.assertAlmostEqual(s6.values["payload_entropy"], 3.65)
+        self.assertEqual(s6.values["payload_text"], "TELEMETRY_PAYLOAD_VALID_2026")
+
+        # Verify no raw byte arrays are present
+        for k, v in s6.values.items():
+            self.assertNotIsInstance(v, (bytes, bytearray), f"Raw byte array found in values[{k}]")
+
+    def test_orchestration_final_exposes_s6_framing_and_entropy(self):
+        """AnalysisReport.final and S6 StageResult expose framing and entropy information."""
+        class FramedPayloadReport:
+            n_bytes = 36
+            printable_fraction = 1.0
+            text = "\x1a\xcf\xfc\x1dVALID_FRAMED_STREAM"
+            looks_like_text = True
+            inverted = False
+            entropy = 3.4
+            has_header = True
+            header_hex = "1ACFFC1D"
+            header_entropy = 2.0
+            payload_entropy = 3.1
+            payload_text = "VALID_FRAMED_STREAM"
+
+        overrides = make_clean_overrides()
+        overrides["s6_frame"] = lambda bits: FramedPayloadReport()
+
+        report = orchestrate(
+            run_id="run-s6-framing-01",
+            file_path=self.test_file,
+            runner=self.runner,
+            stage_overrides=overrides,
+            db_path=self.db_path,
+        )
+
+        self.assertIsInstance(report, AnalysisReport)
+        self.assertEqual(report.envelope_verdict, "in_envelope")
+
+        # Check final payload
+        self.assertEqual(report.final["payload_text"], "VALID_FRAMED_STREAM")
+        self.assertEqual(report.final["printable_fraction"], 1.0)
+        self.assertTrue(report.final["looks_like_text"])
+        self.assertAlmostEqual(report.final["entropy"], 3.4)
+        self.assertTrue(report.final["has_header"])
+        self.assertEqual(report.final["header_hex"], "1ACFFC1D")
+        self.assertAlmostEqual(report.final["header_entropy"], 2.0)
+        self.assertAlmostEqual(report.final["payload_entropy"], 3.1)
+
+        # Check S6 stage values
+        s6_stage = next(s for s in report.stages if s.stage == "s6_frame")
+        self.assertEqual(s6_stage.values["header_hex"], "1ACFFC1D")
+        self.assertTrue(s6_stage.values["has_header"])
+        self.assertEqual(s6_stage.values["payload_text"], "VALID_FRAMED_STREAM")
+        self.assertAlmostEqual(s6_stage.values["payload_entropy"], 3.1)
 
     def test_stage_failure_isolation(self):
         overrides = make_clean_overrides()

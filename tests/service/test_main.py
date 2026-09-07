@@ -298,6 +298,59 @@ class TestRestAPI(unittest.TestCase):
             resp = self.client.get("/")
             self.assertEqual(resp.status_code, 200)
 
+    def test_get_run_exposes_s6_framing_and_entropy(self):
+        run_id = "run_test_s6_framing"
+        create_run(run_id=run_id, filename="framed.wav", file_size=2048, sha256="sha256framed")
+        record_stage_result(
+            run_id=run_id,
+            stage="s6_frame",
+            status="ok",
+            confidence=0.99,
+            elapsed_ms=8.0,
+            values={
+                "n_bytes": 50,
+                "printable_fraction": 0.96,
+                "looks_like_text": True,
+                "text": "\x1a\xcf\xfc\x1dTELEMETRY_PAYLOAD",
+                "entropy": 3.75,
+                "has_header": True,
+                "header_hex": "1ACFFC1D",
+                "header_entropy": 2.0,
+                "payload_entropy": 3.42,
+                "payload_text": "TELEMETRY_PAYLOAD",
+            },
+        )
+
+        # Query via both /run/{run_id} and /runs/{run_id}
+        for path in (f"/run/{run_id}", f"/runs/{run_id}"):
+            resp = self.client.get(path)
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertEqual(data["run_id"], run_id)
+
+            # Check final dictionary
+            final = data["final"]
+            self.assertEqual(final.get("payload_text"), "TELEMETRY_PAYLOAD")
+            self.assertEqual(final.get("printable_fraction"), 0.96)
+            self.assertTrue(final.get("looks_like_text"))
+            self.assertAlmostEqual(final.get("entropy"), 3.75)
+            self.assertTrue(final.get("has_header"))
+            self.assertEqual(final.get("header_hex"), "1ACFFC1D")
+            self.assertAlmostEqual(final.get("header_entropy"), 2.0)
+            self.assertAlmostEqual(final.get("payload_entropy"), 3.42)
+
+            # Check stage values
+            s6_stage = next(s for s in data["stages"] if s["stage"] == "s6_frame")
+            self.assertEqual(s6_stage["values"]["header_hex"], "1ACFFC1D")
+            self.assertTrue(s6_stage["values"]["has_header"])
+            self.assertEqual(s6_stage["values"]["payload_text"], "TELEMETRY_PAYLOAD")
+            self.assertAlmostEqual(s6_stage["values"]["payload_entropy"], 3.42)
+            self.assertAlmostEqual(s6_stage["values"]["entropy"], 3.75)
+
+            # Ensure no bulk bytes
+            for k, v in final.items():
+                self.assertNotIsInstance(v, (bytes, bytearray))
+
 
 if __name__ == "__main__":
     unittest.main()

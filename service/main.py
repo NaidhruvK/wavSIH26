@@ -267,7 +267,17 @@ def get_envelope_metadata() -> dict[str, Any]:
             "s6_frame": {
                 "printable_fraction_min": 0.80,
                 "supported_encodings": ["ascii", "utf-8"],
-                "outputs": ["n_bytes", "printable_fraction", "payload_text", "looks_like_text"],
+                "outputs": [
+                    "n_bytes",
+                    "printable_fraction",
+                    "payload_text",
+                    "looks_like_text",
+                    "entropy",
+                    "has_header",
+                    "header_hex",
+                    "header_entropy",
+                    "payload_entropy",
+                ],
             },
         },
     }
@@ -391,6 +401,7 @@ async def analyze_file(
 
 
 @app.get("/runs/{run_id}")
+@app.get("/run/{run_id}")
 def get_run_report(run_id: str) -> dict[str, Any]:
     """Retrieve complete AnalysisReport for a given run."""
     if not run_id or "/" in run_id or "\\" in run_id or ".." in run_id:
@@ -435,10 +446,15 @@ def get_run_report(run_id: str) -> dict[str, Any]:
     if s6_stage and "values" in s6_stage:
         v = s6_stage["values"]
         final = {
-            "payload_text": v.get("text", v.get("payload_text", "")),
+            "payload_text": v.get("payload_text", v.get("text", "")),
             "printable_fraction": v.get("printable_fraction", 0.0),
             "looks_like_text": v.get("looks_like_text", False),
             "bits_count": v.get("n_bytes", 0) * 8,
+            "entropy": v.get("entropy", 0.0),
+            "has_header": v.get("has_header", False),
+            "header_hex": v.get("header_hex", ""),
+            "header_entropy": v.get("header_entropy", 0.0),
+            "payload_entropy": v.get("payload_entropy", 0.0),
         }
 
     db_status = run_record.get("status") if run_record else None
