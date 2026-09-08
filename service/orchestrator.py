@@ -119,6 +119,17 @@ _PLUGINS_LOADED: bool = False
 # values["coded_bits_available"] for anyone who wants to decode all of it.
 S5_DECODE_MAX_BITS = 12_000
 
+# Wall clock for S3's blind modulation search. Its own default is
+# SEARCH_BUDGET_S = 20.0, which is right for a caller with no per-stage
+# deadline and wrong here: the service caps every stage at 15 s, so the default
+# would hand the search a budget 1.3x LONGER than the stage it runs in and the
+# stage would die on the clock rather than return its best answer.
+#
+# Third time this exact pattern has bitten - a constant that is correct for a
+# caller with no deadline, reused by one that has. The other two are
+# S5_DECODE_MAX_BITS above and the S3 flake Anvith spent 7 Sep removing.
+S3_SEARCH_BUDGET_S = 10.0
+
 
 def load_plugins(force: bool = False, raise_on_error: bool = False) -> dict[str, str]:
     """Import required pipeline plugin modules to trigger side-effect registration.
@@ -204,6 +215,27 @@ def get_s4_recover() -> Optional[Callable[..., Any]]:
         return blind_recover
     except (ImportError, AttributeError):
         return None
+
+
+def get_s3_search() -> tuple[Optional[Callable[..., Any]], Optional[Callable[..., Any]]]:
+    """(receive_best, params_from_s2) from S3's search, or (None, None).
+
+    The service ran ONE named plug-in and never called `receive_best`, so the
+    blind search, the rate rescue and the breadth-first ordering were
+    unreachable from both the API and the CLI. Anvith measured the gap on 40
+    random corpus files, scored against the transmitted bits:
+
+        receive_best(iq, params_from_s2(s2, fs))   35/40 decode, 37/40 mod ok
+        MODULATIONS[chosen_scheme].receive(...)    11/40 decode, 11/40 mod ok
+
+    24 of 40 disagreed, and every disagreement chose "qpsk" against a true
+    scheme of 2fsk / 4fsk / 8psk / 16qam.
+    """
+    try:
+        from pipeline.s3_receive.search import params_from_s2, receive_best
+        return receive_best, params_from_s2
+    except (ImportError, AttributeError):
+        return None, None
 
 
 def get_s6_payload() -> Optional[Callable[..., Any]]:
@@ -320,10 +352,43 @@ def adapt_s2(raw: Any, elapsed_ms: float) -> StageResult:
 
     fs = getattr(raw, "fs", 1.0) if not isinstance(raw, dict) else raw.get("fs", 1.0)
     cfo_hz = getattr(raw, "cfo_hz", 0.0) if not isinstance(raw, dict) else raw.get("cfo_hz", 0.0)
-    order_hint = getattr(raw, "order_hint", 0) if not isinstance(raw, dict) else raw.get("order_hint", 0)
+    # S2Result's field is `fsk_order_hint`. `order_hint` has never existed on
+    # it, so this getattr took its DEFAULT on every input ever measured - 0 on
+    # 30 of 30 corpus files - and the ladder below fell through to its else
+    # branch, announcing [qpsk, bpsk] for every signal on the wire. Read the
+    # real name first; the old one stays as the fallback for dict-shaped S2s.
+    # Third instance of this species in this file: a getattr against a name
+    # that does not exist, silently taking its default and raising nothing.
+    if isinstance(raw, dict):
+        order_hint = raw.get("fsk_order_hint", raw.get("order_hint", 0)) or 0
+    else:
+        _fsk = getattr(raw, "fsk_order_hint", None)
+        order_hint = (_fsk if _fsk is not None else getattr(raw, "order_hint", 0)) or 0
+    # Fourth instance of the same species, and the mildest: S2Result has no
+    # `symbol_rate_score` either. Its ranked list is `symbol_rate_hypotheses`,
+    # [(rate_hz, score), ...]. So this read 0.0 on every real input and the
+    # confidence below took its 0.9 default on all of them. The two test
+    # doubles set it to 9.5 and 9.8 - values chosen to sit just under the /10
+    # below - so the formula was written against a field that does not exist,
+    # using numbers nothing ever produced.
+    #
+    # The real statistic is reported here under its own key rather than folded
+    # into `symbol_rate_score`, because the existing score/10 mapping does not
+    # fit it: measured across the RF corpus it runs 19.0 at 4 dB to 48.2 at
+    # 20 dB, so every file on disk would clip to confidence 1.0 - swapping a
+    # constant 0.9 for a constant 1.0, which is worse for being confidently
+    # maximal. Choosing the right mapping is a judgement about what the number
+    # MEANS, S2 is Dheeraj's stage, and this is the day before freeze. Reported,
+    # not acted on.
     symbol_rate_score = (
         getattr(raw, "symbol_rate_score", 0.0) if not isinstance(raw, dict) else raw.get("symbol_rate_score", 0.0)
     )
+    _rate_hyps = (raw.get("symbol_rate_hypotheses") if isinstance(raw, dict)
+                  else getattr(raw, "symbol_rate_hypotheses", None)) or []
+    try:
+        symbol_rate_peak_score = float(_rate_hyps[0][-1]) if _rate_hyps else None
+    except (TypeError, IndexError, ValueError):
+        symbol_rate_peak_score = None
 
     values = {
         "symbol_rate": rate,
@@ -332,21 +397,44 @@ def adapt_s2(raw: Any, elapsed_ms: float) -> StageResult:
         "cfo_hz": cfo_hz,
         "order_hint": order_hint,
         "symbol_rate_score": symbol_rate_score,
+        "symbol_rate_peak_score": symbol_rate_peak_score,
     }
 
     status = StageStatus.OK if rate > 0 else StageStatus.LOW_CONFIDENCE
     confidence = min(1.0, max(0.1, values["symbol_rate_score"] / 10.0)) if values["symbol_rate_score"] else 0.9
 
+    # Dheeraj's classifier ranks the modulation DIRECTLY, is populated on 28 of
+    # 30 corpus files and scored 0.9987 on the worked example. adapt_s2 never
+    # read it, so the only thing S3 was ever told came from the FSK-order
+    # ladder below - which can say bpsk/qpsk/8psk and nothing else, and cannot
+    # name 16qam or 4fsk at all. The classifier is the better evidence when it
+    # exists; the ladder stays as the fallback for an S2 that has no classifier.
+    #
+    # This is a PRIOR, not a restriction. It orders what S3 tries; it never
+    # stops S3 trying the rest. 2-FSK and 4-FSK classify at 0% below 10 dB
+    # (reports/s2_coverage.md), so a restriction here would lose exactly the
+    # files a ranking only reorders.
     hyps: list[Hypothesis] = []
-    order = values["order_hint"]
-    if order == 2:
-        hyps = [Hypothesis(value="bpsk", score=0.9), Hypothesis(value="2fsk", score=0.1)]
-    elif order == 4:
-        hyps = [Hypothesis(value="qpsk", score=0.85), Hypothesis(value="4fsk", score=0.15)]
-    elif order == 8:
-        hyps = [Hypothesis(value="8psk", score=0.8), Hypothesis(value="16qam", score=0.2)]
-    else:
-        hyps = [Hypothesis(value="qpsk", score=0.7), Hypothesis(value="bpsk", score=0.3)]
+    mod_hyps = (raw.get("modulation_hypotheses") if isinstance(raw, dict)
+                else getattr(raw, "modulation_hypotheses", None)) or []
+    for entry in mod_hyps:
+        try:
+            name, score = entry[0], float(entry[-1])
+        except (TypeError, IndexError, ValueError):
+            continue                      # a malformed rank is not a crash
+        hyps.append(Hypothesis(value=str(name).lower(), score=score,
+                               evidence="S2 modulation classifier"))
+
+    if not hyps:
+        order = values["order_hint"]
+        if order == 2:
+            hyps = [Hypothesis(value="bpsk", score=0.9), Hypothesis(value="2fsk", score=0.1)]
+        elif order == 4:
+            hyps = [Hypothesis(value="qpsk", score=0.85), Hypothesis(value="4fsk", score=0.15)]
+        elif order == 8:
+            hyps = [Hypothesis(value="8psk", score=0.8), Hypothesis(value="16qam", score=0.2)]
+        else:
+            hyps = [Hypothesis(value="qpsk", score=0.7), Hypothesis(value="bpsk", score=0.3)]
 
     return StageResult(
         stage="s2_estimate",
@@ -849,10 +937,22 @@ def orchestrate(
     # S3: Receive (Modulation demodulator)
     # -------------------------------------------------------------------------
     s3_fn = overrides.get("s3_receive")
+    s3_receive_best, s3_params_from_s2 = get_s3_search()
 
     def _run_s3() -> Any:
         if s3_fn:
             return s3_fn(iq_samples, s2_params)
+
+        # An explicit `mod_scheme_hint` is a RESTRICTION - the caller named the
+        # scheme, so run that one and nothing else. Everything else searches.
+        # `params_from_s2` is what carries S2's ranked lists (symbol rate, CFO
+        # and the modulation classifier) into the search; `s2_params` is the
+        # three-key mapping and would throw all of that away.
+        if not mod_scheme_hint and s3_receive_best and s3_params_from_s2:
+            return s3_receive_best(iq_samples,
+                                   s3_params_from_s2(s2_raw, sample_rate),
+                                   budget_s=S3_SEARCH_BUDGET_S)
+
         plugin = MODULATIONS.get(chosen_scheme)
         if plugin:
             if hasattr(plugin, "receive"):

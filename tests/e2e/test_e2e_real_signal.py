@@ -110,5 +110,80 @@ class TestEndToEndOnARealCapture(unittest.TestCase):
         self.assertGreater(values["n_bytes"], 0)
 
 
+# The capture above is QPSK, and that is exactly why it could not catch the next
+# bug. adapt_s2 read `order_hint`, a field S2Result does not have, so the ladder
+# fell to its else branch and every signal on the wire was announced as qpsk -
+# then _run_s3 ran that one plug-in and never called receive_best. On a QPSK
+# capture the wrong answer IS the right answer, so all seven stages stayed
+# green. Measured on the 20 dB corpus, one file per scheme, before the fix:
+#
+#     bpsk  -> qpsk  low_confidence  5/7 stages ok
+#     qpsk  -> qpsk  ok              7/7      <- the only one that worked
+#     8psk  -> qpsk  low_confidence  3/7
+#     16qam -> qpsk  low_confidence  3/7
+#     2fsk  -> qpsk  FAILED          3/7
+#     4fsk  -> qpsk  FAILED          3/7
+#
+# So this second capture is deliberately NOT PSK-family: 2-FSK failed hardest,
+# and no amount of guessing qpsk can pass it.
+FSK_SIGNAL = REPO_ROOT / "zoo" / "corpus" / "rf" / "2fsk_20dB_2029.wav"
+
+
+@unittest.skipUnless(
+    FSK_SIGNAL.is_file(),
+    f"corpus capture not present ({FSK_SIGNAL.name}); "
+    "zoo/corpus is excluded from the container image",
+)
+class TestEndToEndOnANonQPSKCapture(unittest.TestCase):
+    """The same seam, on a capture whose scheme the old default could not guess."""
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+
+        from service.orchestrator import orchestrate
+
+        cls._tmp = tempfile.TemporaryDirectory()
+        t0 = time.perf_counter()
+        cls.report = orchestrate(
+            run_id="e2e-real-signal-2fsk",
+            file_path=FSK_SIGNAL,
+            db_path=Path(cls._tmp.name) / "e2e_fsk.db",
+        )
+        cls.elapsed_s = time.perf_counter() - t0
+        cls.stages = {s.stage: s for s in cls.report.stages}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_s3_names_the_scheme_that_was_actually_transmitted(self):
+        from contracts import StageStatus
+
+        s3 = self.stages["s3_receive"]
+        self.assertEqual(
+            s3.status, StageStatus.OK,
+            f"s3_receive is {s3.status} - {s3.reason}")
+        self.assertEqual(
+            str(s3.values.get("modulation", "")).lower(), "2fsk",
+            "S3 named %r on a 2-FSK capture - the service is demodulating "
+            "everything as its default again"
+            % s3.values.get("modulation"))
+
+    def test_the_chain_completes_on_a_non_psk_capture(self):
+        from contracts import StageStatus
+
+        for name in ("s0_ingest", "s1_detect", "s2_estimate", "s3_receive"):
+            with self.subTest(stage=name):
+                stage = self.stages[name]
+                self.assertEqual(
+                    stage.status, StageStatus.OK,
+                    f"{name} is {stage.status} - {stage.reason}")
+
+    def test_the_run_fits_the_90_second_envelope(self):
+        self.assertLess(self.elapsed_s, ENVELOPE_BUDGET_S,
+                        f"{self.elapsed_s:.1f}s exceeds the {ENVELOPE_BUDGET_S}s budget")
+
+
 if __name__ == "__main__":
     unittest.main()
