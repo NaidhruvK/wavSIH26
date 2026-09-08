@@ -39,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from pipeline.s3_receive import estimated_ber, llr_to_bits
 from registry import MODULATIONS
-from tests.fixtures.rf_channel import ChannelSpec, through_channel
+from tests.fixtures.corpus import synth
 
 # SNRs at which each scheme is comfortably locked - the contract is about the
 # shape of the output, not about the operating envelope, which the envelope
@@ -67,11 +67,10 @@ def _demodulate(name: str, bits: np.ndarray, snr_offset: float = 0.0,
                 snr_db: float | None = None):
     snr, sps = CLEAN[name]
     snr = snr_db if snr_db is not None else snr + snr_offset
-    spec = ChannelSpec(scheme=name, sps=sps, snr_db=snr,
-                       cfo_norm=0.0012, timing_offset_sym=0.37, seed=3)
-    x, n_used = through_channel(bits, spec)
-    plugin = MODULATIONS[name]
-    res = plugin.receive(x, {"fs": spec.fs, "symbol_rate": spec.symbol_rate})
+    x, fs, symbol_rate, n_used = synth(
+        name, sps=sps, snr_db=snr, bits=bits,
+        cfo_norm=0.0012, timing_offset_sym=0.37, seed=3)
+    res = MODULATIONS[name].receive(x, {"fs": fs, "symbol_rate": symbol_rate})
     return res, bits[:n_used]
 
 
@@ -130,10 +129,10 @@ def test_llrs_are_float_and_not_hard_bits(name, source_bits):
 
 def _channel_for(name: str, bits: np.ndarray):
     snr, sps = CLEAN[name]
-    spec = ChannelSpec(scheme=name, sps=sps, snr_db=snr,
-                       cfo_norm=0.0012, timing_offset_sym=0.37, seed=3)
-    x, _ = through_channel(bits, spec)
-    return x, {"fs": spec.fs, "symbol_rate": spec.symbol_rate}
+    x, fs, symbol_rate, _ = synth(
+        name, sps=sps, snr_db=snr, bits=bits,
+        cfo_norm=0.0012, timing_offset_sym=0.37, seed=3)
+    return x, {"fs": fs, "symbol_rate": symbol_rate}
 
 
 @pytest.mark.parametrize("name", ALL_SIX)

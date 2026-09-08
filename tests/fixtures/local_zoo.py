@@ -301,3 +301,71 @@ def make_rs_stream(n_blocks: int = 12, n: int = 255, k: int = 223,
         start_trim=offset_bytes * 8,
     )
     return bits, truth, payload
+
+
+# ---------------------------------------------------------------------------
+# The concatenated CCSDS profile (5 Sep). Not in Dheeraj's corpus - his zoo
+# generates conv-only and RS-only streams, so this is one of the three cases
+# local_zoo is deliberately retained for.
+# ---------------------------------------------------------------------------
+
+def make_ccsds_stream(n_blocks: int = 4, depth: int = 8, width: int = 12,
+                      polys=POLY_171_133, K: int = 7, n: int = 255, k: int = 223,
+                      scramble: bool = False,
+                      scrambler_poly: int = CCSDS_SCRAMBLER,
+                      ber: float = 0.0, seed: int = 0,
+                      payload_text: str | None = None):
+    """RS outer -> interleave -> convolutional inner -> scramble.
+
+    The transmit order the Command Center's 5 September row specifies. Note
+    this is NOT bit-for-bit CCSDS 131.0-B, which randomises BEFORE the
+    convolutional encoder and attaches an unrandomised sync marker; the
+    difference matters for interoperating with a real spacecraft downlink and
+    does not matter for what today is testing, which is whether four coding
+    layers can be peeled off in sequence without being told any of them. The
+    deviation is stated here so nobody quotes this as standards-compliant.
+
+    Returns (bits, Truth, payload_bytes). `payload_bytes` is the RS-layer
+    input, which is what a successful end-to-end decode must reproduce.
+    """
+    import reedsolo
+
+    rng = np.random.default_rng(seed)
+    rs = reedsolo.RSCodec(n - k)
+
+    if payload_text is None:
+        payload = rng.integers(0, 256, n_blocks * k, dtype=np.uint8).tobytes()
+    else:
+        raw = payload_text.encode("utf-8")
+        payload = (raw * (n_blocks * k // len(raw) + 1))[: n_blocks * k]
+
+    # 1. Reed-Solomon, the OUTER code
+    encoded = bytearray()
+    for b in range(n_blocks):
+        encoded.extend(rs.encode(payload[b * k:(b + 1) * k]))
+    bits = np.unpackbits(np.frombuffer(bytes(encoded), dtype=np.uint8))
+
+    # 2. interleave, which is why the outer code survives Viterbi's burst errors
+    period = None
+    if depth and width:
+        period = depth * width
+        bits = block_interleave(bits, depth, width)
+
+    # 3. convolutional, the INNER code
+    bits = conv_encode(bits, polys=polys, K=K)
+
+    # 4. the randomiser, outermost
+    if scramble:
+        bits = lfsr_scramble(bits, scrambler_poly)
+
+    bits, n_flipped = inject_errors(bits, ber, rng)
+
+    truth = Truth(
+        n_source_bits=n_blocks * k * 8, polys_octal=tuple(polys), K=K,
+        depth=depth, width=width, period=period,
+        scrambler_poly=scrambler_poly if scramble else None,
+        injected_ber=ber, n_flipped=n_flipped, seed=seed,
+        payload_text=payload_text,
+    )
+    truth.rs_n, truth.rs_k, truth.n_blocks = n, k, n_blocks
+    return bits, truth, bytes(payload)

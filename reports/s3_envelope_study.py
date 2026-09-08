@@ -30,7 +30,7 @@ from pipeline.s3_receive.plots import (chain_summary, cma_trace,  # noqa: E402
                                        constellation_plot, eye_diagram,
                                        timing_trace)
 from registry import MODULATIONS  # noqa: E402
-from tests.fixtures.rf_channel import ChannelSpec, through_channel  # noqa: E402
+from tests.fixtures.corpus import synth  # noqa: E402
 
 OUT = ROOT / "reports"
 CHARTS = OUT / "s3"
@@ -69,11 +69,10 @@ def measured_ber(res, tx: np.ndarray) -> float:
 
 
 def run_one(mod: str, snr: float, sps: int, bits: np.ndarray) -> tuple[dict, dict]:
-    spec = ChannelSpec(scheme=mod, sps=sps, snr_db=snr, cfo_norm=0.0013,
-                       timing_offset_sym=0.37, seed=17)
-    x, n_used = through_channel(bits, spec)
-    res = MODULATIONS[mod].receive(x, {"fs": spec.fs,
-                                       "symbol_rate": spec.symbol_rate})
+    x, fs, symbol_rate, n_used = synth(mod, sps=sps, snr_db=snr, bits=bits,
+                                       cfo_norm=0.0013, timing_offset_sym=0.37,
+                                       seed=17)
+    res = MODULATIONS[mod].receive(x, {"fs": fs, "symbol_rate": symbol_rate})
     v = res.values
     row = {
         "file": f"{mod}_{int(snr)}dB_sps{sps}",
@@ -93,21 +92,21 @@ def run_one(mod: str, snr: float, sps: int, bits: np.ndarray) -> tuple[dict, dic
         "elapsed_ms": round(res.elapsed_ms, 1),
         "reason": res.reason or "",
     }
-    return row, {"spec": spec, "x": x, "res": res}
+    return row, {"mod": mod, "sps": sps, "x": x, "res": res}
 
 
 def draw_charts(ctx: dict, name: str) -> list[str]:
-    spec, res = ctx["spec"], ctx["res"]
-    sch = scheme(spec.scheme)
+    res, sps = ctx["res"], ctx["sps"]
+    sch = scheme(ctx["mod"])
     made = []
     x = ctx["x"]
     beta = res.values.get("rolloff_beta", 0.35)
-    y = matched_filter(x, beta, spec.sps)
-    g = gardner_sync(y, spec.sps)
+    y = matched_filter(x, beta, sps)
+    g = gardner_sync(y, sps)
 
     made.append(eye_diagram(
-        y, spec.sps, CHARTS / f"eye_{name}.png",
-        align_sample=float(np.median(g.positions[1000:] % spec.sps)),
+        y, sps, CHARTS / f"eye_{name}.png",
+        align_sample=float(np.median(g.positions[1000:] % sps)),
         title=f"Eye after matched filter - {name}"))
     made.append(constellation_plot(
         res.symbols, CHARTS / f"constellation_{name}.png",
@@ -160,9 +159,13 @@ def _write_markdown(rows: list[dict], charts: list[str]) -> None:
     lines = [
         "# S3 operating envelope", "",
         "**Anvith.** Regenerated from the build on `main`. Every number here "
-        "comes from `reports/s3_envelope_study.py` run against "
-        "`tests/fixtures/rf_channel.py`, which is a stand-in for Dheeraj's zoo "
-        "and dies the day it lands.", "",
+        "comes from `reports/s3_envelope_study.py`, whose signals are now made "
+        "by **`zoo.rf`** - Dheeraj's real modulator. The stand-in it used to "
+        "call, `tests/fixtures/rf_channel.py`, is deleted. The parametric "
+        "sweep stays a sweep rather than becoming a corpus read because it "
+        "needs SNRs and samples-per-symbol the 36-file corpus does not carry; "
+        "`reports/s3_lock_gate.md` is the one measured on the corpus itself.",
+        "",
         "## Gate evidence", "",
         f"- **31 Aug, lock rate:** {len(locked)} of {len(psk)} PSK files report "
         "`ok`. Gate asks for at least 18 of 20.",

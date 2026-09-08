@@ -165,3 +165,52 @@ def test_standard_profiles_are_bounded():
     assert (255, 223) == STANDARD_PROFILES[0], "CCSDS profile should be tried first"
     for n, k in STANDARD_PROFILES:
         assert 0 < k < n <= 255
+
+
+# --------------------------------------------------------------------------
+# runtime - the 90 s per-analysis budget is a requirement, not an aspiration
+# --------------------------------------------------------------------------
+
+def test_blind_recover_declines_random_data_quickly():
+    """The search is 255 alignments x 3 profiles x 24 blocks, and it used to
+    run all of it on every input. That was ~12 minutes of this suite and would
+    not have fit the 90 s per-analysis budget either.
+
+    blind_recover accepts an alignment only at frac == 1.0, so one failed block
+    already settles it - the remaining 23 decodes only make the answer more
+    precisely negative. A wrong alignment fails on its first block essentially
+    always, which is why the early exit is worth ~24x here.
+
+    The bound is deliberately loose. It is not measuring this machine, it is
+    catching a return to the old behaviour.
+    """
+    import time
+
+    rng = np.random.default_rng(20260904)
+    noise = rng.integers(0, 2, 300_000, dtype=np.uint8)
+
+    t0 = time.time()
+    params = _rs().blind_recover(noise)
+    elapsed = time.time() - t0
+
+    assert params is None, "claimed RS structure in random data"
+    assert elapsed < 30.0, "took %.0f s; the full-sweep version took ~113 s" % elapsed
+
+
+def test_early_exit_agrees_with_the_full_sweep_on_what_matters():
+    """The early exit is a speed switch, not a behaviour change. The caller
+    only ever asks whether the fraction is 1.0, so both paths must agree on
+    that for every alignment - including the true one, which never takes the
+    exit and therefore still reports its errata rate over all blocks."""
+    from pipeline.s5_decode.rs_code import _bits_to_bytes, _try_profile
+
+    bits, truth = make_rs_stream(n_blocks=12, seed=3)[:2]
+    data = _bits_to_bytes(np.asarray(bits, dtype=np.uint8))
+
+    for offset in (0, 1, 5, 17, 128):
+        full = _try_profile(data, 255, 223, offset)
+        fast = _try_profile(data, 255, 223, offset, stop_on_first_failure=True)
+        assert (full[1] >= 1.0) == (fast[1] >= 1.0), \
+            "offset %d: full %s vs fast %s" % (offset, full, fast)
+        if full[1] >= 1.0:
+            assert full == fast, "the accepting path must be untouched at %d" % offset

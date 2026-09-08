@@ -1,0 +1,37 @@
+arm,scheme,snr_db,median_ber,decodes,n
+full chain,16qam,20,0.0,7,7
+full chain,16qam,4,0.423108,0,7
+full chain,16qam,8,0.012388,0,7
+full chain,8psk,20,0.0,7,7
+full chain,8psk,4,0.358123,0,7
+full chain,8psk,8,0.002956,7,7
+full chain,qpsk,20,0.0,7,7
+full chain,qpsk,4,0.001052,7,7
+full chain,qpsk,8,0.0,7,7
+equaliser bypassed,16qam,20,0.0,7,7
+equaliser bypassed,16qam,4,0.422745,0,7
+equaliser bypassed,16qam,8,0.011421,1,7
+equaliser bypassed,8psk,20,0.0,7,7
+equaliser bypassed,8psk,4,0.29824,0,7
+equaliser bypassed,8psk,8,0.002557,7,7
+equaliser bypassed,qpsk,20,0.0,7,7
+equaliser bypassed,qpsk,4,0.000902,7,7
+equaliser bypassed,qpsk,8,0.0,7,7
+carrier 0.02 -> 0.002,16qam,20,0.0,7,7
+carrier 0.02 -> 0.002,16qam,4,0.069113,0,7
+carrier 0.02 -> 0.002,16qam,8,0.010387,2,7
+carrier 0.02 -> 0.002,8psk,20,0.0,7,7
+carrier 0.02 -> 0.002,8psk,4,0.030832,0,7
+carrier 0.02 -> 0.002,8psk,8,0.002358,7,7
+carrier 0.02 -> 0.002,qpsk,20,0.0,7,7
+carrier 0.02 -> 0.002,qpsk,4,0.000903,7,7
+carrier 0.02 -> 0.002,qpsk,8,0.0,7,7
+both,16qam,20,0.0,7,7
+both,16qam,4,0.067607,0,7
+both,16qam,8,0.009329,6,7
+both,8psk,20,0.0,7,7
+both,8psk,4,0.030467,0,7
+both,8psk,8,0.002205,7,7
+both,qpsk,20,0.0,7,7
+both,qpsk,4,0.000703,7,7
+both,qpsk,8,0.0,7,7

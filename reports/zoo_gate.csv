@@ -1,0 +1,74 @@
+file,coded,scrambled,ber,true_period,true_depth,true_width,status,confidence,method,got_period,got_depth,got_width,seconds,period_ok,interleaver_ok,generators_ok,outcome
+conv_d16w6_ber0.001_scr0_1013.bits.npy,1,0,0.001,96,16,6,low_confidence,0.35,exact,96,0,0,11.5,1,0,0,declined
+conv_d16w6_ber0.001_scr1_1049.bits.npy,1,1,0.001,96,16,6,low_confidence,0.35,exact,96,0,0,11.5,1,0,0,declined
+conv_d16w6_ber0.002_scr0_1014.bits.npy,1,0,0.002,96,16,6,low_confidence,0.35,exact,96,0,0,11.2,1,0,0,declined
+conv_d16w6_ber0.002_scr1_1050.bits.npy,1,1,0.002,96,16,6,low_confidence,0.35,exact,96,0,0,10.2,1,0,0,declined
+conv_d16w6_ber0.005_scr0_1015.bits.npy,1,0,0.005,96,16,6,failed,0.0,exact,0,0,0,9.3,0,0,0,declined
+conv_d16w6_ber0.005_scr1_1051.bits.npy,1,1,0.005,96,16,6,failed,0.0,exact,0,0,0,9.2,0,0,0,declined
+conv_d16w6_ber0.01_scr0_1016.bits.npy,1,0,0.01,96,16,6,failed,0.0,exact,0,0,0,9.4,0,0,0,declined
+conv_d16w6_ber0.01_scr1_1052.bits.npy,1,1,0.01,96,16,6,failed,0.0,exact,0,0,0,9.3,0,0,0,declined
+conv_d16w6_ber0.02_scr0_1017.bits.npy,1,0,0.02,96,16,6,failed,0.0,exact,0,0,0,8.8,0,0,0,declined
+conv_d16w6_ber0.02_scr1_1053.bits.npy,1,1,0.02,96,16,6,failed,0.0,exact,0,0,0,8.7,0,0,0,declined
+conv_d16w6_ber0.0_scr0_1012.bits.npy,1,0,0.0,96,16,6,ok,0.95,exact,96,16,6,4.3,1,1,1,full recovery
+conv_d16w6_ber0.0_scr1_1048.bits.npy,1,1,0.0,96,16,6,low_confidence,0.35,exact,192,0,0,10.9,0,0,0,declined
+conv_d16w8_ber0.001_scr0_1025.bits.npy,1,0,0.001,128,16,8,low_confidence,0.35,exact,128,0,0,10.4,1,0,0,declined
+conv_d16w8_ber0.001_scr1_1061.bits.npy,1,1,0.001,128,16,8,low_confidence,0.35,exact,256,0,0,10.3,0,0,0,declined
+conv_d16w8_ber0.002_scr0_1026.bits.npy,1,0,0.002,128,16,8,low_confidence,0.35,exact,128,0,0,10.7,1,0,0,declined
+conv_d16w8_ber0.002_scr1_1062.bits.npy,1,1,0.002,128,16,8,failed,0.0,exact,0,0,0,9.5,0,0,0,declined
+conv_d16w8_ber0.005_scr0_1027.bits.npy,1,0,0.005,128,16,8,failed,0.0,exact,0,0,0,9.1,0,0,0,declined
+conv_d16w8_ber0.005_scr1_1063.bits.npy,1,1,0.005,128,16,8,failed,0.0,exact,0,0,0,8.8,0,0,0,declined
+conv_d16w8_ber0.01_scr0_1028.bits.npy,1,0,0.01,128,16,8,failed,0.0,exact,0,0,0,8.8,0,0,0,declined
+conv_d16w8_ber0.01_scr1_1064.bits.npy,1,1,0.01,128,16,8,failed,0.0,exact,0,0,0,8.8,0,0,0,declined
+conv_d16w8_ber0.02_scr0_1029.bits.npy,1,0,0.02,128,16,8,failed,0.0,exact,0,0,0,9.2,0,0,0,declined
+conv_d16w8_ber0.02_scr1_1065.bits.npy,1,1,0.02,128,16,8,failed,0.0,exact,0,0,0,8.9,0,0,0,declined
+conv_d16w8_ber0.0_scr0_1024.bits.npy,1,0,0.0,128,16,8,ok,0.95,exact,128,16,8,0.3,1,1,1,full recovery
+conv_d16w8_ber0.0_scr1_1060.bits.npy,1,1,0.0,128,16,8,low_confidence,0.35,exact,128,0,0,10.1,1,0,0,declined
+conv_d32w4_ber0.001_scr0_1031.bits.npy,1,0,0.001,128,32,4,low_confidence,0.35,exact,128,0,0,10.3,1,0,0,declined
+conv_d32w4_ber0.001_scr1_1067.bits.npy,1,1,0.001,128,32,4,low_confidence,0.35,exact,128,0,0,10.4,1,0,0,declined
+conv_d32w4_ber0.002_scr0_1032.bits.npy,1,0,0.002,128,32,4,low_confidence,0.35,exact,128,0,0,9.9,1,0,0,declined
+conv_d32w4_ber0.002_scr1_1068.bits.npy,1,1,0.002,128,32,4,failed,0.0,exact,0,0,0,9.7,0,0,0,declined
+conv_d32w4_ber0.005_scr0_1033.bits.npy,1,0,0.005,128,32,4,failed,0.0,exact,0,0,0,9.3,0,0,0,declined
+conv_d32w4_ber0.005_scr1_1069.bits.npy,1,1,0.005,128,32,4,failed,0.0,exact,0,0,0,8.7,0,0,0,declined
+conv_d32w4_ber0.01_scr0_1034.bits.npy,1,0,0.01,128,32,4,failed,0.0,exact,0,0,0,8.8,0,0,0,declined
+conv_d32w4_ber0.01_scr1_1070.bits.npy,1,1,0.01,128,32,4,failed,0.0,exact,0,0,0,9.5,0,0,0,declined
+conv_d32w4_ber0.02_scr0_1035.bits.npy,1,0,0.02,128,32,4,failed,0.0,exact,0,0,0,8.7,0,0,0,declined
+conv_d32w4_ber0.02_scr1_1071.bits.npy,1,1,0.02,128,32,4,failed,0.0,exact,0,0,0,9.8,0,0,0,declined
+conv_d32w4_ber0.0_scr0_1030.bits.npy,1,0,0.0,128,32,4,ok,0.95,exact,128,32,4,0.4,1,1,1,full recovery
+conv_d32w4_ber0.0_scr1_1066.bits.npy,1,1,0.0,128,32,4,low_confidence,0.35,exact,256,0,0,10.4,0,0,0,declined
+conv_d4w8_ber0.001_scr0_1001.bits.npy,1,0,0.001,32,4,8,low_confidence,0.35,exact,32,0,0,11.3,1,0,0,declined
+conv_d4w8_ber0.001_scr1_1037.bits.npy,1,1,0.001,32,4,8,low_confidence,0.35,exact,32,0,0,11.2,1,0,0,declined
+conv_d4w8_ber0.002_scr0_1002.bits.npy,1,0,0.002,32,4,8,low_confidence,0.35,exact,32,0,0,11.8,1,0,0,declined
+conv_d4w8_ber0.002_scr1_1038.bits.npy,1,1,0.002,32,4,8,low_confidence,0.35,exact,64,0,0,13.3,0,0,0,declined
+conv_d4w8_ber0.005_scr0_1003.bits.npy,1,0,0.005,32,4,8,low_confidence,0.35,exact,64,0,0,10.1,0,0,0,declined
+conv_d4w8_ber0.005_scr1_1039.bits.npy,1,1,0.005,32,4,8,failed,0.0,exact,0,0,0,9.4,0,0,0,declined
+conv_d4w8_ber0.01_scr0_1004.bits.npy,1,0,0.01,32,4,8,failed,0.0,exact,0,0,0,9.5,0,0,0,declined
+conv_d4w8_ber0.01_scr1_1040.bits.npy,1,1,0.01,32,4,8,failed,0.0,exact,0,0,0,9.6,0,0,0,declined
+conv_d4w8_ber0.02_scr0_1005.bits.npy,1,0,0.02,32,4,8,failed,0.0,exact,0,0,0,9.7,0,0,0,declined
+conv_d4w8_ber0.02_scr1_1041.bits.npy,1,1,0.02,32,4,8,failed,0.0,exact,0,0,0,9.7,0,0,0,declined
+conv_d4w8_ber0.0_scr0_1000.bits.npy,1,0,0.0,32,4,8,ok,0.95,exact,32,4,8,0.3,1,1,1,full recovery
+conv_d4w8_ber0.0_scr1_1036.bits.npy,1,1,0.0,32,4,8,low_confidence,0.35,exact,64,0,0,12.6,0,0,0,declined
+conv_d8w12_ber0.001_scr0_1007.bits.npy,1,0,0.001,96,8,12,low_confidence,0.35,exact,96,0,0,12.2,1,0,0,declined
+conv_d8w12_ber0.001_scr1_1043.bits.npy,1,1,0.001,96,8,12,low_confidence,0.35,exact,96,0,0,12.5,1,0,0,declined
+conv_d8w12_ber0.002_scr0_1008.bits.npy,1,0,0.002,96,8,12,low_confidence,0.35,exact,192,0,0,11.8,0,0,0,declined
+conv_d8w12_ber0.002_scr1_1044.bits.npy,1,1,0.002,96,8,12,low_confidence,0.35,exact,192,0,0,10.4,0,0,0,declined
+conv_d8w12_ber0.005_scr0_1009.bits.npy,1,0,0.005,96,8,12,failed,0.0,exact,0,0,0,9.8,0,0,0,declined
+conv_d8w12_ber0.005_scr1_1045.bits.npy,1,1,0.005,96,8,12,failed,0.0,exact,0,0,0,9.7,0,0,0,declined
+conv_d8w12_ber0.01_scr0_1010.bits.npy,1,0,0.01,96,8,12,failed,0.0,exact,0,0,0,9.6,0,0,0,declined
+conv_d8w12_ber0.01_scr1_1046.bits.npy,1,1,0.01,96,8,12,failed,0.0,exact,0,0,0,9.8,0,0,0,declined
+conv_d8w12_ber0.02_scr0_1011.bits.npy,1,0,0.02,96,8,12,failed,0.0,exact,0,0,0,9.7,0,0,0,declined
+conv_d8w12_ber0.02_scr1_1047.bits.npy,1,1,0.02,96,8,12,failed,0.0,exact,0,0,0,9.5,0,0,0,declined
+conv_d8w12_ber0.0_scr0_1006.bits.npy,1,0,0.0,96,8,12,ok,0.95,exact,96,8,12,0.3,1,1,1,full recovery
+conv_d8w12_ber0.0_scr1_1042.bits.npy,1,1,0.0,96,8,12,low_confidence,0.35,exact,96,0,0,11.7,1,0,0,declined
+conv_d8w16_ber0.001_scr0_1019.bits.npy,1,0,0.001,128,8,16,low_confidence,0.35,exact,128,0,0,10.6,1,0,0,declined
+conv_d8w16_ber0.001_scr1_1055.bits.npy,1,1,0.001,128,8,16,low_confidence,0.35,exact,256,0,0,10.5,0,0,0,declined
+conv_d8w16_ber0.002_scr0_1020.bits.npy,1,0,0.002,128,8,16,low_confidence,0.35,exact,128,0,0,10.9,1,0,0,declined
+conv_d8w16_ber0.002_scr1_1056.bits.npy,1,1,0.002,128,8,16,low_confidence,0.35,exact,256,0,0,10.8,0,0,0,declined
+conv_d8w16_ber0.005_scr0_1021.bits.npy,1,0,0.005,128,8,16,failed,0.0,exact,0,0,0,9.6,0,0,0,declined
+conv_d8w16_ber0.005_scr1_1057.bits.npy,1,1,0.005,128,8,16,failed,0.0,exact,0,0,0,9.7,0,0,0,declined
+conv_d8w16_ber0.01_scr0_1022.bits.npy,1,0,0.01,128,8,16,failed,0.0,exact,0,0,0,9.8,0,0,0,declined
+conv_d8w16_ber0.01_scr1_1058.bits.npy,1,1,0.01,128,8,16,failed,0.0,exact,0,0,0,9.5,0,0,0,declined
+conv_d8w16_ber0.02_scr0_1023.bits.npy,1,0,0.02,128,8,16,failed,0.0,exact,0,0,0,9.4,0,0,0,declined
+conv_d8w16_ber0.02_scr1_1059.bits.npy,1,1,0.02,128,8,16,failed,0.0,exact,0,0,0,9.8,0,0,0,declined
+conv_d8w16_ber0.0_scr0_1018.bits.npy,1,0,0.0,128,8,16,ok,0.95,exact,128,8,16,0.4,1,1,1,full recovery
+conv_d8w16_ber0.0_scr1_1054.bits.npy,1,1,0.0,128,8,16,low_confidence,0.35,exact,128,0,0,11.0,1,0,0,declined
+uncoded_random_999.bits.npy,0,0,0.0,0,0,0,failed,0.0,exact,0,0,0,9.7,0,0,0,declined

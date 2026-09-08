@@ -29,7 +29,7 @@ from pipeline.s3_receive import llr_to_bits  # noqa: E402
 from pipeline.s4_recover.rank_collapse import blind_recover  # noqa: E402
 from pipeline.s5_decode.conv_reference import POLY_171_133, conv_encode  # noqa: E402
 from registry import CODES, MODULATIONS  # noqa: E402
-from tests.fixtures.rf_channel import ChannelSpec, through_channel  # noqa: E402
+from tests.fixtures.corpus import synth  # noqa: E402
 
 TRUE_GENS = (0o171, 0o133)
 
@@ -55,11 +55,10 @@ def chain():
     rng = np.random.default_rng(20260903)
     source = rng.integers(0, 2, 30000).astype(np.uint8)
     coded = conv_encode(source, polys=POLY_171_133, K=7)
-    spec = ChannelSpec(scheme="qpsk", sps=4, snr_db=12.0, cfo_norm=0.0012,
-                       timing_offset_sym=0.37, seed=3)
-    x, _ = through_channel(coded, spec)
-    res = MODULATIONS["qpsk"].receive(
-        x, {"fs": spec.fs, "symbol_rate": spec.symbol_rate})
+    x, fs, symbol_rate, _ = synth("qpsk", sps=4, snr_db=12.0, bits=coded,
+                                  cfo_norm=0.0012, timing_offset_sym=0.37,
+                                  seed=3)
+    res = MODULATIONS["qpsk"].receive(x, {"fs": fs, "symbol_rate": symbol_rate})
     return source, coded, res
 
 

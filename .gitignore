@@ -8,4 +8,9 @@ uploads/
 .pytest_cache/
 reports/*.log
 docs/stack_*.log
+# per-run stage artifacts written by service/orchestrator.save_stage_artifact
+# (config.artifact_dir). One subdirectory per run_id, so this accumulates on
+# every analysis and showed up as untracked noise on a clean checkout.
+reports/artifacts/
+dist/
 .DS_Store

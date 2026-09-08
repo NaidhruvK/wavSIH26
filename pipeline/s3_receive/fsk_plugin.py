@@ -10,6 +10,24 @@ energy in the symbol window is the decision, and energy does not care about
 phase. That is the point of non-coherent detection and it is why this plug-in
 returns no rotation candidates while every linear one returns several.
 
+4 Sep, and this correction is the whole reason for the paragraph above being
+qualified: there is no PHASE ambiguity, and there is a FREQUENCY one. Shift an
+M-FSK signal by exactly one tone spacing and the tone bank finds the same M
+tones in the same places while every tone's LABEL has moved by one, so every
+symbol decodes to its neighbour. Measured on `4fsk_13dB_2033`: a -49 951 Hz
+offset against a 50 kHz spacing, tones recovered identically to the true ones,
+and a bit error rate of 0.248 - one position of slip on a Gray-labelled 4-ary
+alphabet - with every check passing.
+
+It is not resolvable from the signal, exactly as the linear family's rotation
+is not. The linear family carries its ambiguity forward as candidates and lets
+S4 choose; this branch instead REFUSES the hypothesis (`lockcheck.tone_alias`),
+because a carrier offset that is a whole number of tone spacings is one S3 was
+never able to justify applying. Emitting M label-rotations the way the linear
+branch emits S phase-rotations is the symmetric fix and would multiply S4's
+per-file work by the FSK order; that is a cross-stream decision, so it is
+written down here for the 7 Sep FSK row rather than taken quietly today.
+
 2-FSK and 4-FSK are the same code and two registrations; the tone bank and the
 Gray bit labelling both generalise on `order`.
 """
@@ -20,9 +38,11 @@ from typing import Any
 
 import numpy as np
 
-from .base import S2Params
+from .base import S2Params, unusable_reason
 from .cumulants import cumulants
 from .fsk import estimate_tones, fsk_demod_noncoherent
+from .lockcheck import (LockReport, carrier_alignment, loop_check,
+                        output_usable, signal_presence, tone_alias)
 from .result import Hypothesis, S3Result
 from .softmap import estimated_ber, noncoherent_llr
 
@@ -75,20 +95,34 @@ class FSKDemod:
         try:
             return self._run(np.asarray(iq, dtype=np.complex128), params, t0)
         except Exception as exc:                       # noqa: BLE001
-            return S3Result(status="failed", confidence=0.0,
-                            values={"modulation": self.name},
-                            reason=f"{type(exc).__name__}: {exc}",
-                            elapsed_ms=(time.perf_counter() - t0) * 1e3)
+            return self._fail(t0, f"{type(exc).__name__}: {exc}")
+
+    def _fail(self, t0: float, reason: str, envelope: str = "inside",
+              report: LockReport | None = None) -> S3Result:
+        """Every failure path, with the guaranteed keys filled in.
+        See `LinearDemod._fail` and `result.REQUIRED_VALUES`."""
+        values: dict[str, Any] = {"modulation": self.name,
+                                  "family": self.family,
+                                  "envelope": envelope,
+                                  "estimated_output_ber": 1.0,
+                                  "estimated_output_ber_valid": False}
+        if report is not None:
+            values.update(report.as_values())
+        return S3Result(status="failed", confidence=0.0, values=values,
+                        reason=reason,
+                        elapsed_ms=(time.perf_counter() - t0) * 1e3)
 
     def _run(self, x: np.ndarray, params: dict[str, Any], t0: float) -> S3Result:
         p = S2Params.from_mapping(params)
+        bad = unusable_reason(p)          # see base.unusable_reason
+        if bad is not None:
+            return self._fail(t0, bad, envelope="outside")
+
         sps = p.sps
         if sps < 2.0:
-            return S3Result(
-                status="failed", confidence=0.0,
-                values={"modulation": self.name},
-                reason=f"S2 reports {sps:.2f} samples/symbol; S3 needs at least 2",
-                elapsed_ms=(time.perf_counter() - t0) * 1e3)
+            return self._fail(
+                t0, f"S2 reports {sps:.2f} samples/symbol; S3 needs at least 2",
+                envelope="outside")
 
         if p.cfo_hz:
             x = x * np.exp(-2j * np.pi * (p.cfo_hz / p.fs) * np.arange(x.size))
@@ -100,26 +134,36 @@ class FSKDemod:
         # spend its sweep budget on them.
         min_symbols = 64
         if sps > x.size:
-            return S3Result(
-                status="failed", confidence=0.0,
-                values={"modulation": self.name},
-                reason=f"{sps:.1f} samples/symbol over {x.size} samples is not "
-                       "a plausible rate",
-                elapsed_ms=(time.perf_counter() - t0) * 1e3)
+            return self._fail(
+                t0, f"{sps:.1f} samples/symbol over {x.size} samples is not "
+                    "a plausible rate", envelope="outside")
         if x.size < min_symbols * sps:
-            return S3Result(
-                status="failed", confidence=0.0,
-                values={"modulation": self.name},
-                reason=f"{x.size} samples is under the {int(min_symbols * sps)} "
-                       f"needed for {min_symbols} symbols at {sps:.1f} sps",
-                elapsed_ms=(time.perf_counter() - t0) * 1e3)
+            return self._fail(
+                t0, f"{x.size} samples is under the {int(min_symbols * sps)} "
+                    f"needed for {min_symbols} symbols at {sps:.1f} sps",
+                envelope="outside")
         power = float(np.mean(np.abs(x) ** 2))
         if power <= 1e-20:
-            return S3Result(
-                status="failed", confidence=0.0,
-                values={"modulation": self.name},
-                reason="input carries no energy",
-                elapsed_ms=(time.perf_counter() - t0) * 1e3)
+            return self._fail(t0, "input carries no energy")
+
+        # The same two spectral checks the linear chain runs, on the same
+        # evidence. FSK reaches them by a different statistic - see
+        # lockcheck.symbol_rate_line - because a constant-envelope signal has
+        # no cyclostationary line in |x|^2 at all.
+        report = LockReport()
+        presence = signal_presence(x, p.fs, p.symbol_rate, self.family)
+        report.add(presence)
+        if presence.failed:
+            return self._fail(t0, presence.detail, report=report)
+
+        # A wrong CFO hypothesis is not harmless here even though detection is
+        # non-coherent and `estimate_tones` finds the tones wherever they sit.
+        # De-rotating a wideband CPFSK signal far enough wraps its outer tones
+        # around the band edge, and the tone bank then finds an alias.
+        # Measured: 4fsk_10dB_2032 demodulates exactly at cfo 0 and to a bit
+        # error rate of 0.247 after S2's 25 kHz de-rotation.
+        alignment = carrier_alignment(x, p.fs, p.symbol_rate)
+        report.add(alignment)
 
         tones = params.get("tones")
         tones = (np.asarray(tones, dtype=float) if tones is not None
@@ -128,31 +172,59 @@ class FSKDemod:
         res = fsk_demod_noncoherent(x, sps, tones=tones, order=self.order)
         llrs = noncoherent_llr(res.metrics, self.order)
 
-        locked = res.confidence >= self.confidence_threshold
-        status = "ok" if locked else "low_confidence"
-        reason = None if locked else (
+        # The tone bank is measured, so its spacing is known here and nowhere
+        # earlier - which is why this check sits after the demodulation rather
+        # than in the pre-chain screen with the other two.
+        spacing = (float(np.diff(res.tones).mean() * p.fs)
+                   if res.tones.size > 1 else 0.0)
+        report.add(tone_alias(p.cfo_hz, spacing))
+
+        ber_est = float(estimated_ber(llrs))
+        report.add(output_usable(ber_est))
+
+        report.add(loop_check(
+            "tone_margin", res.confidence >= self.confidence_threshold,
+            f"mean tone margin {res.confidence:.3f} at or above "
+            f"{self.confidence_threshold:.3f}",
             f"mean tone margin {res.confidence:.3f} below "
-            f"{self.confidence_threshold:.3f}")
+            f"{self.confidence_threshold:.3f}",
+            value=float(res.confidence)))
+
+        locked = report.locked
+        status = "ok" if locked else "low_confidence"
+        reason = report.reason
 
         return S3Result(
             status=status,
             confidence=float(res.confidence),
             values={
+                **report.as_values(),
                 "modulation": self.name,
                 "family": self.family,
                 "order": self.order,
                 "bits_per_symbol": int(self.order).bit_length() - 1,
                 "rotational_symmetry": 1,
                 "tones_normalised": res.tones.tolist(),
-                "tone_spacing_hz": (float(np.diff(res.tones).mean() * p.fs)
-                                    if res.tones.size > 1 else 0.0),
+                "tone_spacing_hz": spacing,
                 "symbol_offset": int(res.offset),
                 "n_symbols": int(res.indices.size),
                 "n_llrs": int(llrs.size),
+                # See the long note in linear.py. This branch has no equaliser,
+                # no carrier loop and no settling trim to drop symbols for, so
+                # the stream starts where the capture does. Note `symbol_offset`
+                # above is a SAMPLE offset within one symbol period and answers
+                # a different question - it does not say which transmitted
+                # symbol came first, which is why it could not be reused here.
+                # Measured against `align` on 2-FSK and 4-FSK at five SNRs:
+                # 0 to 2 bits, i.e. inside one symbol at both orders.
+                "llr_start_bit": 0,
+                "llr_start_bit_tolerance": int(self.order).bit_length() - 1,
                 "mean_margin": float(res.confidence),
-                "estimated_output_ber": float(estimated_ber(llrs)),
+                "residual_cfo_hz": float(alignment.value or 0.0),
+                "estimated_output_ber": ber_est,
                 # see the note in linear.py - the same caveat applies, with the
-                # tone margin standing in for carrier lock
+                # tone margin standing in for carrier lock, and the flag now
+                # gated on every check rather than on the margin alone
                 "estimated_output_ber_valid": bool(locked),
             },
             hypotheses=[Hypothesis(value={"tones": res.tones.tolist()},

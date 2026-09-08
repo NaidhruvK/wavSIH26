@@ -183,3 +183,49 @@ def test_end_to_end_coded_interleaved_stream_yields_readable_text():
     report = extract_text(decoded)
     assert report.looks_like_text, "printable %.2f" % report.printable_fraction
     assert "RAAYA SIH26147" in report.text
+
+
+# --------------------------------------------------------------------------
+# polarity - risk #9, arriving exactly as the register predicted
+# --------------------------------------------------------------------------
+
+def test_inverted_text_is_read_the_right_way_up():
+    """A coherent receiver cannot tell 0 degrees from 180, so half the
+    rotations S3 offers carry the whole stream inverted. Both recover the same
+    parameters - the rank test is blind to inversion - and both decode without
+    complaint. One gives the message, the other its complement.
+
+    Measured 4 Sep on a real capture: rotation 2 read printable 1.000 and
+    rotation 0 read 0.001, same file, same recovered parameters. The study
+    picked by rotation index and got the inverted one, which is why the text
+    column read 0 while the interleaver column read 3/3.
+    """
+    src = np.unpackbits(np.frombuffer(MSG.encode(), dtype=np.uint8))
+
+    upright = extract_text(src)
+    flipped = extract_text(1 - src)
+
+    assert upright.looks_like_text and not upright.inverted
+    assert flipped.looks_like_text, "printable %.3f" % flipped.printable_fraction
+    assert flipped.inverted
+    assert MSG[:20] in flipped.text
+    assert flipped.text == upright.text
+
+
+def test_polarity_resolution_can_be_switched_off():
+    """The old behaviour stays reachable, because resolving polarity by
+    printability only works when the payload IS text."""
+    src = np.unpackbits(np.frombuffer(MSG.encode(), dtype=np.uint8))
+    raw = extract_text(1 - src, resolve_polarity=False)
+    assert not raw.looks_like_text
+    assert not raw.inverted
+
+
+def test_polarity_resolution_does_not_rescue_noise():
+    """Inverting random bits gives more random bits. Taking the better of two
+    coin flips must not push noise over the line - risk #15 applies here too."""
+    rng = np.random.default_rng(11)
+    for _ in range(3):
+        noise = extract_text(rng.integers(0, 2, 8000, dtype=np.uint8))
+        assert not noise.looks_like_text
+        assert noise.printable_fraction < 0.55

@@ -36,7 +36,7 @@ from pipeline.s3_receive import estimated_ber, llr_to_bits  # noqa: E402
 from pipeline.s4_recover.rank_collapse import blind_recover  # noqa: E402
 from registry import MODULATIONS  # noqa: E402
 from tests.fixtures.local_zoo import make_stream  # noqa: E402
-from tests.fixtures.rf_channel import ChannelSpec, through_channel  # noqa: E402
+from tests.fixtures.corpus import synth  # noqa: E402
 
 OUT = ROOT / "reports"
 TRUE_PERIOD = 96
@@ -152,13 +152,13 @@ def _run_arm(arm: str, coded: np.ndarray) -> list[dict]:
         if arm == "no-interleaver":
             snrs = [10, 5, 3]
         for snr in snrs:
-            spec = ChannelSpec(scheme=name, sps=sps, snr_db=snr,
-                               cfo_norm=0.0012, timing_offset_sym=0.37, seed=7)
-            x, n_used = through_channel(coded, spec)
+            x, fs, symbol_rate, n_used = synth(
+                name, sps=sps, snr_db=snr, bits=coded,
+                cfo_norm=0.0012, timing_offset_sym=0.37, seed=7)
 
             t0 = time.perf_counter()
             r = MODULATIONS[name].receive(
-                x, {"fs": spec.fs, "symbol_rate": spec.symbol_rate})
+                x, {"fs": fs, "symbol_rate": symbol_rate})
             s3_ms = (time.perf_counter() - t0) * 1e3
 
             if r.llrs is None or r.llrs.size == 0:
@@ -259,7 +259,12 @@ def _write_markdown(rows: list[dict], truth=None) -> None:
 
     lines = [
         "# The S3 to S4 junction, measured", "",
-        "**Anvith, 3 Sep.** Real demodulator output into Stage 4 for the first "
+        "**Anvith, 3 Sep. Re-measured 5 Sep** after the lock-threshold, "
+        "acquisition and rate-rescue changes, because this is the boundary "
+        "Nehal's stages consume and a stale one is worse than none. **Every "
+        "number in the summary below is unchanged** - only per-rotation "
+        "intermediates in the CSV moved - so the S3 output S4 sees is the "
+        "same shape it was. Real demodulator output into Stage 4 for the first "
         "time. Every prior ceiling was measured against injected errors; this "
         "one is not.", "",
         "Stream: 120 000 source bits, rate 1/2 K=7, generators 0o171/0o133, no "
@@ -373,9 +378,11 @@ def _write_markdown(rows: list[dict], truth=None) -> None:
         "the first `ok`, and should try the likely rotations first.",
         "",
         "## Method", "",
-        "`tests/fixtures/rf_channel.py` takes Nehal's `local_zoo.make_stream()` "
-        "output, modulates it, and puts it through noise, a carrier offset and "
-        "a fractional timing offset. S3 demodulates blind, from S2-shaped "
+        "`zoo.rf.through_channel` takes coded bits, modulates them, and puts "
+        "them through noise, a carrier offset and a fractional timing offset "
+        "(4 Sep: this was `tests/fixtures/rf_channel.py`, a stand-in, now "
+        "deleted in favour of Dheeraj's real modulator). "
+        "S3 demodulates blind, from S2-shaped "
         "parameters only. The resulting LLRs go to `blind_recover()` unchanged. "
         "Regenerate with `python reports/s3_s4_junction_study.py`; re-render "
         "this file from the CSV with `--render-only`.",

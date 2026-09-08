@@ -28,7 +28,7 @@ from pipeline.s3_receive import (bits_to_symbol_indices, cma_equalise,  # noqa: 
                                  symbol_indices_to_bits)
 from pipeline.s3_receive.carrier import carrier_settle_index, costas_loop  # noqa: E402
 from registry import MODULATIONS  # noqa: E402
-from tests.fixtures.rf_channel import ChannelSpec, through_channel  # noqa: E402
+from tests.fixtures.corpus import synth  # noqa: E402
 
 SPS = 4
 BETA = 0.35
@@ -36,10 +36,12 @@ LINEAR = ["bpsk", "qpsk", "8psk", "16qam"]
 
 
 def make(name: str, n_bits: int = 60000, snr_db: float = 25.0, **kw) -> np.ndarray:
-    bits = np.random.default_rng(kw.pop("seed", 7)).integers(
-        0, 2, n_bits).astype(np.uint8)
-    spec = ChannelSpec(scheme=name, sps=kw.pop("sps", SPS), snr_db=snr_db, **kw)
-    return through_channel(bits, spec)[0]
+    """A parametric signal, made by the zoo's modulator.
+
+    4 Sep: `tests/fixtures/rf_channel.py` is deleted and this goes through
+    `zoo.rf` instead. There is now one modulator in the repo, not two.
+    """
+    return synth(name, n_bits=n_bits, snr_db=snr_db, **kw)[0]
 
 
 # --- filters ---------------------------------------------------------------
@@ -313,27 +315,66 @@ def test_missing_s2_estimate_is_a_clean_failure_not_a_crash():
 
 
 def test_s3_runs_on_blind_estimates_with_no_labels_in_the_path():
-    """The 1 September gate, kept alive after the port.
+    """The 1 September gate, kept alive after the port, and now against the
+    REAL S2 rather than Nehal's stand-in.
 
-    Every other test here hands S3 the symbol rate the fixture used, which is a
-    label. This one estimates it from the signal - squared-magnitude spectrum
-    for the rate, M-th power line search for the offset - and checks the chain
-    still locks. Without it, "the receiver stopped reading the answers" would be
-    a claim resting on a test that no longer exercised it.
+    Every other test here hands S3 the symbol rate the zoo used, which is a
+    label. This one estimates it from the signal with `pipeline.s2_estimate`
+    and checks the chain still reaches bits. Without it, "the receiver stopped
+    reading the answers" would be a claim resting on a test that no longer
+    exercised it.
+
+    It goes through `receive_best` rather than `receive`, and that is the
+    4 Sep point rather than a convenience: S2's top carrier-offset hypothesis
+    is WRONG here, as it is on 33 of the 36 corpus files, and a single
+    `receive` on S2's first guess demodulates to a bit error rate of about
+    0.485 while reporting `ok`. Reading the rest of the ranked list is what
+    makes a blind path work end to end.
+
+    **This test used to fail with the wrong error message, and that cost
+    somebody a day.** When the search was cut short, the first assertion to go
+    was `status == "ok"`, and the message it printed came from the evenness
+    guard: "only 4 of 8 constellation points carry traffic". That reads as an
+    accusation against `lockcheck.ALPHABET_ENTROPY_LIMIT`, and it is not one.
+    A QPSK signal answered as 8-PSK is what a TRUNCATED search returns - four
+    of the eight points are the QPSK constellation and the other four are
+    empty - so the guard firing is the guard doing its job, and loosening it
+    would turn a correct refusal into a confident wrong answer. The truncation
+    is asserted first, and separately, so the failure names the search rather
+    than the check that caught its output.
     """
-    from tests.fixtures.local_s2 import estimate_blind
+    from pipeline.s2_estimate import estimate
+    from pipeline.s3_receive.search import params_from_s2, receive_best
 
     fs = 200000.0
-    bits = np.random.default_rng(9).integers(0, 2, 120000).astype(np.uint8)
-    spec = ChannelSpec(scheme="qpsk", sps=4, snr_db=16.0, fs=fs,
-                       cfo_norm=0.0015, timing_offset_sym=0.42, seed=11)
-    x, _ = through_channel(bits, spec)
+    x, _, symbol_rate, _ = synth("qpsk", n_bits=120000, snr_db=16.0, sps=4,
+                                 cfo_norm=0.0015, timing_offset_sym=0.42, seed=11)
 
-    s2 = estimate_blind(x, fs)
-    assert abs(s2.symbol_rate - spec.symbol_rate) / spec.symbol_rate < 0.01
+    s2 = estimate(x, fs)
+    assert abs(s2.symbol_rate_hz - symbol_rate) / symbol_rate < 0.01
 
-    r = MODULATIONS["qpsk"].receive(x, s2.as_params())   # blind params only
-    assert r.status == "ok" and r.llrs.size > 1000
+    r = receive_best(x, params_from_s2(s2, fs))          # blind params only
+
+    # Before `status`, deliberately. Note this asserts on the search's own
+    # verdict about itself, not on a wall clock - `assert elapsed < N` is the
+    # instrument that produced the problem in the first place, and it fails on
+    # a loaded machine while the code under it is correct.
+    #
+    # The message names neither bound. `search_budget_exhausted` is raised by
+    # the clock OR by `MAX_CHAIN_RUNS`, and `reason` below already names the
+    # one that actually applied; restating a constant here would be a second
+    # claim free to contradict it - which is the failure mode this whole area
+    # keeps producing.
+    assert not r.values["search_budget_exhausted"], (
+        f"the search did not finish: {r.values['search_chain_runs']} chain "
+        f"runs, stopped at one of its two bounds. What it returned is the best "
+        f"of a partial candidate list rather than the search's answer, so read "
+        f"the reason below as a symptom and not as a verdict. The fix is to "
+        f"find why the answer got expensive - NOT to raise SEARCH_BUDGET_S, "
+        f"and NOT to loosen ALPHABET_ENTROPY_LIMIT. reason: {r.reason}")
+    assert r.status == "ok", r.reason
+    assert r.llrs is not None and r.llrs.size > 1000
+    assert r.values["modulation"] == "qpsk"
 
 
 def test_no_label_lookup_anywhere_in_the_stage():
