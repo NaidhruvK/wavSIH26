@@ -50,7 +50,7 @@ import pipeline.s5_decode.conv_code      # noqa: F401  (registers conv)
 import pipeline.s5_decode.rs_code        # noqa: F401  (registers RS)
 from pipeline.s4_recover.interleavers import (
     CCSDS_DEPTHS, symbol_deinterleave, symbol_interleave)
-from pipeline.s6_frame.ccsds import recover_ccsds
+from pipeline.s6_frame.ccsds import peel_ccsds_outer, recover_ccsds
 from pipeline.s6_frame.descramble import (
     CCSDS_RANDOMISER, LEGACY_ZOO_RANDOMISER, STANDARD_RANDOMISERS,
     additive_keystream, descramble_known)
@@ -330,3 +330,33 @@ def test_uncoded_noise_is_not_claimed_as_a_real_order_profile():
     res = recover_ccsds(noise)
     assert res.status != "ok"
     assert res.payload == b""
+
+
+def test_peel_ccsds_outer_recovers_source_bits_from_post_viterbi():
+    """Unit test for peel_ccsds_outer on genuine post-Viterbi bits."""
+    from registry import CODES
+    bits, payload, meta = make_ccsds_stream(n_blocks=8, depth=4,
+                                            payload_text=MSG, seed=11)
+    # Decode convolutional inner layer via Viterbi
+    viterbi_bits = CODES["conv"].decode(bits, {
+        "n": 2, "memory": 6, "generators_octal": (0o171, 0o133),
+        "span": 14, "parity_taps": []})
+
+    outer = peel_ccsds_outer(viterbi_bits)
+    assert outer is not None
+    payload_bits, params = outer
+    recovered = np.packbits(payload_bits).tobytes()
+    assert recovered[:len(payload)] == payload
+    assert params["n"] == 255
+    assert params["k"] == 223
+    assert params["randomiser"] == "ccsds-131.0-B"
+    assert params["interleaver"] == {"family": "ccsds-symbol", "depth": 4, "n_bytes": 255}
+    assert params["errata_rate"] == 0.0
+
+
+def test_peel_ccsds_outer_returns_none_on_pure_conv_stream():
+    """Verify peel_ccsds_outer returns None quickly on pure convolutional stream."""
+    rng = np.random.default_rng(42)
+    pure_conv_viterbi = rng.integers(0, 2, 8000, dtype=np.uint8)
+    outer = peel_ccsds_outer(pure_conv_viterbi)
+    assert outer is None

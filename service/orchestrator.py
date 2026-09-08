@@ -643,12 +643,17 @@ def adapt_s5(raw: Any, elapsed_ms: float,
             confidence = 0.0
             reason = val.get("reason") or "decode is not consistent with the input"
 
+    hyp_value = "concatenated_ccsds_decoded" if (detail or {}).get("concatenated") else "viterbi_decoded"
+    if (detail or {}).get("concatenated"):
+        evidence += " + RS(%s,%s) outer decode verified" % (
+            (detail or {}).get("rs_n", 255), (detail or {}).get("rs_k", 223))
+
     return StageResult(
         stage="s5_decode",
         status=status,
         confidence=confidence,
         values=values,
-        hypotheses=[Hypothesis(value="viterbi_decoded", score=confidence, evidence=evidence)],
+        hypotheses=[Hypothesis(value=hyp_value, score=confidence, evidence=evidence)],
         artifacts={},
         elapsed_ms=elapsed_ms,
         reason=reason,
@@ -1214,6 +1219,28 @@ def orchestrate(
                     decoded, stream[:budget], params)
             except Exception as exc:  # never let a check sink the stage
                 logger.warning("S5 re-encode validation failed: %s", exc)
+
+        # Check for optional outer CCSDS layer (randomiser -> symbol deinterleave -> RS)
+        # S5 owns FEC, so if an outer RS code is verified, S5 produces the true source bits.
+        try:
+            from pipeline.s6_frame.ccsds import peel_ccsds_outer
+            outer = peel_ccsds_outer(decoded)
+            if outer is not None:
+                outer_bits, outer_params = outer
+                decoded = outer_bits
+                s5_detail["outer_fec"] = "reed-solomon"
+                s5_detail["concatenated"] = True
+                s5_detail["rs_n"] = outer_params.get("n")
+                s5_detail["rs_k"] = outer_params.get("k")
+                s5_detail["rs_errata_rate"] = outer_params.get("errata_rate")
+                s5_detail["rs_blocks_checked"] = outer_params.get("blocks_checked")
+                if outer_params.get("randomiser"):
+                    s5_detail["randomiser"] = outer_params["randomiser"]
+                if outer_params.get("interleaver"):
+                    s5_detail["outer_interleaver"] = outer_params["interleaver"]
+        except Exception as exc:
+            logger.warning("Optional S5 CCSDS outer FEC check failed: %s", exc)
+
         return decoded
 
     s5_res, s5_raw = _execute_stage(

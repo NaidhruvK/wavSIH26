@@ -959,6 +959,59 @@ class TestOrchestrator(unittest.TestCase):
             "the soft information - that is a confident decode of noise")
         self.assertIn("soft", (s5.reason or "").lower())
 
+    def test_orchestrator_s5_decodes_concatenated_ccsds_and_feeds_s6(self):
+        """End-to-end test verifying orchestrator S5 decodes outer RS and feeds S6."""
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy not installed in host environment")
+
+        from zoo.ccsds import make_ccsds_stream
+
+        test_msg = "RAAYA CCSDS E2E ORCHESTRATION PAYLOAD TEST DATA 12345"
+        bits, payload, meta = make_ccsds_stream(
+            n_blocks=8, depth=4, payload_text=test_msg, seed=11
+        )
+
+        s4 = DummyRecoveryResult()
+        s4.status = "ok"
+        s4.code = type("Code", (), {"n": 2, "memory": 6, "span": 14})()
+        s4.generators_octal = (0o171, 0o133)
+        s4.offset = 0
+        s4.interleaver = None
+
+        # Convert bits to LLR-like convention (+ve for 0, -ve for 1)
+        llrs = np.where(bits == 0, 2.0, -2.0)
+
+        overrides = make_clean_overrides()
+        overrides.pop("s5_decode", None)  # exercise real S5 path
+        overrides.pop("s6_frame", None)   # exercise real S6 path
+        overrides["s3_receive"] = lambda iq, params: DummyS3Result(llrs=llrs)
+        overrides["s4_recover"] = lambda bits: s4
+
+        with unittest.mock.patch("service.orchestrator.S5_DECODE_MAX_BITS", 24_000):
+            report = orchestrate(
+                run_id="run-ccsds-e2e",
+                file_path=self.test_file,
+                runner=self.runner,
+                stage_overrides=overrides,
+                db_path=self.db_path,
+            )
+
+        s5 = next(s for s in report.stages if s.stage == "s5_decode")
+        self.assertEqual(s5.status, StageStatus.OK)
+        self.assertEqual(s5.hypotheses[0].value, "concatenated_ccsds_decoded")
+        self.assertEqual(s5.values.get("outer_fec"), "reed-solomon")
+        self.assertEqual(s5.values.get("rs_n"), 255)
+        self.assertEqual(s5.values.get("rs_k"), 223)
+        self.assertEqual(s5.values.get("randomiser"), "ccsds-131.0-B")
+        self.assertIn("rs(255,223)", s5.hypotheses[0].evidence.lower())
+
+        s6 = next(s for s in report.stages if s.stage == "s6_frame")
+        self.assertEqual(s6.status, StageStatus.OK)
+        self.assertIn("RAAYA CCSDS E2E", s6.values.get("text", ""))
+        self.assertGreater(s6.values.get("printable_fraction", 0.0), 0.9)
+
 
 if __name__ == "__main__":
     unittest.main()
