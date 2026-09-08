@@ -2523,6 +2523,250 @@ merges rather than guess at it now.
 
 ---
 
+## 8 Sep, part 2 - the S5 seam hands soft LLRs to a byte-domain de-interleaver,
+## and the re-encode check I added this morning cannot see it
+
+Re-verified this morning's work against the tip rather than trusting my own
+write-up, and found one more defect of the same family underneath it.
+
+**Full suite on this branch before the fix below: 843 passed, 4 skipped, 2
+xfailed, 0 failed, 0 errors in 26m11s.** My `a3e69df` message says 842; I
+measured 843 on a clean run and cannot account for the extra one. Zero failures
+either way, but the number in that commit message should not be quoted as exact.
+
+### The defect
+
+`_run_s5` de-interleaves with whatever family S4 names:
+
+    stream = intl_plugin.deinterleave(stream, **intl.params)
+
+`ccsds-symbol` works in the Reed-Solomon BYTE domain - `_to_bytes` packs bits,
+so it returns uint8. That is correct where it belongs (after Viterbi, in
+`s6_frame/ccsds.py`) and destructive here. Measured on 4096 float LLRs:
+
+| de-interleaver | dtype out | negative LLRs surviving |
+|---|---|---|
+| `block_deinterleave` | float64 | 2066 of 2107 |
+| `symbol_deinterleave` | **uint8** | **0 of 2107**, all values now {0, 1} |
+
+`conv_code.decode` then sees dtype uint8 and silently takes its HARD path. It
+raises nothing, returns 4074 bits, and `validate()` calls that **ok: True**
+at entropy 0.9992.
+
+**Reachable** because `ccsds-symbol` at depth 1 is the IDENTITY permutation, so
+it clears the functional gate on exactly the streams the direct reading clears.
+The shortest-span tie-break at `rank_collapse.py:840` excludes it only while
+`direct` is non-None, and the direct reading is rejected whenever
+`code_direct.span != first` - the family gate has no such constraint.
+
+### The part that matters: my own re-encode check does not catch this
+
+I claimed this morning that `validate_against` is the honest test of a decode.
+It is - but it compares the decode against the POST-de-interleave stream, and
+that stream is precisely what got destroyed. It measures garbage against
+garbage:
+
+| input | `validate_against` | re-encode BER | S5 reports |
+|---|---|---|---|
+| random normal LLRs | ok=False | 0.2826 | low_confidence |
+| linspace LLRs | **ok=True** | **0.0059** | **ok** |
+
+A uint8 truncation of a smooth ramp is highly structured, the decoder locks
+onto that structure, and the re-encode agrees with itself. So the safety net is
+input-dependent, not a guarantee, and the failure mode is a confident `ok` on
+noise - the exact class `a3e69df` was written to close, one layer further in.
+
+### The fix, and where it does NOT go
+
+Not in the plug-in: the cast is legitimate there. The guard goes at the seam,
+which is where the conventions say guards go. `_run_s5` now records whether it
+was handed soft values and declines with the reason if the de-interleaver did
+not hand them back.
+
+**Scope checked, and it is narrow.** The CLI is unaffected - `cli.py:40` loads
+`dtype=np.uint8`, so it is hard-bits-only by construction and the cast is a
+no-op. The three `deinterleave` sites in `rank_collapse.py` are all the
+RECOVERY path, which hard-slices by design. Orchestrator-only.
+
+`tests/service/test_orchestrator.py::test_s5_declines_a_deinterleaver_that_destroys_soft_values`
+asserts the premise (that `symbol_deinterleave` still destroys soft values, so
+the test explains itself if that ever changes) and then that S5 declines.
+**Confirmed it FAILS on the pre-guard code, reporting `StageStatus.OK`** - not
+low_confidence, which is how I found that the re-encode check was blind to it.
+`tests/service` + `tests/contract` + `tests/e2e` with the guard: 142 passed,
+4 skipped, 0 failed.
+
+---
+
+## 8 Sep - the orchestrator could never decode a file, and the suite could not
+## have told us. Both fixed, with the test that proves it.
+
+**Start here: my 7 Sep numbers were measured on `main@100a30c` and main is now
+`2fef069` - 23 commits on, all three of you.** Re-verified everything below
+against the current tip rather than trusting the write-ups.
+
+**Closed by you, confirmed by me, do not re-work:**
+
+| | |
+|---|---|
+| **S3 flake** | **Gone.** 8/8 pass at ~10.5 s against the 20 s budget - on MY box, the slow one Anvith could not reproduce it on. `e7b9649` cut 8 chain runs to 3. |
+| **Registry bug** | **Gone** (`750a05f`). 6 modulations, 4 interleavers, zero load errors. |
+| **Core-lock gate** | 17.7 s twice consecutively against the 90 s budget. |
+| `classifier.txt` autocrlf | Closed - loads, 1200 trees, 12 features. |
+
+### 1. S5 COULD NOT DECODE ANY FILE, AND THE TYPE ERROR WAS THE SMALL HALF
+
+`service/orchestrator.py` had one line that could not work on **any** input:
+
+    code_params = s4_raw.code if hasattr(s4_raw, "code") else None
+    return conv_plugin.decode(llrs, code_params or s4_res.values)
+
+- S4 **ok** -> passes `CodeStructure(n, memory, span, consistent)`, which carries
+  **no generators** (they are a sibling field on `RecoveryResult`) ->
+  `TypeError: 'CodeStructure' object is not subscriptable`.
+- S4 **failed** -> `code` is None, the fallback fires, and `s4_res.values` has
+  `code_rate`/`K` not `n`/`memory` -> `KeyError: 'n'`.
+- A dataclass is always truthy, so on the success path `or` never fired.
+
+Reproduced both live, on three corpus files.
+
+**The half that matters more: it never applied the offset and de-interleaver S4
+had just recovered.** It decoded the stream as it arrived. Measured on
+`qpsk_15dB_2010.wav`, same file, same recovered parameters:
+
+| | re-encode BER |
+|---|---|
+| decode as it arrives (what main did) | **0.2948** |
+| offset + de-interleave first (fixed) | **0.0005** |
+
+**So the obvious fix - cast the params - would have shipped a stage that
+returned confident noise and reported `ok`.** The crash is the only reason
+nobody had seen it. S5 now applies what S4 found, and runs the plug-in's own
+`validate_against` re-encode check; a decode that disagrees with its input is
+reported `low_confidence`, not `ok`.
+
+**Full S0->S6 now completes - the number I have been saying could not be
+measured yet: 11.5 s, `in_envelope`, all seven stages `ok`, re-encode BER
+0.0008.** Against a 90 s budget.
+
+**S5 also has to fit a 15 s per-stage cap, and Viterbi is ~0.57 ms/coded-bit.**
+The CLI's `DECODE_BITS = 24_000` is right for the CLI, which has no per-stage
+timeout; carried into the service it put the slowest stage **1.1x** inside its
+own deadline - the same shape as the S3 flake Anvith just spent a day removing.
+Service decodes 12 000 (749 characters, 2.2x margin, 7.6 s); the CLI is
+untouched.
+
+### 2. TWO STAGES REPORTED `ok` ON NO INPUT
+
+    adapt_s0 -> FAILED    adapt_s4 -> OK   <-
+    adapt_s1 -> FAILED    adapt_s5 -> FAILED
+    adapt_s2 -> LOW_CONF  adapt_s6 -> OK   <-
+    adapt_s3 -> FAILED
+
+`adapt_s4` because `getattr(raw, "status", "ok")` defaults to `"ok"`;
+`adapt_s6` because the status was hardcoded. I watched S6 report **`ok` in 0 ms
+with `n_bytes: 0`** immediately after S5 crashed - the last stage, the one that
+shows the recovered message, green on a run that recovered nothing. Both now
+fail with a reason.
+
+### 3. ANVITH - YOUR LDPC PLUG-IN WAS INVISIBLE TO THE SERVICE
+
+`REQUIRED_PLUGIN_MODULES` listed `conv_code` and `rs_code` but not
+`ldpc_code`, so the API came up `CODES = {conv, reed-solomon}` while your unit
+tests stayed green - a missing plug-in looks exactly like a scheme nobody tried.
+Not your mistake and not Naidhruv's: the loader was written at 11:14, you moved
+the plug-in into `pipeline/s5_decode/` at 14:43. A hand-maintained list in a
+plug-in architecture will go stale again, so there is now a test that scans
+`pipeline/` for top-level `register_*()` calls and fails if any module is not
+loaded. Verified it catches the real gap.
+
+### 4. MAIN WAS RED - 41 FAILED, 6 ERRORS - AND ONLY 3 WERE PRODUCT BUGS
+
+My 7 Sep run was "678 passed, 1 failed". A clean run on `2fef069`:
+**41 failed, 791 passed, 6 errors in 25m33s.** Five root causes, and the tally
+reconciles exactly (14+14+10+1+1+1 failed, 4+2 errors):
+
+- **28 failures: `httpx` was never pinned.** `fastapi.testclient` needs it;
+  without it `service/main.py` *silently* falls back to its own
+  `FallbackTestClient`, which is itself broken (`TypeError: cannot unpack
+  non-iterable Route object`). One missing pin, 28 unrelated-looking TypeErrors.
+  `httpx2==2.12.0` pinned (starlette 1.6.0 wants that name specifically).
+- **14 failures: registry pollution.** `tests/contract/test_registry_contract.py`
+  called `clear()` in `tearDown` and could never undo it - the real plug-ins
+  register at *import* time, which does not re-run. Every test after it in the
+  process saw an empty registry. Proved by ordering: the S3-S4-S5 chain file
+  passes 4/4 alone and errors 4/4 after it; `test_s3_ldpc_junction.py` passes
+  27/27 alone and fails 24 after it. **Anvith's LDPC work was never broken.**
+  Now snapshots and restores.
+- **The e2e suite failed a DIFFERENT RANDOM SUBSET every run.** Root cause is
+  Windows-only: `_wait_for_job` returned when the run row went terminal, but the
+  worker thread was still assembling the report and closing its SQLite handle,
+  so `tearDown` deleted the temp directory out from under it -
+  `PermissionError [WinError 32]`. On Linux the unlink succeeds and the race is
+  invisible, **so this was only ever red on our machines and green in CI.** Now
+  joins the job future; 14/14 on five consecutive runs.
+- **`test_default_config_values` asserted `endswith("reports/artifacts")`** with
+  a forward slash - passes in the container, fails on every one of our machines.
+  Same Linux-only blind spot. Compares path parts now.
+- **`service/cli.py` crashed on the ORDINARY success path.** It formatted
+  `inferred_ber` guarding on key presence only, and `adapt_s4` always sets that
+  key - it is `None` unless the *statistical* search ran. `f"{None:.4f}"`.
+  `rank_collapse.py:158` gets this right; the service copy did not. Same trap
+  fixed on `snr_db`.
+
+`test_registry_endpoint` hardcoded `modulations=6, interleavers=3, codes=2`.
+Those were a snapshot, not invariants - interleavers went to 4 with the CCSDS
+symbol interleaver and codes to 3 with LDPC, so the test broke on precisely the
+event the registry exists to make cheap. It now asserts the known plug-ins are
+present and that the counts match the lists.
+
+### 5. WHY ALL OF THIS SURVIVED 791 GREEN TESTS
+
+Every one of these bugs lives at a seam between two of us, **and every
+integration test stubs the seam.** `make_clean_overrides()` and
+`get_deterministic_pipeline()` replace all seven stages with dummies, and not
+one test in `tests/service/` or `tests/e2e/` referenced a corpus file - I
+checked all ten. `conv_plugin.decode(llrs, s4_raw.code)` had **never once
+executed under test.**
+
+Compounded by assertions that cannot fail:
+`test_e2e_successful_wav_analysis` asserts
+`report["status"] in ("completed", "failed")` - the only two terminal values -
+and then checks S0 only. A test named "successful analysis" passes when every
+stage after S0 fails.
+
+**So there is now `tests/e2e/test_e2e_real_signal.py`: one real capture, the
+real `orchestrate()`, no stubs.** It asserts all seven stages `ok`, that S4
+recovers the interleaver period and generators in the capture's own truth file,
+that the re-encode BER is under 0.01, that S5 declares its decode a prefix, and
+that the run fits 90 s. 14 s. **Checked that it fails on the pre-fix code - 5
+failures naming `'CodeStructure' object is not subscriptable`** - because a
+regression test nobody has seen fail is not evidence.
+
+### 6. NAIDHRUV - FOUR OF YOUR COMMITS ARE STILL UNMERGED AND TWO FIX THIS
+
+`origin/naidhruv/integration` is 4 ahead, 12 behind. `87776dc` removes the
+`tests.fixtures.local_s2` fallback - shipping service code importing from
+`tests/`, the same defect I fixed in my own CLI on 7 Sep. **I removed it here
+too, independently, before I found you had already done it** - it was also
+unreachable, since `pipeline.s2_estimate.estimate` has existed since 1 Sep. And
+`fc259ea` cuts the Docker context by 118 MB.
+
+**Your `fc259ea` is safe to merge and my 6 Sep note saying otherwise is wrong.**
+I said excluding the corpus and deleting `local_zoo` were "the same decision".
+They stopped being the same decision when I ported the CLI to `zoo.bits_only`:
+verified `--demo --text` runs clean with `zoo/corpus/` entirely absent.
+
+**Still open:** the RF arm of the CCSDS corpus is untouched and still mine;
+`tests/fixtures/local_zoo.py` is still load-bearing for 12 test files and 7
+studies; the descramble step between de-interleave and decode is in the CLI but
+not in the service's S5 - it is an S6 concern and needs soft-domain handling, and
+the RF corpus is `"scrambler": null`, so nothing is wrong today.
+
+**Blocked on:** nothing.
+
+---
+
 ## 5 Sep - the concatenated CCSDS chain. Gate met, both arms.
 
 `reports/ccsds_chain.md`, `pipeline/s6_frame/ccsds.py`,
@@ -2680,7 +2924,8 @@ measured at all yet, because the orchestrator is Naidhruv's and still cannot
 run S3 or S5.**
 
 **THE STALE-COPY THEORY IS DEAD. Do not spend time on it.**
-`OneDrive\Desktopaaya` is already gone and `OneDrive\Desktop\SIH` contains
+`OneDrive\Desktop
+aaya` is already gone and `OneDrive\Desktop\SIH` contains
 **zero entries** - an empty Files On-Demand placeholder (reparse tag
 0x9000e01a), not a real copy. Deleting it frees nothing and would only remove
 it from the cloud. The churn is `OneDrive\Desktop` holding **~250 000 files
