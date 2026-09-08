@@ -22,3 +22,9 @@ models/dataset_holdout.csv -text
 # first payload containing a newline byte gets silently mangled on any
 # Windows checkout otherwise, exactly like classifier.txt was.
 *.bin binary
+
+# 7 Sep, learned from the .bin gap above rather than waiting for a third
+# person to catch a third instance: zoo/corpus/s0_sniffer{,_known_gaps}/*.iq
+# is raw int8/int16/float32 sample bytes -- the exact same autocrlf risk,
+# marked up front this time instead of after the fact.
+*.iq binary

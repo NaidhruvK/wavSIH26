@@ -53,6 +53,7 @@ class S2Result:
     fsk_order_hint: int | None = None
     fsk_order_hypotheses: list = field(default_factory=list)     # [(order, score), ...] ranked
     constant_envelope: bool | None = None
+    envelope_cv: float | None = None      # raw std(|x|)/mean(|x|) constant_envelope was decided from
     modulation_hypotheses: list = field(default_factory=list)    # [(class_name, prob), ...] ranked
     modulation_low_confidence: bool | None = None
     reason: str | None = None
@@ -348,6 +349,24 @@ def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None,
     classifier has anything to say (e.g. while deciding which resample
     ratio to hand it).
 
+    7 Sep, Nehal: this routing statistic (std(|x|)/mean(|x|) < 0.25) is an
+    SNR test wearing a modulation test's name -- measured identically for
+    2fsk and 4fsk to three decimal places at every SNR, and it tracks
+    1/sqrt(2*SNR_linear) almost exactly. It is not choosing between
+    modulations; it is choosing between "SNR above ~9dB" and not, and below
+    that line it silently misroutes FSK to the linear CFO path with no
+    failure signal (status stays "ok"). His ask, explicitly not a redesign:
+    a decision that is really an SNR test should say so in the result
+    rather than only in a report a caller has to already know to read.
+    envelope_cv below is that -- the raw statistic, always populated (even
+    when constant_envelope is passed in explicitly and this function never
+    had to decide anything from it), so any consumer can apply its own
+    policy instead of trusting `constant_envelope`/`cfo_hz` blind. Not
+    resolved here: what threshold on envelope_cv should make a caller
+    distrust cfo_hz is exactly the crossover reports/s2_envelope.md already
+    proved has no single right answer -- surfacing the number is the
+    honest move, inventing a second undocumented threshold is not.
+
     classify=True runs the trained modulation classifier in-process
     (models.classify, loaded once at its own import, not retrained here)
     on S2's own symbol-rate estimate -- never on truth. Imported lazily,
@@ -360,9 +379,10 @@ def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None,
         return S2Result(status="failed", fs=fs, symbol_rate_hz=None,
                          reason="capture too short to estimate anything")
     try:
+        a = np.abs(iq)
+        envelope_cv = float(np.std(a) / (np.mean(a) + 1e-30))
         if constant_envelope is None:
-            a = np.abs(iq)
-            constant_envelope = bool(np.std(a) / (np.mean(a) + 1e-30) < 0.25)
+            constant_envelope = bool(envelope_cv < 0.25)
 
         if constant_envelope:
             rate, rate_score, rate_hyps = estimate_symbol_rate_fsk(iq, fs)
@@ -393,6 +413,7 @@ def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None,
                          cfo_alias_hypotheses=cfo_alias_hyps, fsk_order_hint=fsk_order,
                          fsk_order_hypotheses=fsk_order_hyps,
                          constant_envelope=constant_envelope,
+                         envelope_cv=envelope_cv,
                          modulation_hypotheses=mod_hyps,
                          modulation_low_confidence=mod_low_conf)
     except Exception as e:

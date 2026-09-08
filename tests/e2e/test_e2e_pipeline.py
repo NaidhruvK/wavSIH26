@@ -271,9 +271,32 @@ class TestE2EPipeline(unittest.TestCase):
                 data = resp.json()
                 st = data.get("status", "").lower()
                 if st in ("completed", "failed"):
+                    # The run row goes terminal BEFORE the worker thread is
+                    # done - it still has the report to assemble and its SQLite
+                    # connection to close. Returning here left that thread
+                    # running into tearDown, which deletes the temp directory:
+                    # on Windows you cannot unlink an open file, so the suite
+                    # failed with PermissionError [WinError 32] on a different
+                    # random subset of tests every run. (On Linux the unlink
+                    # succeeds and the race is invisible, which is why this was
+                    # only ever red on the dev machines.) Join the future so
+                    # "terminal" means the work is actually finished.
+                    self._join_job(run_id)
                     return data
             time.sleep(0.02)
         self.fail(f"Job {run_id} did not complete within {timeout_sec}s")
+
+    @staticmethod
+    def _join_job(run_id: str, timeout_sec: float = 10.0) -> None:
+        """Block until the background worker for `run_id` has actually exited."""
+        job = job_runner.get_job(run_id)
+        if job is not None and job.future is not None:
+            try:
+                job.future.result(timeout=timeout_sec)
+            except Exception:
+                # A failed job is a legitimate outcome for several of these
+                # tests; all we need is for the thread to be finished.
+                pass
 
     # =========================================================================
     # 1. Successful .wav analysis flow

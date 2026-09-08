@@ -16,7 +16,11 @@ from service.config import AppConfig, config
 class TestConfig(unittest.TestCase):
     def test_default_config_values(self):
         self.assertTrue(str(config.upload_dir).endswith("uploads"))
-        self.assertTrue(str(config.artifact_dir).endswith("reports/artifacts"))
+        # Compare path PARTS, not a string with a hardcoded "/" separator: on
+        # Windows this is ...\reports\artifacts, so the string form passed in
+        # the Linux container and failed on every developer machine - the worst
+        # direction for a test to be wrong in.
+        self.assertEqual(config.artifact_dir.parts[-2:], ("reports", "artifacts"))
         self.assertTrue(str(config.db_path).endswith("raaya.db"))
         self.assertEqual(config.max_upload_size_bytes, 2 * 1024 * 1024 * 1024)
         self.assertEqual(config.max_workers, 4)

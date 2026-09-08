@@ -134,7 +134,10 @@ def handle_analyze(args: argparse.Namespace) -> int:
             status_tag = f"[{stage.status.value.upper()}]"
             details = []
             if stage.values:
-                if "snr_db" in stage.values:
+                # Same key-present-but-None trap as inferred_ber below: adapt_s1
+                # sets snr_db unconditionally and it is None whenever S1 could
+                # not measure one.
+                if stage.values.get("snr_db") is not None:
                     details.append(f"SNR: {stage.values['snr_db']:.1f} dB")
                 if "modulation" in stage.values:
                     details.append(f"Mod: {stage.values['modulation']}")
@@ -144,9 +147,16 @@ def handle_analyze(args: argparse.Namespace) -> int:
                     details.append(f"Fs: {stage.values['sample_rate']:.0f} Hz")
                 if "evm_percent" in stage.values and stage.values["evm_percent"]:
                     details.append(f"EVM: {stage.values['evm_percent']:.1f}%")
-                if "inferred_ber" in stage.values:
+                # `in` alone is not enough here, unlike the lines above which
+                # all guard on the value too. adapt_s4 ALWAYS sets this key and
+                # it is None on the exact path - only the statistical search
+                # infers a BER - so `analyze` crashed with "unsupported format
+                # string passed to NoneType.__format__" on the ordinary
+                # success case. rank_collapse.py:158 gets this right; this copy
+                # did not.
+                if stage.values.get("inferred_ber") is not None:
                     details.append(f"BER: {stage.values['inferred_ber']:.4f}")
-                if "n_bytes" in stage.values:
+                if stage.values.get("n_bytes") is not None:
                     details.append(f"{stage.values['n_bytes']} bytes")
             detail_str = f" - {', '.join(details)}" if details else ""
             if stage.reason:

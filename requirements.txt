@@ -57,3 +57,10 @@ python-multipart==0.0.32     # required for file upload - easy to forget
 # tests
 pytest==9.1.1
 pytest-cov==7.1.0
+# fastapi.testclient is a thin wrapper over an HTTP client that starlette does
+# NOT depend on itself. Without this, `from fastapi.testclient import TestClient`
+# raises, service/main.py silently falls back to its own FallbackTestClient, and
+# every service and e2e test fails with an unrelated-looking TypeError - 28 of
+# the 41 failures on main on 7 Sep. starlette 1.6.0 wants httpx2 specifically
+# (plain httpx still imports but is deprecated there).
+httpx2==2.12.0

@@ -80,10 +80,27 @@ class TestRestAPI(unittest.TestCase):
         self.assertIn("codes", data)
         self.assertIsInstance(data["counts"], dict)
         if "errors" not in data:
-            # Fully loaded DSP environment
-            self.assertEqual(data["counts"]["modulations"], 6)
-            self.assertEqual(data["counts"]["interleavers"], 3)
-            self.assertEqual(data["counts"]["codes"], 2)
+            # Fully loaded DSP environment.
+            #
+            # This asserted modulations=6, interleavers=3, codes=2. Those are
+            # not invariants - they are a snapshot. interleavers went to 4 when
+            # the CCSDS symbol interleaver landed and codes to 3 when the LDPC
+            # plug-in did, so the test broke on exactly the event the registry
+            # exists to make cheap: adding a scheme in one file and one line.
+            # Assert what the API actually promises instead - that every
+            # plug-in the pipeline registers is visible through the endpoint,
+            # and that the advertised counts match the advertised lists.
+            for family in ("modulations", "interleavers", "codes"):
+                self.assertEqual(data["counts"][family], len(data[family]),
+                                 f"counts[{family}] disagrees with the {family} list")
+
+            names = {f: {e["name"] for e in data[f]}
+                     for f in ("modulations", "interleavers", "codes")}
+            self.assertLessEqual({"bpsk", "qpsk", "8psk", "16qam", "2fsk", "4fsk"},
+                                 names["modulations"])
+            self.assertLessEqual({"block", "diagonal", "convolutional"},
+                                 names["interleavers"])
+            self.assertLessEqual({"conv", "reed-solomon"}, names["codes"])
         else:
             # Lightweight host environment: errors should be surfaced and non-empty
             self.assertIsInstance(data["errors"], dict)
@@ -284,7 +301,12 @@ class TestRestAPI(unittest.TestCase):
             for m in app.user_middleware:
                 if "CORS" in getattr(m.cls, "__name__", ""):
                     cors_found = True
-                    self.assertFalse(m.options.get("allow_credentials", False))
+                    # starlette renamed Middleware.options -> .kwargs; keep both
+                    # so this asserts the policy rather than the library version.
+                    opts = getattr(m, "kwargs", None)
+                    if opts is None:
+                        opts = getattr(m, "options", {})
+                    self.assertFalse(opts.get("allow_credentials", False))
         elif hasattr(app, "middlewares"):
             for cls, opts in app.middlewares:
                 if cls is None or "CORS" in getattr(cls, "__name__", ""):

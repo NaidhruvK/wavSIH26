@@ -330,6 +330,18 @@ def test_s3_runs_on_blind_estimates_with_no_labels_in_the_path():
     `receive` on S2's first guess demodulates to a bit error rate of about
     0.485 while reporting `ok`. Reading the rest of the ranked list is what
     makes a blind path work end to end.
+
+    **This test used to fail with the wrong error message, and that cost
+    somebody a day.** When the search was cut short, the first assertion to go
+    was `status == "ok"`, and the message it printed came from the evenness
+    guard: "only 4 of 8 constellation points carry traffic". That reads as an
+    accusation against `lockcheck.ALPHABET_ENTROPY_LIMIT`, and it is not one.
+    A QPSK signal answered as 8-PSK is what a TRUNCATED search returns - four
+    of the eight points are the QPSK constellation and the other four are
+    empty - so the guard firing is the guard doing its job, and loosening it
+    would turn a correct refusal into a confident wrong answer. The truncation
+    is asserted first, and separately, so the failure names the search rather
+    than the check that caught its output.
     """
     from pipeline.s2_estimate import estimate
     from pipeline.s3_receive.search import params_from_s2, receive_best
@@ -342,6 +354,24 @@ def test_s3_runs_on_blind_estimates_with_no_labels_in_the_path():
     assert abs(s2.symbol_rate_hz - symbol_rate) / symbol_rate < 0.01
 
     r = receive_best(x, params_from_s2(s2, fs))          # blind params only
+
+    # Before `status`, deliberately. Note this asserts on the search's own
+    # verdict about itself, not on a wall clock - `assert elapsed < N` is the
+    # instrument that produced the problem in the first place, and it fails on
+    # a loaded machine while the code under it is correct.
+    #
+    # The message names neither bound. `search_budget_exhausted` is raised by
+    # the clock OR by `MAX_CHAIN_RUNS`, and `reason` below already names the
+    # one that actually applied; restating a constant here would be a second
+    # claim free to contradict it - which is the failure mode this whole area
+    # keeps producing.
+    assert not r.values["search_budget_exhausted"], (
+        f"the search did not finish: {r.values['search_chain_runs']} chain "
+        f"runs, stopped at one of its two bounds. What it returned is the best "
+        f"of a partial candidate list rather than the search's answer, so read "
+        f"the reason below as a symptom and not as a verdict. The fix is to "
+        f"find why the answer got expensive - NOT to raise SEARCH_BUDGET_S, "
+        f"and NOT to loosen ALPHABET_ENTROPY_LIMIT. reason: {r.reason}")
     assert r.status == "ok", r.reason
     assert r.llrs is not None and r.llrs.size > 1000
     assert r.values["modulation"] == "qpsk"

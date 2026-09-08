@@ -15,9 +15,13 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore[assignment]
 
 from contracts import AnalysisReport, Hypothesis, StageResult, StageStatus
-from registry import CODES, MODULATIONS
+from registry import CODES, INTERLEAVERS, MODULATIONS
 
 from .config import config
 from .db import (
@@ -88,10 +92,35 @@ REQUIRED_PLUGIN_MODULES = (
     "pipeline.s4_recover.interleavers",
     "pipeline.s5_decode.conv_code",
     "pipeline.s5_decode.rs_code",
+    # 7 Sep: ldpc_code moved into pipeline/s5_decode/ (767a7ab) 3.5 h AFTER this
+    # tuple was written, so the service registered every plug-in except that
+    # one - CODES came up {conv, reed-solomon} and the LDPC path was dead in
+    # the API while passing its own unit tests. Any module with a top-level
+    # register_*() call belongs here; tests/service/test_orchestrator.py now
+    # asserts this tuple covers all of them so a future move fails loudly.
+    "pipeline.s5_decode.ldpc_code",
 )
 
 _PLUGIN_LOAD_ERRORS: dict[str, str] = {}
 _PLUGINS_LOADED: bool = False
+
+# Coded bits handed to the Viterbi decoder in one stage. commpy's decoder is
+# pure Python and linear in stream length, ~0.57 ms/bit on the slower of the
+# two dev boxes, and the service caps every stage at
+# config.stage_timeout_seconds = 15.0. Measured on qpsk_15dB_2010.wav there:
+#
+#     24 000 bits -> 13.6 s   1499 chars    1.1x margin
+#     16 000 bits ->  9.8 s    999 chars    1.5x
+#     12 000 bits ->  6.8 s    749 chars    2.2x   <- chosen
+#
+# 24 000 is what pipeline/s4_recover/cli.py uses, and it is right there: the
+# CLI has no per-stage timeout. Carrying it into the service put the slowest
+# stage 1.1x inside its own deadline, which is the shape of the S3 flake Anvith
+# spent 7 Sep removing - correctness that depends on how much wall clock the
+# stage happens to get. Half the budget still recovers 749 characters, which
+# proves the chain no less than 1499. The full stream stays in
+# values["coded_bits_available"] for anyone who wants to decode all of it.
+S5_DECODE_MAX_BITS = 12_000
 
 
 def load_plugins(force: bool = False, raise_on_error: bool = False) -> dict[str, str]:
@@ -162,6 +191,13 @@ def get_s2_estimate() -> Optional[Callable[..., Any]]:
     except (ImportError, AttributeError):
         pass
 
+    # There WAS a fallback here importing tests.fixtures.local_s2 - shipping
+    # service code reaching into tests/, which only works because tests/ ships
+    # in the image. It was also unreachable: pipeline.s2_estimate.estimate has
+    # existed since 1 Sep, so the primary always returns first. Removed rather
+    # than repaired; a stage with no implementation must fail loudly, not
+    # silently run a throwaway fixture. Naidhruv reached the same conclusion
+    # independently in 87776dc on naidhruv/integration.
     return None
 
 
@@ -488,6 +524,24 @@ def adapt_s4(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
         raw.elapsed_ms = elapsed_ms
         return raw
 
+    # `getattr(raw, "status", "ok")` below defaults to "ok", so a stage that
+    # produced nothing at all reported OK with empty values. S4 returns None
+    # whenever S3 handed it no LLRs, which is exactly when it must not say ok.
+    if raw is None:
+        errs = get_plugin_load_errors()
+        err_msg = (" (plugin load failures: %s)"
+                   % ", ".join(f"{k}: {v}" for k, v in errs.items())) if errs else ""
+        return StageResult(
+            stage="s4_recover",
+            status=StageStatus.FAILED,
+            confidence=0.0,
+            values={},
+            hypotheses=[],
+            artifacts={},
+            elapsed_ms=elapsed_ms,
+            reason=f"Recovery failed: no result from S4{err_msg}",
+        )
+
     raw_status = getattr(raw, "status", "ok")
     if raw_status == "ok":
         status = StageStatus.OK
@@ -546,7 +600,8 @@ def adapt_s4(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
     )
 
 
-def adapt_s5(raw: Any, elapsed_ms: float) -> StageResult:
+def adapt_s5(raw: Any, elapsed_ms: float,
+             detail: Optional[dict[str, Any]] = None) -> StageResult:
     if isinstance(raw, StageResult):
         raw.elapsed_ms = elapsed_ms
         return raw
@@ -562,20 +617,41 @@ def adapt_s5(raw: Any, elapsed_ms: float) -> StageResult:
             hypotheses=[],
             artifacts={},
             elapsed_ms=elapsed_ms,
-            reason=f"Decoding failed: no result from decoder{err_msg}",
+            reason=((detail or {}).get("declined")
+                    or f"Decoding failed: no result from decoder{err_msg}"),
         )
 
     bit_count = len(raw)
     status = StageStatus.OK if bit_count > 0 else StageStatus.FAILED
+    values: dict[str, Any] = {"decoded_bits_count": bit_count}
+    values.update({k: v for k, v in (detail or {}).items() if k != "validation"})
+
+    confidence = 1.0 if status == StageStatus.OK else 0.0
+    reason = None if status == StageStatus.OK else "No bits decoded"
+    evidence = "trellis traceback complete"
+
+    # A wrong trellis still produces bits, and bits alone cannot tell you the
+    # decode was right. When the plug-in re-encoded its own output and the
+    # result disagrees with what arrived, say so instead of reporting ok.
+    val = (detail or {}).get("validation")
+    if val is not None:
+        values["reencode_ber"] = val.get("reencode_ber")
+        evidence = "re-encode BER %.4f over %d bits" % (
+            val.get("reencode_ber", 1.0), val.get("compared_bits", 0))
+        if status == StageStatus.OK and not val.get("ok", True):
+            status = StageStatus.LOW_CONFIDENCE
+            confidence = 0.0
+            reason = val.get("reason") or "decode is not consistent with the input"
+
     return StageResult(
         stage="s5_decode",
         status=status,
-        confidence=1.0 if status == StageStatus.OK else 0.0,
-        values={"decoded_bits_count": bit_count},
-        hypotheses=[Hypothesis(value="viterbi_decoded", score=1.0, evidence="trellis traceback complete")],
+        confidence=confidence,
+        values=values,
+        hypotheses=[Hypothesis(value="viterbi_decoded", score=confidence, evidence=evidence)],
         artifacts={},
         elapsed_ms=elapsed_ms,
-        reason=None if status == StageStatus.OK else "No bits decoded",
+        reason=reason,
     )
 
 
@@ -583,6 +659,22 @@ def adapt_s6(raw: Any, elapsed_ms: float) -> StageResult:
     if isinstance(raw, StageResult):
         raw.elapsed_ms = elapsed_ms
         return raw
+
+    # Status was hardcoded OK with no None guard, so when S5 failed and there
+    # were no bits to frame, the LAST stage of the pipeline - the one that
+    # shows the recovered message - reported OK in 0 ms with n_bytes 0. Observed
+    # live on 7 Sep behind the S5 defect above.
+    if raw is None:
+        return StageResult(
+            stage="s6_frame",
+            status=StageStatus.FAILED,
+            confidence=0.0,
+            values={"n_bytes": 0, "printable_fraction": 0.0, "looks_like_text": False},
+            hypotheses=[],
+            artifacts={},
+            elapsed_ms=elapsed_ms,
+            reason="No payload to frame: no decoded bits from S5",
+        )
 
     def _val(attr: str, default: Any) -> Any:
         if isinstance(raw, dict):
@@ -616,7 +708,6 @@ def adapt_s6(raw: Any, elapsed_ms: float) -> StageResult:
         "payload_entropy": payload_entropy,
         "payload_text": payload_text,
     }
-
     return StageResult(
         stage="s6_frame",
         status=StageStatus.OK,
@@ -993,21 +1084,142 @@ def orchestrate(
     # S5: Decode (FEC decoding)
     # -------------------------------------------------------------------------
     s5_fn = overrides.get("s5_decode")
+    # Filled in by _run_s5 on the real path and folded into the StageResult by
+    # adapt_s5, so a prefix decode and a failed re-encode check are both visible
+    # in the report rather than inferred from a bit count.
+    s5_detail: dict[str, Any] = {}
 
     def _run_s5() -> Any:
         if s5_fn:
             return s5_fn(llrs, s4_res.values)
         conv_plugin = CODES.get("conv")
-        if conv_plugin and hasattr(conv_plugin, "decode") and llrs is not None:
-            # Recovered generators
-            code_params = s4_raw.code if hasattr(s4_raw, "code") else None
-            return conv_plugin.decode(llrs, code_params or s4_res.values)
-        return None
+        if conv_plugin is None or not hasattr(conv_plugin, "decode") or llrs is None:
+            return None
+
+        # This block previously read:
+        #     code_params = s4_raw.code if hasattr(s4_raw, "code") else None
+        #     return conv_plugin.decode(llrs, code_params or s4_res.values)
+        # which could not work on ANY input, and hid a second, worse defect.
+        #
+        # 1. `s4_raw.code` is a CodeStructure(n, memory, span, consistent). It
+        #    carries NO generators - those are a sibling field on
+        #    RecoveryResult - and ConvCode.decode wants CodeParams or a dict, so
+        #    a good S4 gave "TypeError: 'CodeStructure' object is not
+        #    subscriptable". A dataclass is always truthy, so `or` never fired.
+        # 2. When S4 failed, `code` was None, the fallback DID fire, and
+        #    s4_res.values has code_rate/K rather than n/memory -> KeyError 'n'.
+        # 3. The real defect underneath: it decoded `llrs` as they arrived,
+        #    never applying the offset and interleaver S4 had just recovered.
+        #    Decoding a still-interleaved stream returns confident noise, which
+        #    is worse than crashing - the crash is why nobody had seen it.
+        code = getattr(s4_raw, "code", None)
+        gens = getattr(s4_raw, "generators_octal", None)
+        # Same guard pipeline/s4_recover/cli.py applies before it decodes: only
+        # a locked rate-1/2 recovery with generators is actionable. Anything
+        # else would build a trellis out of None.
+        if (getattr(s4_raw, "status", None) != "ok" or code is None
+                or gens is None or getattr(code, "n", None) != 2):
+            s5_detail["declined"] = (
+                "S4 did not lock a rate-1/2 code with recovered generators "
+                "(status=%s, n=%s, generators=%s)"
+                % (getattr(s4_raw, "status", None), getattr(code, "n", None),
+                   "yes" if gens else "no"))
+            return None
+
+        # Apply what S4 recovered. The permutation is a reshape/transpose, so it
+        # runs on the soft LLRs directly and the Viterbi keeps its metric -
+        # de-interleaving hard bits here would throw that away.
+        offset = int(getattr(s4_raw, "offset", 0) or 0)
+        if np is not None:
+            stream = np.asarray(llrs).ravel()[offset:]
+        else:
+            stream = list(llrs)[offset:]
+        intl = getattr(s4_raw, "interleaver", None)
+        if intl is not None:
+            intl_plugin = INTERLEAVERS.get(getattr(intl, "family", ""))
+            if intl_plugin is None:
+                s5_detail["declined"] = (
+                    "no '%s' interleaver plug-in registered to undo what S4 found"
+                    % getattr(intl, "family", ""))
+                return None
+            soft_in = (getattr(stream, "dtype", None) is not None and getattr(stream.dtype, "kind", None) == "f") if np is not None else any(isinstance(x, float) for x in stream[:10])
+            stream = intl_plugin.deinterleave(stream, **getattr(intl, "params", {}))
+            # A permutation must hand back what it was given. The CCSDS symbol
+            # family is the one exception, and legitimately so: it works in the
+            # RS BYTE domain, so `_to_bytes` packs bits and returns uint8. That
+            # is correct where it belongs - after Viterbi, in s6_frame/ccsds.py
+            # - and destructive here. Measured on 4096 float LLRs: 2107
+            # negative in, 0 out, every value collapsed to {0, 1}. Worse,
+            # conv_code.decode then sees dtype uint8 and SILENTLY takes its
+            # hard-decision path, so the stage returns a confident decode of
+            # noise rather than raising.
+            #
+            # Reachable because ccsds-symbol at depth 1 is the IDENTITY
+            # permutation, so it clears the family gate on exactly the streams
+            # the direct reading clears. rank_collapse's shortest-span
+            # tie-break shuts it out only while `direct` is non-None; a stream
+            # whose direct reading is rejected on `span != first` can still
+            # hand this seam a symbol-domain family.
+            #
+            # The 4 Sep rule was "a permutation must not cast its input". The
+            # cast is legal in that plug-in, so the guard belongs at THIS seam
+            # instead - which is where the conventions say guards go anyway.
+            stream_dtype = getattr(stream, "dtype", None)
+            if soft_in and stream_dtype is not None and getattr(stream_dtype, "kind", None) != "f":
+                s5_detail["declined"] = (
+                    "the '%s' de-interleaver returned %s and destroyed the soft "
+                    "information S3 recovered: it works in the symbol domain and "
+                    "cannot be applied to LLRs"
+                    % (getattr(intl, "family", "?"), stream_dtype))
+                return None
+        if len(stream) == 0:
+            # Decoding the un-deinterleaved stream instead would "work" and
+            # return noise: measured 0.2948 re-encode BER against 0.0005 for the
+            # same file decoded correctly. Declining is the only honest answer.
+            llrs_len = len(np.asarray(llrs).ravel()) if np is not None else len(llrs)
+            s5_detail["declined"] = (
+                "stream too short to de-interleave: %d LLRs is under one period "
+                "of the %s interleaver S4 recovered"
+                % (llrs_len, getattr(intl, "family", "?")))
+            return None
+
+        # commpy's Viterbi is pure Python and linear in stream length. The whole
+        # stream is ~29 s against a 15 s per-stage timeout, so the stage failed
+        # on the clock even once the wiring above was right. The CLI settled
+        # this already (pipeline/s4_recover/cli.py:26): a prefix proves the
+        # chain exactly as well, and the budget is what makes the 90 s envelope
+        # hold. Recorded as a prefix in values so a partial decode is never
+        # mistaken for a complete one.
+        budget = min(len(stream), S5_DECODE_MAX_BITS)
+        params = {
+            "n": code.n,
+            "memory": code.memory,
+            "generators_octal": tuple(gens),
+            "span": getattr(code, "span", 0) or 0,
+            "parity_taps": getattr(s4_raw, "parity_taps", None) or [],
+        }
+        decoded = conv_plugin.decode(stream[:budget], params)
+
+        s5_detail["coded_bits_available"] = int(len(stream))
+        s5_detail["coded_bits_decoded"] = int(budget)
+        s5_detail["decoded_prefix"] = bool(budget < len(stream))
+        # The honest test of a decode: re-encode it and compare with what
+        # arrived. Plausible-looking bits from a wrong trellis score as well as
+        # real ones on any other measure, so without this S5 can report ok on
+        # a decode that is simply wrong - the same false-green class as the two
+        # adapters below. Optional because it is beyond the CODES protocol.
+        if hasattr(conv_plugin, "validate_against"):
+            try:
+                s5_detail["validation"] = conv_plugin.validate_against(
+                    decoded, stream[:budget], params)
+            except Exception as exc:  # never let a check sink the stage
+                logger.warning("S5 re-encode validation failed: %s", exc)
+        return decoded
 
     s5_res, s5_raw = _execute_stage(
         "s5_decode",
         _run_s5,
-        adapt_s5,
+        lambda raw, ms: adapt_s5(raw, ms, s5_detail),
     )
 
     decoded_bits = s5_raw

@@ -1,0 +1,6 @@
+{
+  "dtype": "int8",
+  "layout": "interleaved",
+  "fs": 200000.0,
+  "source_file": "2fsk_10dB_2026.wav"
+}
