@@ -952,7 +952,35 @@ def orchestrate(
                     "no '%s' interleaver plug-in registered to undo what S4 found"
                     % getattr(intl, "family", ""))
                 return None
+            soft_in = np.asarray(stream).dtype.kind == "f"
             stream = intl_plugin.deinterleave(stream, **getattr(intl, "params", {}))
+            # A permutation must hand back what it was given. The CCSDS symbol
+            # family is the one exception, and legitimately so: it works in the
+            # RS BYTE domain, so `_to_bytes` packs bits and returns uint8. That
+            # is correct where it belongs - after Viterbi, in s6_frame/ccsds.py
+            # - and destructive here. Measured on 4096 float LLRs: 2107
+            # negative in, 0 out, every value collapsed to {0, 1}. Worse,
+            # conv_code.decode then sees dtype uint8 and SILENTLY takes its
+            # hard-decision path, so the stage returns a confident decode of
+            # noise rather than raising.
+            #
+            # Reachable because ccsds-symbol at depth 1 is the IDENTITY
+            # permutation, so it clears the family gate on exactly the streams
+            # the direct reading clears. rank_collapse's shortest-span
+            # tie-break shuts it out only while `direct` is non-None; a stream
+            # whose direct reading is rejected on `span != first` can still
+            # hand this seam a symbol-domain family.
+            #
+            # The 4 Sep rule was "a permutation must not cast its input". The
+            # cast is legal in that plug-in, so the guard belongs at THIS seam
+            # instead - which is where the conventions say guards go anyway.
+            if soft_in and np.asarray(stream).dtype.kind != "f":
+                s5_detail["declined"] = (
+                    "the '%s' de-interleaver returned %s and destroyed the soft "
+                    "information S3 recovered: it works in the symbol domain and "
+                    "cannot be applied to LLRs"
+                    % (getattr(intl, "family", "?"), np.asarray(stream).dtype))
+                return None
         if len(stream) == 0:
             # Decoding the un-deinterleaved stream instead would "work" and
             # return noise: measured 0.2948 re-encode BER against 0.0005 for the

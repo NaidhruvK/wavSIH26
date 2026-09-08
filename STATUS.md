@@ -2523,6 +2523,81 @@ merges rather than guess at it now.
 
 ---
 
+## 8 Sep, part 2 - the S5 seam hands soft LLRs to a byte-domain de-interleaver,
+## and the re-encode check I added this morning cannot see it
+
+Re-verified this morning's work against the tip rather than trusting my own
+write-up, and found one more defect of the same family underneath it.
+
+**Full suite on this branch before the fix below: 843 passed, 4 skipped, 2
+xfailed, 0 failed, 0 errors in 26m11s.** My `a3e69df` message says 842; I
+measured 843 on a clean run and cannot account for the extra one. Zero failures
+either way, but the number in that commit message should not be quoted as exact.
+
+### The defect
+
+`_run_s5` de-interleaves with whatever family S4 names:
+
+    stream = intl_plugin.deinterleave(stream, **intl.params)
+
+`ccsds-symbol` works in the Reed-Solomon BYTE domain - `_to_bytes` packs bits,
+so it returns uint8. That is correct where it belongs (after Viterbi, in
+`s6_frame/ccsds.py`) and destructive here. Measured on 4096 float LLRs:
+
+| de-interleaver | dtype out | negative LLRs surviving |
+|---|---|---|
+| `block_deinterleave` | float64 | 2066 of 2107 |
+| `symbol_deinterleave` | **uint8** | **0 of 2107**, all values now {0, 1} |
+
+`conv_code.decode` then sees dtype uint8 and silently takes its HARD path. It
+raises nothing, returns 4074 bits, and `validate()` calls that **ok: True**
+at entropy 0.9992.
+
+**Reachable** because `ccsds-symbol` at depth 1 is the IDENTITY permutation, so
+it clears the functional gate on exactly the streams the direct reading clears.
+The shortest-span tie-break at `rank_collapse.py:840` excludes it only while
+`direct` is non-None, and the direct reading is rejected whenever
+`code_direct.span != first` - the family gate has no such constraint.
+
+### The part that matters: my own re-encode check does not catch this
+
+I claimed this morning that `validate_against` is the honest test of a decode.
+It is - but it compares the decode against the POST-de-interleave stream, and
+that stream is precisely what got destroyed. It measures garbage against
+garbage:
+
+| input | `validate_against` | re-encode BER | S5 reports |
+|---|---|---|---|
+| random normal LLRs | ok=False | 0.2826 | low_confidence |
+| linspace LLRs | **ok=True** | **0.0059** | **ok** |
+
+A uint8 truncation of a smooth ramp is highly structured, the decoder locks
+onto that structure, and the re-encode agrees with itself. So the safety net is
+input-dependent, not a guarantee, and the failure mode is a confident `ok` on
+noise - the exact class `a3e69df` was written to close, one layer further in.
+
+### The fix, and where it does NOT go
+
+Not in the plug-in: the cast is legitimate there. The guard goes at the seam,
+which is where the conventions say guards go. `_run_s5` now records whether it
+was handed soft values and declines with the reason if the de-interleaver did
+not hand them back.
+
+**Scope checked, and it is narrow.** The CLI is unaffected - `cli.py:40` loads
+`dtype=np.uint8`, so it is hard-bits-only by construction and the cast is a
+no-op. The three `deinterleave` sites in `rank_collapse.py` are all the
+RECOVERY path, which hard-slices by design. Orchestrator-only.
+
+`tests/service/test_orchestrator.py::test_s5_declines_a_deinterleaver_that_destroys_soft_values`
+asserts the premise (that `symbol_deinterleave` still destroys soft values, so
+the test explains itself if that ever changes) and then that S5 declines.
+**Confirmed it FAILS on the pre-guard code, reporting `StageStatus.OK`** - not
+low_confidence, which is how I found that the re-encode check was blind to it.
+`tests/service` + `tests/contract` + `tests/e2e` with the guard: 142 passed,
+4 skipped, 0 failed.
+
+---
+
 ## 8 Sep - the orchestrator could never decode a file, and the suite could not
 ## have told us. Both fixed, with the test that proves it.
 

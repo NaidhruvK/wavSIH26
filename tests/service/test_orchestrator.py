@@ -557,5 +557,61 @@ class TestOrchestrator(unittest.TestCase):
                 CODES.pop("conv", None)
 
 
+    def test_s5_declines_a_deinterleaver_that_destroys_soft_values(self):
+        """A family that cannot carry LLRs must stop S5, not be applied to them.
+
+        `ccsds-symbol` works in the Reed-Solomon BYTE domain: `_to_bytes` packs
+        bits, so it returns uint8. That is correct where it belongs - after
+        Viterbi, in s6_frame/ccsds.py - and destructive at this seam. Measured
+        on 4096 float LLRs: 2107 negative in, 0 out, every value collapsed to
+        {0, 1}. conv_code.decode then sees dtype uint8 and silently takes its
+        HARD path, so without the guard S5 returns a confident decode of noise
+        rather than raising - the same false-green class as the adapters.
+
+        Reachable because depth 1 is the IDENTITY permutation, so the family
+        clears the functional gate on exactly the streams the direct reading
+        clears, and rank_collapse's shortest-span tie-break excludes it only
+        while `direct` is non-None.
+        """
+        import numpy as np
+
+        from pipeline.s4_recover.interleavers import symbol_deinterleave
+
+        # State the premise, so this test explains itself if it ever fails.
+        soft = np.linspace(-3.0, 3.0, 4096)
+        self.assertEqual(soft.dtype.kind, "f")
+        self.assertNotEqual(
+            np.asarray(symbol_deinterleave(soft, depth=1, n_bytes=255)).dtype.kind,
+            "f",
+            "premise broken: symbol_deinterleave now preserves soft values, so "
+            "re-examine whether this guard is still the right shape")
+
+        s4 = DummyRecoveryResult()
+        s4.interleaver = type("Intl", (), {
+            "family": "ccsds-symbol",
+            "params": {"depth": 1, "n_bytes": 255}})()
+
+        overrides = make_clean_overrides()
+        overrides.pop("s5_decode", None)      # exercise the real S5 path
+        overrides["s3_receive"] = lambda iq, params: DummyS3Result(
+            llrs=list(np.linspace(-3.0, 3.0, 4096)))
+        overrides["s4_recover"] = lambda bits: s4
+
+        report = orchestrate(
+            run_id="run-s5-symbol-domain",
+            file_path=self.test_file,
+            runner=self.runner,
+            stage_overrides=overrides,
+            db_path=self.db_path,
+        )
+
+        s5 = next(s for s in report.stages if s.stage == "s5_decode")
+        self.assertNotEqual(
+            s5.status, StageStatus.OK,
+            "S5 reported ok after de-interleaving with a family that destroyed "
+            "the soft information - that is a confident decode of noise")
+        self.assertIn("soft", (s5.reason or "").lower())
+
+
 if __name__ == "__main__":
     unittest.main()
