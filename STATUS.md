@@ -688,6 +688,253 @@ fix from here — his integration layer, his call on how to handle it
 
 ## Anvith — S3 receiver chain
 
+### 8 Sep — "break it deliberately": the six adversarial inputs, and three findings that are not mine
+
+**The row is met and the verify line is met.** Six adversarial inputs to S3 —
+pure noise, DC, clipped, two overlapping signals, empty band, wrong sample
+rate — each over 8 seeds, through **both** the named-plug-in path and the blind
+search the service actually calls. Then the six as real `.wav` files through
+`python -m service.cli analyze`, S0–S6.
+
+| | result |
+|---|---|
+| tracebacks, every path, every case | **0 of 504 runs** |
+| statuses outside `ok`/`low_confidence`/`failed`/`out_of_envelope` | **0** |
+| non-finite values in an LLR array | **0** |
+| **`ok` on a case with no signal in it** | **0 of 280** |
+| six files end to end through the CLI | **6 clean statuses, 0 exceptions** |
+| **the FULL suite** | **900 passed, 4 skipped, 2 xfailed, 0 failed** (18m36s) |
+
+**The full suite is GREEN for the first time this week.** It has read red in my
+notes since 7 Sep (31 failed / 780 passed / 6 errors). Both causes are gone:
+Nehal fixed the `registry.clear()` teardown at source, and the `service/` half
+was never a code defect — see the third item below.
+
+Full write-up, per-seed table and reproduction: `reports/s3_adversarial.md`.
+Study: `reports/s3_adversarial_study.py` (`--render-only`, `--write-files`).
+Files: `reports/s3_adversarial/*.wav`. Tests:
+`tests/unit/test_s3_adversarial.py`, **56 tests**; the S3 unit set is
+**308 passed** with them (was 252).
+
+**Why this was not already covered.** The 4 Sep adversarial block in
+`test_s3_receive.py` calls `MODULATIONS[name].receive(iq, params)` — a NAMED
+plug-in handed a symbol rate. The service calls `receive_best`, which has a
+ranked search, a rate rescue, a de-duplication grid and a deadline that the
+plug-in path never touches. All of that landed on 7 Sep in `e7b9649` and none
+of it had ever been shown an adversarial input.
+
+**"Adversarial" turned out to be two questions, and scoring them as one was a
+bug in my own study.** A hard-clipped QPSK capture comes back `ok`/qpsk and is
+**right** to: QPSK is constant-modulus, clipping at a quarter of peak takes
+peak-to-average from 1.72 to 1.02 and the symbols survive (measured BER 0.00
+against the transmitted bits). So the set splits — **absence** (noise, DC,
+empty band, zeros, impulse) where `ok` is a confident lie and must never
+happen, and **degraded** (clipped, overlapping, mislabelled) where `ok` is
+correct when the answer is correct. My first pass called the clipped row a
+defect. The tests assert the two classes separately for this reason.
+
+#### The S3 finding: a wrong `fs` is invisible, by construction
+
+`wrong_sample_rate.wav` is a clean 200 kHz QPSK capture whose header says
+48 kHz. S3 returns `ok`, modulation `qpsk`, measured BER **0.00** — a
+completely correct demodulation — and reports `symbol_rate_used` of
+**12,000 Hz against a true 50,000 Hz**. That is exactly 48000/200000.
+
+Every stage of S3 works on `fs / symbol_rate`, so a declared `fs` wrong by a
+factor *k* gives a symbol rate wrong by the same *k*, a residual CFO wrong by
+the same *k*, and **every internal consistency check passing** — they are all
+ratio-based. `sps_estimated` still reads 4.00007.
+
+**S3 cannot fix this and it is not a defect.** Absolute time is not in the
+samples; it arrives only from the WAV header or the service's `fs_hint` form
+field. But it is a confidently-wrong *number* in a user-visible field under an
+`ok` status, reachable by a judge in five seconds without touching the signal.
+The honest sentence is: **every absolute-frequency quantity S3 reports is
+proportional to the declared sample rate and is only as trustworthy as that
+header.** Pinned by `test_a_mislabelled_sample_rate_scales_the_reported_rate`
+so a future change here is visible rather than silent.
+
+Also worth having before the gate: **`two overlapping signals` is the most
+expensive input measured this week** — it runs to the chain-run ceiling on
+every seed at **6.15–6.58 s** here, ~13.8 s on Nehal's 2.09x box against the
+20 s budget. Correct behaviour (no right answer to converge on, so the search
+exhausts its list) and inside budget, but it is the smallest margin in the set
+and two emitters in one band is not a contrived input.
+
+#### NAIDHRUV — two confidence bugs the six files found, both in your adapters
+
+Running `pure_noise.wav` end to end. No tracebacks anywhere; the final answer is
+correct because S3 refuses. But a judge reads the stage cards on the way to it:
+
+| stage | status | confidence | what its own values say |
+|---|---|---|---|
+| s0_ingest | `ok` | 1.00 | a valid WAV — true |
+| s1_detect | `ok` | **0.98** | `snr_db` **−10.2**, `occupied_bw` 198 kHz of 200, `burst_count` 0 |
+| s2_estimate | `ok` | **0.90** | `symbol_rate` 45,350 Hz, `symbol_rate_score` **0.0** |
+| s3_receive | `failed` | 0.00 | `signal_present: fail`, metric 3.83 vs 4.5 |
+
+**S3 is the first stage in the chain that refuses pure noise**, and three green
+confident cards precede it. That is risk #15 rendered on screen, on the day the
+command centre calls the false-positive test mandatory because "a judge WILL
+try this".
+
+1. **`adapt_s1`, `service/orchestrator.py:293` — `confidence=0.98` is a
+   constant for any `ok`.** It means "the stage ran" and renders as a detection
+   confidence. Everything needed for a real one is already in `values` three
+   lines up: `snr_db`, `occupied_bw_hz`, `burst_count`. Same shape in the
+   attached hypothesis: `"continuous"` at score **0.95** with
+   `evidence="0 bursts detected"` — a 95% score whose stated evidence is that
+   nothing was found.
+
+2. **`adapt_s2`, `service/orchestrator.py:338` — the confidence inverts at
+   zero.** The line is `min(1.0, max(0.1, score / 10.0)) if score else 0.9`. A
+   `symbol_rate_score` of exactly **0.0** is falsy, takes the `else`, and
+   renders **0.90**:
+
+   | `symbol_rate_score` | 0.0 | 0.5 | 1.0 | 5.0 | 9.0 |
+   |---|---|---|---|---|---|
+   | rendered confidence | **0.90** | 0.10 | 0.10 | 0.50 | 0.90 |
+
+   No evidence at all reports the same confidence as a score of 9 and **nine
+   times** that of a score of 0.5. The guard tests truthiness where it means
+   "is present", and 0.0 is both present and the worst possible score.
+   `pure_noise.wav` hits it every run. Two characters:
+   `if score is not None else`, or drop the fallback.
+
+**Third, and this one is good news: `tests/service` is GREEN.** It read 13
+failed / 47 passed here, and the visible error was
+`TypeError: cannot unpack non-iterable Route object` at `service/main.py:587` —
+three steps downstream of the cause. The chain, read rather than inferred:
+starlette 1.6.0's testclient requires **`httpx2`**, which Nehal pinned in
+`requirements.txt` today (`a3e69df`) and which was **not installed in this
+`.venv`**; so `from fastapi.testclient import TestClient` raises RuntimeError;
+so `main.py` falls back to `FallbackTestClient`; whose `_match_route` unpacks
+`app.routes` as 4-tuples while `HAS_FASTAPI` is True and the routes are real
+starlette `Route` objects. `pip install httpx2==2.12.0` — the pin already in
+your requirements — takes it to **60 passed**. Not a code defect; a stale venv.
+
+That also settles the apparent contradiction between my 7 Sep note ("the string
+httpx does not appear once in the failure log") and Nehal's requirements comment
+crediting httpx2 with the 41 failures. **Both were right, about two different
+problems.** My note was right that `httpx` did not appear in the Route-error
+log; Nehal was right that the test client could not be constructed at all. The
+blanket phrasing of my note was broader than what it had measured.
+
+**Neither of the two confidence bugs touched — `service/` is yours.** Both
+reproduce from `reports/s3_adversarial/pure_noise.wav`. **And this is not Dheeraj's bug**: I
+checked `s1_detect.detect()` rather than assuming, and it returns `status="ok"`
+whenever it did not raise on a non-empty array — it carries no detection
+predicate because S1 is a measurement stage, not a decision stage. Its numbers
+are honest; −10.2 dB SNR over 99% of the band is exactly what noise looks like.
+The status is right and the confidence attached downstream is what is wrong.
+
+The six files are yours to use for the failure matrix if they help.
+
+#### NEHAL — LDPC on the service path, written down so nobody files it as a bug
+
+Full answer, checked on `4d25434` rather than remembered:
+**`reports/s3_ldpc_design.md` §7.**
+
+**Nothing supplies H on the service path and nothing is designed to.** One
+correction to the framing: "CLI/test-only" gives the CLI too much credit.
+`service/cli.py:109` calls `orchestrate` with `run_id`, `file_path`, `fs_hint`,
+`mod_scheme_hint` and **no `stage_overrides`**, so `analyze` reaches the same
+hardcoded `CODES.get("conv")` the HTTP path does. Accurate statement:
+**in-process-Python-only** — `CODES["ldpc"]` by name, or
+`orchestrate(..., stage_overrides={"s5_decode": ...})`.
+
+**Line 909 is the visible half, not the binding one.** Making it iterate `CODES`
+would not make LDPC reachable:
+
+```
+CODES                            ['conv', 'ldpc', 'reed-solomon']   <- your loader fix works
+ldpc.blind_recover(<any llrs>)   -> None
+ldpc.decode(llrs, {})            -> ValueError: no parity-check matrix supplied
+```
+
+The failure would move from "never dispatched" to "dispatched and declines",
+which looks identical from outside and is harder to debug. **The binding
+constraint is transport, and there is none**: grepping `service/`, `contracts/`
+and `web/` for `H`, `H_rows`, `H_alist`, `parity`, `alist` returns one hit —
+`parity_taps` in `adapt_s4`, convolutional taps, unrelated. `/upload` takes
+`file`, `fs_hint`, `mod_scheme_hint`, full stop.
+
+**It should ship this way**, and that is a judgement so it is on the table: the
+judge uploads a WAV and no demo input carries an H; blind recovery is the only
+thing that would supply one and it is on the *do not build, ever, this sprint*
+list; and an alist upload is new file-parsing surface on a public route 24 hours
+before freeze, for a case nobody will exercise. **Deliberately unreachable
+through the API — a decoder held ready for an input the service has no way to
+receive.**
+
+What would have to change, in order, so it is a decision with a price and not an
+oversight: a transport carrying one of the three H forms
+`parity_check_from_params` already accepts; a dispatch that selects a code
+plug-in **at the same time** (or the result is a silent decline); and a guard
+that decodes `status == "ok"` streams only — non-negotiable, because on a
+refused stream the demodulator emits magnitudes of 4–8 promising ~0.4% error
+over bits wrong 29–39% of the time (81.7x worst per-bin against 1.62x on the
+`ok` population). §7 also says plainly that `CODES.get("conv")` is **not** a
+house-rule-5 violation to be scored: the code plug-ins take different parameters
+from each other, unlike the modulation plug-ins, so that seam is genuinely
+harder and it is yours and Naidhruv's call how it should look.
+
+**Your three fixes, verified here independently.** `CODES` reads
+`['conv', 'ldpc', 'reed-solomon']` through `load_plugins()`. The registry
+snapshot/restore in `test_registry_contract.py` is in place. And thank you for
+the S3 flake confirmation on the box that actually had it — 8/8 at ~10.5 s
+against 20 s. Chain runs 8 → 3 is the number that reads the same on both our
+machines, which is why it was the one worth quoting.
+
+#### What I got wrong today
+
+- **I hand-rolled a QPSK transmitter inside my own study.** Rectangular pulses,
+  its own noise. The known-answer cell caught it on the first run: the clean
+  control came back `low_confidence`/2fsk on **8 of 8** seeds and 0 of 8 `ok`.
+  The receiver was right and the generator was wrong — S3's matched filter is
+  RRC. Worse than the control row: `clipped`, `two overlapping` and `wrong
+  sample rate` were all **built on** that generator, so three of the six cases
+  were clipping, summing and mislabelling a signal S3 already refused, and could
+  only ever have reported a refusal whatever the receiver did. That is §10's "a
+  study that measured something other than what its title said", and it is the
+  same species as 4 Sep's deleted `rf_channel.py`: `synth`'s own docstring
+  records that a second modulator was removed so the repo would have exactly
+  one, and I quietly added one back. **The known-answer cell has now paid on
+  five separate days. Put it in the table first, every time.**
+- **I wrote the six files in the corpus's own PCM_16 format and it destroyed
+  one of them.** Checked during verification rather than assumed:
+  `empty_band.wav` came back with **2 distinct sample values** across 240,000.
+  At a peak of 4.85e-06 one PCM_16 quantum is 3.05e-05, so the whole capture
+  collapsed onto ±1 LSB — a one-bit dither pattern where the array in memory is
+  thermal noise 120 dB down. **The one property that case exists to test is
+  exactly the one a fixed-point format cannot carry**, and my own comment three
+  lines above the `sf.write` explained why the level had to be preserved while
+  the subtype threw it away. Now `subtype="FLOAT"` (239,585 distinct values),
+  and the on-disk verdict now matches the in-memory seed-0 case, which it did
+  not before. Following the corpus was the right instinct and the wrong call.
+- **Then I over-corrected and asserted byte-identity on those files.** Red on
+  all six at byte 60 while every sample matched: libsndfile stamps a `PEAK`
+  chunk with a creation **timestamp** on float WAVs, so a float WAV is
+  deliberately not byte-reproducible. It would have been a permanently red test
+  guarding a property the format does not offer. Now compares decoded samples,
+  rate and subtype — which is all anything downstream reads. Two wrong versions
+  of one check in a row, in opposite directions, and the second looked stricter.
+- **`hash(case)` as a seed.** Python salts string hashing per process, so the
+  study would have drawn a different corpus on every run and the six committed
+  `.wav` files would not have regenerated — while looking perfectly
+  deterministic inside any single run. Caught by reading it back before running,
+  not by running it. Now `zlib.crc32`, and
+  `test_the_committed_files_are_reproducible_from_the_study` pins it.
+- **I wrote a false timing claim into the report** — "well under a second for
+  every other adversarial case" — when `empty band` had peaked at 2.50 s in the
+  table directly above it. Caught by re-reading the rendered markdown against
+  its own CSV. Fixed to name the real second-worst case.
+- **My first probe shared one RNG stream across cases in dict order**, so adding
+  a case re-drew the others and `empty band` changed verdict between two runs of
+  what looked like the same experiment. Neither verdict was wrong; the single
+  draw was never a measurement. Everything is per-case seeded and swept over 8
+  seeds now.
+
 ### 7 Sep, afternoon — the S3 budget fix exists and is NOT on main, plus the 7 Sep column
 
 **NEHAL — read this first. Your measurement is right and your diagnosis is
