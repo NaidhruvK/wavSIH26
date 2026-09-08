@@ -672,7 +672,7 @@ def _fmt(rows):
         if not rs:
             continue
         why = (rs[0].get("reason") or "").strip()
-        why = why.replace("|", "\|") or (
+        why = why.replace("|", chr(92) + "|") or (
             "*none, and correctly so — there is nothing to explain*"
             if rs[0]["status"] == "ok" else "*(none)*")
         a(f"| {case} | `{rs[0]['status']}` | {why} |")
