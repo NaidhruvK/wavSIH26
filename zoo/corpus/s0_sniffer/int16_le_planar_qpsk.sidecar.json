@@ -1,0 +1,6 @@
+{
+  "dtype": "int16",
+  "layout": "planar",
+  "fs": 200000.0,
+  "source_file": "qpsk_20dB_2011.wav"
+}

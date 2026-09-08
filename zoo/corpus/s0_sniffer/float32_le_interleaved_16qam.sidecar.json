@@ -1,0 +1,6 @@
+{
+  "dtype": "float32",
+  "layout": "interleaved",
+  "fs": 200000.0,
+  "source_file": "16qam_15dB_2022.wav"
+}

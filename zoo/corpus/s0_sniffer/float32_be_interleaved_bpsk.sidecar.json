@@ -1,0 +1,6 @@
+{
+  "dtype": "float32_be",
+  "layout": "interleaved",
+  "fs": 200000.0,
+  "source_file": "bpsk_20dB_2005.wav"
+}

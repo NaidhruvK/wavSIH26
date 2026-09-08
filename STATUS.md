@@ -684,6 +684,145 @@ still fully exposed to a bad FSK CFO below 10dB. Not something I can
 fix from here — his integration layer, his call on how to handle it
 (check `envelope_cv`, catch it downstream, or accept the stated floor).
 
+### 7 Sep — the winning layer: S0 format sniffer, endianness + channel layout, evidence shown
+
+Block B/C/D/E per the plan: extend the 29 Aug dtype-only sniffer
+(`pipeline/s0_ingest.py`) to also recover byte order and I/Q channel
+layout blind, with visible evidence, tested against 12 deliberately
+mislabelled raw files. **Gate: 12/12**, additive only — `pipeline/s0_ingest.py`'s
+existing WAV path, `read_wav_iq`, and every pre-7-Sep test are unchanged;
+nothing in the 6 Sep core path was touched.
+
+Two separate discriminators, each independently measured before trusting
+it, not tuned to force a number:
+
+- **Byte width (int8 vs 2/4-byte)**: the existing bounded/nonzero/extreme
+  magnitude heuristic turned out NOT reliable for this specific question
+  — measured a real int8 file scoring 0.9998 as int8 and 1.0000 as
+  int16, an effective coin flip. Found a much sharper signal instead:
+  for genuine int16 data the low byte of each sample is quantisation
+  noise (autocorrelation ≈0); for int8 data misread as int16, that "low
+  byte" is actually a real, smooth 8-bit sample, so it autocorrelates
+  strongly. Measured 0.64–0.88 for true int8 vs −0.05 to 0.00 for every
+  true int16/float32 file tried — a 10x+ margin, gates the byte-width
+  decision as a hard prior ahead of the existing magnitude score.
+- **Channel layout (interleaved I,Q,I,Q,... vs planar all-I-then-all-Q)**:
+  lag-1 autocorrelation of each half-channel. A genuinely oversampled RF
+  capture is smooth sample-to-sample within one real channel; splitting
+  the wrong way pairs unrelated bytes and that structure collapses
+  toward zero. Measured 0.44–0.87 correct vs ≈0.00 wrong, for every
+  scheme tried except 4fsk (below).
+
+Both discriminators were validated against the real RF corpus, not
+synthetic noise, before either shipped.
+
+**Two known, measured gaps, pinned rather than hidden** (same pattern as
+`test_fsk_order_known_gap_at_low_snr`) — a 3-file `s0_sniffer_known_gaps`
+corpus plus two tests that assert the CURRENT miss, so either starting
+to pass is a signal to promote the file and delete the test:
+
+- Byte-order recovery when the layout is ALSO planar: two independent
+  ambiguities compounding is harder than either alone, and a
+  discriminator sharp enough for that specific combination wasn't found
+  today. Every individual byte-order case in the main 12-file corpus
+  stays in an interleaved layout, where it's reliable — measured, not
+  assumed (checked deliberately: swapping only the scheme under an
+  unrelated dtype, e.g. accidentally combining 4fsk's layout gap with a
+  new dtype instead of actually avoiding it, was caught and fixed before
+  it became a silent hole in the 12/12 claim).
+- 4fsk's own channel-layout detection: its tone spacing at this sps
+  decorrelates adjacent same-channel samples regardless of alignment, so
+  even the CORRECT split autocorrelates near zero. Still exercised in
+  interleaved cases (dtype detection has no such problem); excluded only
+  from layout-sensitive cases.
+
+`zoo/build_s0_sniffer_corpus.py` (new, mine) builds both corpora from
+real `zoo/corpus/rf` signals — the adversarial part is genuinely the
+format ambiguity, not an easier synthetic signal. 22 new/changed tests
+in `test_s0_ingest.py`, all passing; existing 4 tests unchanged and
+still passing.
+
+### 7 Sep, later still — `random_case` and `make_rs_stream` ported, unblocking `local_zoo.py`'s deletion
+
+Nehal counted what's actually blocking his own standing instruction to
+delete `tests/fixtures/local_zoo.py` (it's overdue since the zoo landed
+in full) rather than estimating: two functions with no equivalent in
+`zoo/` — `random_case` (a randomly-parameterised trial: pick
+depth/width from a pool, size the stream so the hardest pool entry is
+still searchable, start at a random offset) and `make_rs_stream` (a
+plain RS(n,k) stream, no interleaver or scrambler — `zoo/ccsds.py`
+already covers the concatenated, standards-accurate profile). Ported
+both into `zoo/bits_only.py`, reusing `make_stream`'s own
+`start_offset` handling for `random_case` rather than the fixture's
+manual post-hoc trim (mine already draws one internally when none is
+given, so the fixture's separate trim step just isn't needed). 11 new
+tests in `test_bits_only.py`: reproducibility from seed alone, the
+pool draw actually lands in `DEPTH_WIDTH_POOL`, the default length
+clears `bits_needed(MAX_POOL_PERIOD)`, both offset modes, and
+`make_rs_stream`'s RS round-trip verified through `reedsolo` directly
+(encode via mine, decode via the library, bytes match the source
+payload) rather than assumed from the encode step alone.
+
+He also flagged a correction on his own reasoning, not mine to act on:
+the justification he'd given earlier for keeping `local_zoo.py`
+("Dheeraj's generator only does block interleavers") was wrong —
+`local_zoo.make_stream` was block-only too, so the fixture never
+carried diagonal or convolutional-interleaver coverage either. Noted
+here since it's now part of the record, not something this commit
+changes.
+
+**Confirmed, not assumed, per his direct question**: all 252
+`zoo/corpus/rf/*.json` files carry `"scrambler": null` — checked every
+one, zero exceptions. One thing worth his knowing that he didn't ask
+about: `zoo/corpus/ccsds/` (a separate directory) is *always*
+scrambled by design — if anything on his side ever reads from there
+too, the "nothing in the corpus is scrambled" assumption his S5 skip
+relies on would not hold for that corpus.
+
+Deleting `tests/fixtures/local_zoo.py` itself, and repointing the 12
+test files and 7 report studies that import from it, is explicitly
+his to do — not touched here.
+
+Full regression suite: 437 passed, 1 xfailed.
+
+### 8 Sep — break it deliberately: reproducibility locked, not just claimed
+
+Today's column is verification, not new feature work: final envelope
+run from the frozen build, regenerate from a genuinely clean checkout,
+confirm the report matches the shipping binary exactly, lock it.
+
+**Not done from an existing working copy — a real fresh clone.**
+`git clone` to a throwaway directory, `git checkout dhiraj/zoo-v0` at
+`2509d75`, a brand-new venv built from scratch on the pinned Python
+3.11.9 (not reused from any existing `.venv`), `docs/stack_check.py`
+11/11 there. The point of a clean checkout is that nothing from a
+working session's accumulated state can be silently propping the
+numbers up — a stale cached `.pyc`, an import left over from an
+earlier experiment, a venv with one extra package installed by hand
+along the way.
+
+From that clean clone: `reports/envelope_study.py` regenerated
+(`envelope.md`, `envelope_ber.csv`, `envelope_ber.png`) — **zero-byte
+diff** against what's committed. Same for `models/build_dataset.py`,
+`build_holdout.py` and `models/train.py` — `dataset_train.csv`,
+`dataset_holdout.csv` and `reports/classifier_eval.md` all diff empty
+too (after normalising the one known, already-documented CRLF artifact
+from Python's `csv` module, not a real content difference), and
+training reproduced the exact same config hash, `132fc1d21777`,
+unchanged since 3 Sep — `models/classifier.txt` byte-identical.
+
+**Report matches the shipping binary, and it's not a claim — every
+number above was independently reproduced today, from nothing but the
+git history and the pinned dependency versions.** Locking it here:
+`reports/envelope.md` and `reports/classifier_eval.md` are frozen from
+this point — no further edits planned before the 9 Sep freeze unless a
+teammate finds something that changes the underlying measurement, the
+same standard every other "known, stated limit" in this project has
+already been held to.
+
+Verification clone deleted after use — nothing left behind but this
+entry and the fact that it happened.
+
 ---
 
 ## Anvith — S3 receiver chain

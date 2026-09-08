@@ -1,0 +1,6 @@
+{
+  "dtype": "int16",
+  "layout": "interleaved",
+  "fs": 200000.0,
+  "source_file": "qpsk_15dB_2010.wav"
+}

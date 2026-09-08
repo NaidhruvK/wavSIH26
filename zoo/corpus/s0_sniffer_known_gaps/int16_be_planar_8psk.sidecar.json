@@ -1,0 +1,6 @@
+{
+  "dtype": "int16_be",
+  "layout": "planar",
+  "fs": 200000.0,
+  "source_file": "8psk_20dB_2017.wav"
+}
