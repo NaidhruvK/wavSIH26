@@ -372,3 +372,121 @@ is a visible thing for a judge to ask about.
 * **The code used to demonstrate this is a fixture, not a standard.** It is a
   rate-1/2 IRA-style code built in the test file. Nothing here claims a CCSDS
   or DVB-S2 LDPC profile; what it claims is that a supplied H decodes.
+
+---
+
+## 7. Is LDPC reachable through the API? No — and that is a decision
+
+Added 8 Sep, answering Nehal's question against `service/orchestrator.py:909`
+directly, so that nobody files it as a bug in a week. Everything below was
+checked on `origin/main` at `4d25434`, not remembered.
+
+### The short answer
+
+**Nothing supplies H on the service path, and nothing is designed to. LDPC is
+reachable only from Python — by name through `CODES["ldpc"]`, or by injecting a
+decoder through `orchestrate(..., stage_overrides={"s5_decode": ...})`. It is
+not reachable over HTTP, and it is not reachable from the CLI either.**
+
+That last clause is the one correction to the framing of the question. "CLI or
+test-only" gives the CLI too much credit: `service/cli.py:109` calls
+`orchestrate` with `run_id`, `file_path`, `fs_hint` and `mod_scheme_hint` and
+**no `stage_overrides`**, so `analyze` reaches exactly the same hardcoded
+`CODES.get("conv")` the HTTP path does. The accurate statement is
+**in-process-Python-only**: the unit tests, and any caller who already holds an
+H and is willing to write four lines against `orchestrate`.
+
+### Line 909 is the visible half, not the binding one
+
+Fixing `CODES.get("conv")` to iterate `CODES` would **not** make LDPC reachable.
+Verified on the merged tree:
+
+```
+CODES        ['conv', 'ldpc', 'reed-solomon']     <- Nehal's loader fix works
+ldpc.blind_recover(<any llrs>)  -> None           <- by design, see §4
+ldpc.decode(llrs, {})           -> ValueError: no parity-check matrix supplied
+```
+
+So a dispatch loop that reached the LDPC plug-in would get `None` from
+`blind_recover` and a `ValueError` from `decode`, on every input, forever. The
+failure would move from "never dispatched" to "dispatched and declined" — which
+looks identical from the outside and is *harder* to debug, because it now
+appears to be a decoder that tried and failed rather than a path that was never
+wired.
+
+**The binding constraint is transport, and there is no transport.** Grepping
+`service/`, `contracts/` and `web/` for `H`, `H_rows`, `H_alist`, `parity` and
+`alist` returns exactly one hit — `parity_taps` in `adapt_s4`, which is
+convolutional parity taps and unrelated. The upload endpoint
+(`service/main.py:321`) accepts `file`, `fs_hint` and `mod_scheme_hint`, full
+stop. There is no field, form part, query parameter or config key on any route
+by which a parity-check matrix can enter the service.
+
+Two halves, and the order matters: **a dispatch that can select a code plug-in,
+and a transport that can carry that plug-in's parameters.** Doing the first
+alone produces a decoder that is dispatched to and always declines.
+
+### Why it should stay this way through the freeze
+
+This is a judgement, so it is stated as one and the reasoning is on the table:
+
+1. **There is no H to supply.** The judge uploads a WAV. Nothing in the demo
+   flow, the corpus or the CCSDS files carries a parity-check matrix, so the
+   feature would have no input even if it were wired.
+2. **Blind recovery is the only thing that would give it one, and it is on the
+   Command Center's *do not build, ever, this sprint* list** (§00) on research
+   grounds. `blind_recover` returning `None` is that decision honoured, not a
+   gap in it — see §4.
+3. **The transport is new file-parsing surface, 24 hours before a freeze.** An
+   alist upload means parsing a caller-supplied matrix format on a public
+   route, on 8 September, for a case no judge will exercise. That is the worst
+   possible trade against the 9 Sep hardening column.
+
+So: **deliberately unreachable through the API, and it should ship that way.**
+It is a decoder held ready for an input the service has no way to receive.
+
+### What would have to be true to change it
+
+Written down so this is a decision with a price rather than an oversight. All
+three, in order:
+
+1. **A transport.** A field on `/upload` (or a config key) carrying a dense H,
+   per-row column indices, or a MacKay alist — the three forms
+   `parity_check_from_params` already accepts. It validates and raises on
+   ambiguity today, so the plug-in end is done.
+2. **A dispatch that selects a code plug-in** rather than naming one, and
+   passes that plug-in's own parameters through. Note this is genuinely harder
+   than S3's equivalent: house rule 5 ("never name a scheme in orchestration
+   code") is enforced on S3 by `test_search_never_names_a_scheme` walking the
+   AST, and S3 can get away with a blind iterate-and-try because every
+   modulation plug-in takes the *same* parameters. The code plug-ins do not —
+   conv wants generators and a rate, RS wants a symbol size, LDPC wants an H —
+   so `CODES.get("conv")` is not simply rule 5 being broken. **It is Nehal's
+   and Naidhruv's call how that seam should look, and this document is not
+   asking for it to change.** What it does ask is that whoever changes it knows
+   line 909 has to move at the same time as the transport, or the result is a
+   silent decline.
+3. **A guard that only decodes `status == "ok"` streams.** Non-negotiable and
+   measured: on a stream S3 refuses, the demodulator emits magnitudes of 4–8
+   — promising ~0.4% error — over bits that are wrong 29–39% of the time
+   (§3, worst per-bin ratio 81.7x against 1.62x on the `ok` population). Those
+   are exactly the inputs that make belief propagation settle on a wrong
+   codeword and stop, which is a confident wrong answer rather than a failure.
+   The plug-in cannot enforce this itself — it never sees an `S3Result`.
+
+### What was actually broken, and is now fixed
+
+For the record, because the two are easy to confuse and only one was a defect:
+
+* **`REQUIRED_PLUGIN_MODULES` did not list `pipeline.s5_decode.ldpc_code`**, so
+  the service came up with `CODES = {conv, reed-solomon}` while the plug-in's
+  own unit tests stayed green. That was real, it was invisible from both sides,
+  and Nehal fixed it plus added a test that scans `pipeline/` for top-level
+  `register_*()` calls so a future file move fails loudly. Confirmed here:
+  `CODES` now reads `['conv', 'ldpc', 'reed-solomon']` through
+  `service.orchestrator.load_plugins()`. **The cause was a file move at 14:43
+  against a loader written at 11:14** — a missing plug-in and a scheme nobody
+  tried are indistinguishable from the API, which is what made it survive.
+* **`CODES.get("conv")` at line 909 is not a bug**, given the above. It is the
+  correct dispatch for the only code the service can currently be given the
+  parameters for.
