@@ -785,6 +785,44 @@ his to do — not touched here.
 
 Full regression suite: 437 passed, 1 xfailed.
 
+### 8 Sep — break it deliberately: reproducibility locked, not just claimed
+
+Today's column is verification, not new feature work: final envelope
+run from the frozen build, regenerate from a genuinely clean checkout,
+confirm the report matches the shipping binary exactly, lock it.
+
+**Not done from an existing working copy — a real fresh clone.**
+`git clone` to a throwaway directory, `git checkout dhiraj/zoo-v0` at
+`2509d75`, a brand-new venv built from scratch on the pinned Python
+3.11.9 (not reused from any existing `.venv`), `docs/stack_check.py`
+11/11 there. The point of a clean checkout is that nothing from a
+working session's accumulated state can be silently propping the
+numbers up — a stale cached `.pyc`, an import left over from an
+earlier experiment, a venv with one extra package installed by hand
+along the way.
+
+From that clean clone: `reports/envelope_study.py` regenerated
+(`envelope.md`, `envelope_ber.csv`, `envelope_ber.png`) — **zero-byte
+diff** against what's committed. Same for `models/build_dataset.py`,
+`build_holdout.py` and `models/train.py` — `dataset_train.csv`,
+`dataset_holdout.csv` and `reports/classifier_eval.md` all diff empty
+too (after normalising the one known, already-documented CRLF artifact
+from Python's `csv` module, not a real content difference), and
+training reproduced the exact same config hash, `132fc1d21777`,
+unchanged since 3 Sep — `models/classifier.txt` byte-identical.
+
+**Report matches the shipping binary, and it's not a claim — every
+number above was independently reproduced today, from nothing but the
+git history and the pinned dependency versions.** Locking it here:
+`reports/envelope.md` and `reports/classifier_eval.md` are frozen from
+this point — no further edits planned before the 9 Sep freeze unless a
+teammate finds something that changes the underlying measurement, the
+same standard every other "known, stated limit" in this project has
+already been held to.
+
+Verification clone deleted after use — nothing left behind but this
+entry and the fact that it happened.
+
 ---
 
 ## Anvith — S3 receiver chain
