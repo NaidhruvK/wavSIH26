@@ -742,6 +742,49 @@ format ambiguity, not an easier synthetic signal. 22 new/changed tests
 in `test_s0_ingest.py`, all passing; existing 4 tests unchanged and
 still passing.
 
+### 7 Sep, later still — `random_case` and `make_rs_stream` ported, unblocking `local_zoo.py`'s deletion
+
+Nehal counted what's actually blocking his own standing instruction to
+delete `tests/fixtures/local_zoo.py` (it's overdue since the zoo landed
+in full) rather than estimating: two functions with no equivalent in
+`zoo/` — `random_case` (a randomly-parameterised trial: pick
+depth/width from a pool, size the stream so the hardest pool entry is
+still searchable, start at a random offset) and `make_rs_stream` (a
+plain RS(n,k) stream, no interleaver or scrambler — `zoo/ccsds.py`
+already covers the concatenated, standards-accurate profile). Ported
+both into `zoo/bits_only.py`, reusing `make_stream`'s own
+`start_offset` handling for `random_case` rather than the fixture's
+manual post-hoc trim (mine already draws one internally when none is
+given, so the fixture's separate trim step just isn't needed). 11 new
+tests in `test_bits_only.py`: reproducibility from seed alone, the
+pool draw actually lands in `DEPTH_WIDTH_POOL`, the default length
+clears `bits_needed(MAX_POOL_PERIOD)`, both offset modes, and
+`make_rs_stream`'s RS round-trip verified through `reedsolo` directly
+(encode via mine, decode via the library, bytes match the source
+payload) rather than assumed from the encode step alone.
+
+He also flagged a correction on his own reasoning, not mine to act on:
+the justification he'd given earlier for keeping `local_zoo.py`
+("Dheeraj's generator only does block interleavers") was wrong —
+`local_zoo.make_stream` was block-only too, so the fixture never
+carried diagonal or convolutional-interleaver coverage either. Noted
+here since it's now part of the record, not something this commit
+changes.
+
+**Confirmed, not assumed, per his direct question**: all 252
+`zoo/corpus/rf/*.json` files carry `"scrambler": null` — checked every
+one, zero exceptions. One thing worth his knowing that he didn't ask
+about: `zoo/corpus/ccsds/` (a separate directory) is *always*
+scrambled by design — if anything on his side ever reads from there
+too, the "nothing in the corpus is scrambled" assumption his S5 skip
+relies on would not hold for that corpus.
+
+Deleting `tests/fixtures/local_zoo.py` itself, and repointing the 12
+test files and 7 report studies that import from it, is explicitly
+his to do — not touched here.
+
+Full regression suite: 437 passed, 1 xfailed.
+
 ---
 
 ## Anvith — S3 receiver chain

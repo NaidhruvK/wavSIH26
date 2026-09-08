@@ -8,6 +8,11 @@ Nehal's S4 stream reads. This is the REAL replacement for
 tests/fixtures/local_zoo.py: once files from here are on disk, delete that
 fixture and re-run S4's gates against this corpus.
 
+7 Sep: random_case and make_rs_stream ported in from that fixture too, at
+Nehal's request -- the last two functions with no equivalent here, and
+therefore the last two things standing between it and deletion (12 test
+files, 7 report studies repoint on his side, not this commit).
+
 OWNERSHIP: Dheeraj. Reuses pipeline.s5_decode.conv_reference (encoder) and
 pipeline.s4_recover.interleavers (block_interleave) rather than
 re-implementing them -- one encoder, one interleaver, used by everyone.
@@ -26,7 +31,21 @@ from pipeline.s4_recover.interleavers import block_interleave
 
 __all__ = ["Truth", "make_stream", "make_uncoded_random", "lfsr_scramble",
            "inject_errors", "gilbert_elliott_mask", "inject_burst_errors",
+           "random_case", "make_rs_stream", "bits_needed",
+           "DEPTH_WIDTH_POOL", "MAX_POOL_PERIOD",
            "write_pair", "CCSDS_SCRAMBLER"]
+
+# Factorisations worth drawing a random trial from: period >= 32 so a rank
+# collapse is unambiguous, and both dimensions > 1 so it is a real
+# interleaver. Ported 7 Sep from tests/fixtures/local_zoo.py -- the last
+# thing standing between that fixture and deletion, per Nehal's count of
+# what's actually blocking it (not everything it exports, just this and
+# make_rs_stream below).
+DEPTH_WIDTH_POOL = [
+    (4, 8), (4, 16), (8, 8), (8, 12), (8, 16), (6, 16),
+    (12, 8), (16, 6), (16, 8), (16, 12), (32, 4), (10, 12),
+]
+MAX_POOL_PERIOD = max(d * w for d, w in DEPTH_WIDTH_POOL)
 
 # Real CCSDS 131.0-B pseudo-randomiser: h(x) = x^8+x^7+x^5+x^3+1, period 255.
 # (Nehal's fixture originally had a period-7 polynomial mislabelled as
@@ -273,6 +292,98 @@ def make_uncoded_random(n_bits: int = 160_000, seed: int = 999
         seed=seed,
     )
     return bits, truth
+
+
+def bits_needed(period: int, row_margin: int = 64) -> int:
+    """Coded bits required before a period is even searchable: L*(L+margin).
+    Ported 7 Sep from tests/fixtures/local_zoo.py."""
+    return period * (period + row_margin)
+
+
+def random_case(seed: int, n_source_bits: int | None = None, ber: float = 0.0,
+                 random_offset: bool = True) -> tuple[np.ndarray, Truth]:
+    """One randomly parameterised trial -- what a 10-trial gate draws from.
+
+    7 Sep, ported from tests/fixtures/local_zoo.py, the last thing (with
+    make_rs_stream below) blocking its deletion. Picks depth/width from
+    DEPTH_WIDTH_POOL and a bit count sized off MAX_POOL_PERIOD so the
+    stream is always long enough for the hardest case in the pool to be
+    searchable, then delegates to make_stream -- which already draws its
+    own random start_offset when one isn't given (unlike the fixture's
+    version, which had to trim after the fact by hand because its
+    make_stream had no start_offset parameter at all). random_offset=False
+    pins start_offset=0 instead, for a caller that wants the easier,
+    aligned case.
+    """
+    rng = np.random.default_rng(seed)
+    depth, width = DEPTH_WIDTH_POOL[int(rng.integers(0, len(DEPTH_WIDTH_POOL)))]
+    if n_source_bits is None:
+        # coded stream is 2x source, and we want ~1.6x the bare minimum
+        n_source_bits = int(bits_needed(MAX_POOL_PERIOD) * 1.6 / 2)
+    start_offset = None if random_offset else 0
+    bits, truth = make_stream(n_source_bits=n_source_bits, depth=depth, width=width,
+                               ber=ber, seed=seed, start_offset=start_offset)
+    return bits, truth
+
+
+def make_rs_stream(n_blocks: int = 12, n: int = 255, k: int = 223,
+                    ber: float = 0.0, seed: int = 0, mean_burst: float = 1.0,
+                    payload_text: str | None = None, offset_bytes: int = 0
+                    ) -> tuple[np.ndarray, Truth, bytes]:
+    """RS(n, k) encoded stream and its truth. Returns (bits, truth, payload).
+
+    7 Sep, ported from tests/fixtures/local_zoo.py. Block code over
+    GF(256), so it needs its own generator -- conv_encode has nothing to
+    do with it, and this only ever produces a plain RS stream (no
+    interleaver, no scrambler; zoo.ccsds.make_ccsds_stream is the
+    concatenated, standards-accurate profile for that).
+
+    `offset_bytes` prepends junk so the first block boundary is NOT at
+    bit zero. Recovering the alignment is part of the problem; a stream
+    that always starts aligned tests an easier one.
+    """
+    import reedsolo
+
+    rng = np.random.default_rng(seed)
+    rs = reedsolo.RSCodec(n - k)
+
+    if payload_text is None:
+        payload = rng.integers(0, 256, n_blocks * k, dtype=np.uint8).tobytes()
+    else:
+        raw = payload_text.encode("utf-8")
+        reps = n_blocks * k // len(raw) + 1
+        payload = (raw * reps)[: n_blocks * k]
+
+    encoded = bytearray()
+    for b in range(n_blocks):
+        encoded.extend(rs.encode(payload[b * k:(b + 1) * k]))
+
+    if offset_bytes:
+        encoded = bytearray(rng.integers(0, 256, offset_bytes,
+                                          dtype=np.uint8).tobytes()) + encoded
+
+    bits = np.unpackbits(np.frombuffer(bytes(encoded), dtype=np.uint8))
+
+    if ber > 0 and mean_burst > 1.0:
+        bits, n_flipped = inject_burst_errors(bits, ber, mean_burst, rng)
+    else:
+        bits, n_flipped = inject_errors(bits, ber, rng)
+
+    truth = Truth(
+        n_source_bits=n_blocks * k * 8,
+        code={"family": "rs", "n": n, "k": k},
+        interleaver=None,
+        scrambler=None,
+        injected_ber=ber,
+        n_flipped=n_flipped,
+        error_model="independent" if mean_burst <= 1.0 else "gilbert-elliott",
+        start_offset=offset_bytes * 8,
+        pipeline_order=["encode", "inject"],
+        seed=seed,
+        payload_text=payload_text,
+        mean_burst=mean_burst,
+    )
+    return bits, truth, payload
 
 
 def write_pair(bits: np.ndarray, truth: Truth, out_dir: Path, name: str) -> None:
