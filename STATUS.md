@@ -3917,3 +3917,32 @@ the newly-merged S3 work), zero failures, ~28 min. Pushed as `d5b4238`.
 
 No PR opened yet — no `gh` CLI in this environment. Compare view is at
 `https://github.com/NaidhruvK/wavSIH26/compare/main...dhiraj/zoo-v0`.
+
+### 8 Sep, later still — Naidhruv's corpus-missing-from-image report: real, but not on main
+
+Naidhruv reported the Core Lock Docker image has no `zoo/corpus/*.wav`, failing
+`test_reads_own_zoo_wav` and `test_fs_matches_truth_json`. Traced it: commit
+`fc259ea` ("chore: reduce Docker build context") on `origin/naidhruv/integration`
+adds
+
+```
+zoo/corpus/
+models/dataset_*.csv
+```
+
+to `.dockerignore`. That commit landed 7 Sep, **after** his last merge into
+`main` (PR #16) — so it never reached `main`, it's only live on his own branch.
+
+Verified against current `main` (`71b0f2c`) with a real Docker build (daemon
+confirmed up, no cache reuse): 252 corpus files present at
+`/app/zoo/corpus/rf/` in the built image, and both named tests pass inside the
+container. So this isn't a `main` defect — it reproduces only on his branch.
+
+The underlying tension is real, though, not just a stray line: that
+`.dockerignore` change is a reasonable instinct (118 MB of test fixtures
+shouldn't ship in the production image), but if Core Lock's acceptance gate
+runs `pytest` inside that same built image, shrinking the image and running
+the corpus-dependent unit tests inside it are in direct conflict. Not my file
+to fix (`.dockerignore`/Dockerfile is Naidhruv's) — relaying the exact commit
+and the reproduction so he can pick the resolution (multi-stage test layer,
+mount the corpus in at test time, or scope the exclusion narrower).
