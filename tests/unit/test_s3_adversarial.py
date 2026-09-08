@@ -213,24 +213,70 @@ def test_the_six_adversarial_files_ingest_and_return_clean_statuses():
             assert res.status != "ok", f"{path.name} claims a lock"
 
 
-def test_the_committed_files_are_reproducible_from_the_study():
-    """Seed 0 of each case must regenerate the committed file bit for bit.
+def test_the_committed_files_are_reproducible_from_the_study(tmp_path, monkeypatch):
+    """Seed 0 of each case must regenerate the committed file BYTE FOR BYTE.
 
     The study seeds off `zlib.crc32(case)` rather than `hash(case)` precisely so
     this holds: Python salts string hashing per process, so a `hash()`-derived
     seed would have made every one of these files unreproducible while looking
     completely deterministic inside a single run.
+
+    This compares SAMPLES, and the first two attempts at it were both wrong in
+    opposite directions - worth recording, because the second looked stricter.
+
+    The first checked only the header rate and the number of samples. That would
+    have passed against a file whose every sample was wrong, and one of them was:
+    `empty_band.wav` was written as PCM_16 and quantised onto two distinct
+    values, which no shape check can see.
+
+    The second compared raw file BYTES, which failed on all six at byte 60 while
+    every sample was identical. libsndfile writes a `PEAK` chunk for float WAVs
+    carrying a creation TIMESTAMP, so a float WAV is deliberately not
+    byte-reproducible. Asserting byte-identity would have been a permanently red
+    test guarding a property the format does not offer - and it is only the
+    samples that anything downstream reads.
     """
     import soundfile as sf
 
     d = ROOT / "reports" / "s3_adversarial"
+    monkeypatch.setattr(STUDY, "FILE_DIR", tmp_path)
+    STUDY.write_files()
+
     for case in STUDY.THE_SIX:
         name = "_".join(case.replace(":", "").replace("(", "")
                         .replace(")", "").split())
-        path = d / f"{name}.wav"
-        assert path.exists(), f"missing {path}"
-        iq, declared_fs, _ref = STUDY.CASES[case](STUDY._seed(case, 0))
-        data, rate = sf.read(str(path))
-        assert rate == int(declared_fs), (
-            f"{path.name}: header says {rate}, case declares {declared_fs}")
-        assert data.shape[0] == np.asarray(iq).size
+        committed, fresh = d / f"{name}.wav", tmp_path / f"{name}.wav"
+        assert committed.exists(), f"missing committed file {committed}"
+        assert fresh.exists(), f"write_files did not produce {fresh}"
+        a, rate_a = sf.read(str(committed))
+        b, rate_b = sf.read(str(fresh))
+        assert rate_a == rate_b, f"{name}.wav: rate {rate_a} vs {rate_b}"
+        assert sf.info(str(committed)).subtype == sf.info(str(fresh)).subtype
+        assert np.array_equal(a, b), (
+            f"{name}.wav does not regenerate sample-for-sample from the study")
+
+
+def test_the_empty_band_file_still_holds_an_empty_band():
+    """The level survives the round trip to disk, which PCM_16 did not allow.
+
+    `empty band` is thermal noise at 1e-6 — the case exists to ask whether any
+    decision in the chain is made on an ABSOLUTE level rather than a ratio. One
+    PCM_16 quantum is 3.05e-05, so at the corpus's own subtype this capture
+    collapsed onto ±1 LSB: 2 distinct sample values across 240,000, a one-bit
+    dither pattern rather than a quiet band. The array in memory was always
+    right; the file was not, and a sample-count check could not see it.
+
+    Pinned because the fix is a subtype argument that is easy to "tidy" back to
+    match the corpus.
+    """
+    import soundfile as sf
+
+    path = ROOT / "reports" / "s3_adversarial" / "empty_band.wav"
+    info = sf.info(str(path))
+    assert info.subtype == "FLOAT", (
+        f"empty_band.wav is {info.subtype}; a fixed-point subtype cannot carry "
+        "a 1e-6 signal and silently turns this case into a dither pattern")
+    data, _ = sf.read(str(path))
+    assert np.max(np.abs(data)) < 1e-4, "level was normalised away"
+    assert len(np.unique(data)) > 1000, (
+        f"only {len(np.unique(data))} distinct sample values — quantised flat")

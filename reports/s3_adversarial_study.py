@@ -265,7 +265,7 @@ def _blind(iq, declared_fs, ref_bits):
         return {"raised": f"{type(exc).__name__}: {exc}",
                 "trace": traceback.format_exc(limit=4).replace("\n", " | "),
                 "status": "", "modulation": "", "chain_runs": "", "n_llrs": "",
-                "finite": "", "rate_used": "", "ber": "",
+                "finite": "", "rate_used": "", "ber": "", "reason": "",
                 "secs": time.perf_counter() - t0}
     v = res.values or {}
     llrs = None if res.llrs is None else np.asarray(res.llrs)
@@ -287,6 +287,7 @@ def _blind(iq, declared_fs, ref_bits):
         "finite": "" if llrs is None else bool(np.all(np.isfinite(llrs))),
         "rate_used": v.get("symbol_rate_used", ""),
         "ber": ber,
+        "reason": " ".join(str(res.reason or "").split()),
         "secs": time.perf_counter() - t0,
     }
 
@@ -327,7 +328,7 @@ def measure() -> list[dict]:
                 rows.append({"case": case, "seed": seed, "path": "plug-in",
                              "plugin": name, "declared_fs": declared_fs,
                              "modulation": name, "chain_runs": "", "n_llrs": "",
-                             "rate_used": "", "ber": "", **p})
+                             "rate_used": "", "ber": "", "reason": "", **p})
             done += 1
             print(f"  [{done:3d}/{total}] {case:26s} seed {seed}  "
                   f"blind -> {b['raised'] or b['status']:15s} "
@@ -337,7 +338,7 @@ def measure() -> list[dict]:
 
 FIELDS = ["case", "seed", "path", "plugin", "declared_fs", "raised", "status",
           "modulation", "chain_runs", "n_llrs", "finite", "rate_used", "ber",
-          "secs", "trace"]
+          "reason", "secs", "trace"]
 
 
 def write_csv(rows):
@@ -369,6 +370,24 @@ def write_files():
     `wrong_sample_rate.wav` is the interesting one - the samples are a clean
     200 kHz QPSK capture and the HEADER says 48 kHz. Nothing is wrong with the
     signal; the file lies about it, which is what a mislabelled upload is.
+
+    WRITTEN AS 32-BIT FLOAT, NOT PCM_16 LIKE THE CORPUS - because PCM_16
+    DESTROYED ONE OF THE SIX
+    ------------------------------------------------------------------------
+    The corpus is PCM_16 and the first version of this followed it. Checked
+    afterwards rather than assumed, and `empty_band.wav` came back with **2
+    distinct sample values** over 240 000 samples: at a peak of 4.85e-06, one
+    PCM_16 quantum is 3.05e-05, so the whole capture collapsed onto +/-1 LSB.
+    The array in memory is thermal noise 120 dB down; the file on disk was a
+    one-bit dither pattern. The one property that case exists to test - that no
+    decision in the chain is made on an ABSOLUTE level - is exactly the property
+    a fixed-point format cannot carry.
+
+    So the six are `subtype="FLOAT"`. `pipeline/s0_ingest.read_wav_iq` calls
+    `sf.read`, which returns float64 for any subtype, so they ingest exactly
+    like a corpus file; only the on-disk representation differs. The other five
+    gain a little fidelity too - `clipped_saturated` no longer requantises a
+    signal whose whole point is what clipping did to it.
     """
     import soundfile as sf
 
@@ -381,13 +400,14 @@ def write_files():
         peak = float(np.max(np.abs(stereo)))
         # A plain peak-normalise would scale `empty band` (1e-6) up to look
         # like a full-scale signal, destroying the one property that case
-        # exists to test. Absolute level is preserved unless the file clips.
+        # exists to test. Absolute level is preserved unless the file clips -
+        # which is only meaningful because the subtype is FLOAT; see above.
         if peak > 1.0:
             stereo = stereo / peak * 0.9
         name = "_".join(case.replace(":", "").replace("(", "")
                         .replace(")", "").split())
         path = FILE_DIR / f"{name}.wav"
-        sf.write(str(path), stereo, int(declared_fs))
+        sf.write(str(path), stereo, int(declared_fs), subtype="FLOAT")
         written.append((case, path.name, declared_fs, peak))
         print(f"  wrote {path.name}  (declared fs {declared_fs:.0f}, "
               f"peak {peak:.3g})")
@@ -615,14 +635,57 @@ def _fmt(rows):
     a("## 7. The six files")
     a("")
     a("`--write-files` writes seed 0 of each case to `reports/s3_adversarial/`")
-    a("as a stereo (I, Q) WAV at the declared rate, the same format")
-    a("`zoo/rf.write_wav_pair` produces, so they ingest through S0 like any")
-    a("corpus file. They are **not** in `zoo/corpus/rf/` on purpose: every S3")
-    a("study globs that directory and six extra files would silently move the")
-    a("denominator of every corpus number in this project.")
+    a("as a stereo (I, Q) WAV at the declared rate, so they ingest through S0")
+    a("like any corpus file. They are **not** in `zoo/corpus/rf/` on purpose:")
+    a("every S3 study globs that directory and six extra files would silently")
+    a("move the denominator of every corpus number in this project.")
+    a("")
+    a("**They are 32-bit float, not PCM_16 like the corpus, and that is not")
+    a("cosmetic.** The first version followed the corpus format; checked")
+    a("afterwards, `empty_band.wav` had **2 distinct sample values** across")
+    a("240,000 samples. At a peak of 4.85e-06 one PCM_16 quantum is 3.05e-05, so")
+    a("the capture collapsed onto ±1 LSB — a one-bit dither pattern where the")
+    a("array in memory is thermal noise 120 dB down. **The one property that case")
+    a("exists to test is the one a fixed-point format cannot carry.**")
+    a("`read_wav_iq` calls `sf.read`, which returns float64 for any subtype, so")
+    a("nothing downstream sees a difference.")
+    a("")
+    a("Regeneration is **sample-exact, not byte-exact**, and the distinction is")
+    a("the format's rather than a weakness in the check: libsndfile writes a")
+    a("`PEAK` chunk on float WAVs carrying a creation **timestamp**, so all six")
+    a("differ at byte 60 and nowhere else.")
+    a("`test_the_committed_files_are_reproducible_from_the_study` regenerates into")
+    a("a temp directory and compares decoded samples, rate and subtype — which is")
+    a("all anything downstream reads.")
     a("")
 
-    a("## 8. What the six files found OUTSIDE S3 — for Naidhruv, and one for Dheeraj")
+    a("## 8. Every refusal says why, in numbers")
+    a("")
+    a("The day's integration line is \"nothing unhandled remains; every failure has")
+    a("a message a human can act on\". S3's half, seed 0 of each case, verbatim from")
+    a("`reason`:")
+    a("")
+    a("| case | status | reason |")
+    a("|---|---|---|")
+    for case in THE_SIX:
+        rs = [r for r in sel(path="blind search", case=case) if r["seed"] == "0"]
+        if not rs:
+            continue
+        why = (rs[0].get("reason") or "").strip()
+        why = why.replace("|", "\|") or (
+            "*none, and correctly so — there is nothing to explain*"
+            if rs[0]["status"] == "ok" else "*(none)*")
+        a(f"| {case} | `{rs[0]['status']}` | {why} |")
+    a("")
+    a("Each one names the statistic, the threshold it missed and by how much. The")
+    a("two `ok` rows carry no reason, which is right — there is nothing to")
+    a("explain. `two overlapping signals` also reports its own truncation")
+    a("(\"12 of 18 surviving candidates were run and 6 never reached — this is the")
+    a("best of what ran, not a survey of the field\"), which is the 7 Sep fix #3")
+    a("doing its job on an input it was not written for.")
+    a("")
+
+    a("## 9. What the six files found OUTSIDE S3 — for Naidhruv, and one for Dheeraj")
     a("")
     a("Running the six through `python -m service.cli analyze` end to end (S0-S6,")
     a("no tracebacks, every stage returned a status) shows the whole chain's")

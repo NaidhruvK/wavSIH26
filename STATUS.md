@@ -703,12 +703,18 @@ search the service actually calls. Then the six as real `.wav` files through
 | non-finite values in an LLR array | **0** |
 | **`ok` on a case with no signal in it** | **0 of 280** |
 | six files end to end through the CLI | **6 clean statuses, 0 exceptions** |
+| **the FULL suite** | **900 passed, 4 skipped, 2 xfailed, 0 failed** (18m36s) |
+
+**The full suite is GREEN for the first time this week.** It has read red in my
+notes since 7 Sep (31 failed / 780 passed / 6 errors). Both causes are gone:
+Nehal fixed the `registry.clear()` teardown at source, and the `service/` half
+was never a code defect — see the third item below.
 
 Full write-up, per-seed table and reproduction: `reports/s3_adversarial.md`.
 Study: `reports/s3_adversarial_study.py` (`--render-only`, `--write-files`).
 Files: `reports/s3_adversarial/*.wav`. Tests:
-`tests/unit/test_s3_adversarial.py`, **55 tests**; the S3 unit set is
-**307 passed** with them (was 252).
+`tests/unit/test_s3_adversarial.py`, **56 tests**; the S3 unit set is
+**308 passed** with them (was 252).
 
 **Why this was not already covered.** The 4 Sep adversarial block in
 `test_s3_receive.py` calls `MODULATIONS[name].receive(iq, params)` — a NAMED
@@ -795,8 +801,27 @@ try this".
    `pure_noise.wav` hits it every run. Two characters:
    `if score is not None else`, or drop the fallback.
 
-**Neither touched — `service/` is yours.** Both reproduce from
-`reports/s3_adversarial/pure_noise.wav`. **And this is not Dheeraj's bug**: I
+**Third, and this one is good news: `tests/service` is GREEN.** It read 13
+failed / 47 passed here, and the visible error was
+`TypeError: cannot unpack non-iterable Route object` at `service/main.py:587` —
+three steps downstream of the cause. The chain, read rather than inferred:
+starlette 1.6.0's testclient requires **`httpx2`**, which Nehal pinned in
+`requirements.txt` today (`a3e69df`) and which was **not installed in this
+`.venv`**; so `from fastapi.testclient import TestClient` raises RuntimeError;
+so `main.py` falls back to `FallbackTestClient`; whose `_match_route` unpacks
+`app.routes` as 4-tuples while `HAS_FASTAPI` is True and the routes are real
+starlette `Route` objects. `pip install httpx2==2.12.0` — the pin already in
+your requirements — takes it to **60 passed**. Not a code defect; a stale venv.
+
+That also settles the apparent contradiction between my 7 Sep note ("the string
+httpx does not appear once in the failure log") and Nehal's requirements comment
+crediting httpx2 with the 41 failures. **Both were right, about two different
+problems.** My note was right that `httpx` did not appear in the Route-error
+log; Nehal was right that the test client could not be constructed at all. The
+blanket phrasing of my note was broader than what it had measured.
+
+**Neither of the two confidence bugs touched — `service/` is yours.** Both
+reproduce from `reports/s3_adversarial/pure_noise.wav`. **And this is not Dheeraj's bug**: I
 checked `s1_detect.detect()` rather than assuming, and it returns `status="ok"`
 whenever it did not raise on a non-empty array — it carries no detection
 predicate because S1 is a measurement stage, not a decision stage. Its numbers
@@ -876,6 +901,24 @@ machines, which is why it was the one worth quoting.
   records that a second modulator was removed so the repo would have exactly
   one, and I quietly added one back. **The known-answer cell has now paid on
   five separate days. Put it in the table first, every time.**
+- **I wrote the six files in the corpus's own PCM_16 format and it destroyed
+  one of them.** Checked during verification rather than assumed:
+  `empty_band.wav` came back with **2 distinct sample values** across 240,000.
+  At a peak of 4.85e-06 one PCM_16 quantum is 3.05e-05, so the whole capture
+  collapsed onto ±1 LSB — a one-bit dither pattern where the array in memory is
+  thermal noise 120 dB down. **The one property that case exists to test is
+  exactly the one a fixed-point format cannot carry**, and my own comment three
+  lines above the `sf.write` explained why the level had to be preserved while
+  the subtype threw it away. Now `subtype="FLOAT"` (239,585 distinct values),
+  and the on-disk verdict now matches the in-memory seed-0 case, which it did
+  not before. Following the corpus was the right instinct and the wrong call.
+- **Then I over-corrected and asserted byte-identity on those files.** Red on
+  all six at byte 60 while every sample matched: libsndfile stamps a `PEAK`
+  chunk with a creation **timestamp** on float WAVs, so a float WAV is
+  deliberately not byte-reproducible. It would have been a permanently red test
+  guarding a property the format does not offer. Now compares decoded samples,
+  rate and subtype — which is all anything downstream reads. Two wrong versions
+  of one check in a row, in opposite directions, and the second looked stricter.
 - **`hash(case)` as a seed.** Python salts string hashing per process, so the
   study would have drawn a different corpus on every run and the six committed
   `.wav` files would not have regenerated — while looking perfectly

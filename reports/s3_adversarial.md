@@ -53,13 +53,13 @@ over S2's ranked hypotheses.
 
 | case | class | declared fs | statuses over seeds | modulation | reported Rs | measured BER | worst s |
 |---|---|---|---|---|---|---|---|
-| control: clean qpsk | control | 200,000 | 8x `ok` | `qpsk` | 50,000 | 0.00e+00–0.00e+00 | 1.06 |
-| pure noise | absence | 200,000 | 8x `failed` | `2fsk` | 58,954 | — no reference | 0.23 |
-| DC only | absence | 200,000 | 8x `failed` | — none claimed | — | — no reference | 0.05 |
-| clipped (saturated) | degraded | 200,000 | 8x `ok` | `qpsk` | 50,000 | 0.00e+00–0.00e+00 | 1.01 |
-| two overlapping signals | degraded | 200,000 | 8x `low_confidence` | `16qam`, `2fsk`, `4fsk`, `8psk` | 50,000 | 4.81e-01–4.86e-01 | 6.58 |
-| empty band | absence | 200,000 | 7x `failed`, 1x `low_confidence` | `16qam` | 12,515 | — no reference | 2.50 |
-| wrong sample rate | degraded | 48,000 | 8x `ok` | `qpsk` | 12,000 | 0.00e+00–0.00e+00 | 1.06 |
+| control: clean qpsk | control | 200,000 | 8x `ok` | `qpsk` | 50,000 | 0.00e+00–0.00e+00 | 1.12 |
+| pure noise | absence | 200,000 | 8x `failed` | `2fsk` | 58,954 | — no reference | 0.26 |
+| DC only | absence | 200,000 | 8x `failed` | — none claimed | — | — no reference | 0.06 |
+| clipped (saturated) | degraded | 200,000 | 8x `ok` | `qpsk` | 50,000 | 0.00e+00–0.00e+00 | 1.04 |
+| two overlapping signals | degraded | 200,000 | 8x `low_confidence` | `16qam`, `2fsk`, `4fsk`, `8psk` | 50,000 | 4.81e-01–4.86e-01 | 6.68 |
+| empty band | absence | 200,000 | 7x `failed`, 1x `low_confidence` | `16qam` | 12,515 | — no reference | 2.97 |
+| wrong sample rate | degraded | 48,000 | 8x `ok` | `qpsk` | 12,000 | 0.00e+00–0.00e+00 | 1.03 |
 
 ### The one real finding: a wrong `fs` is invisible, by construction
 
@@ -102,8 +102,8 @@ house rule is that a check which cannot see must SAY so, and this one does.
 ### 4.2 The most expensive input in the set is a realistic one
 
 `two overlapping signals` runs to the chain-run ceiling (12)
-on every seed and costs **6.15–6.58 s** here. The next
-most expensive adversarial case peaks at 2.50 s (`empty band`, on
+on every seed and costs **6.29–6.68 s** here. The next
+most expensive adversarial case peaks at 2.97 s (`empty band`, on
 the one seed in eight where it also runs to the ceiling) and the rest are
 under 1.1 s.
 That is the correct behaviour — there is no right answer to converge on, so
@@ -111,7 +111,7 @@ the search exhausts its list — but it is the number to carry into a budget
 discussion, because two emitters in one band is not a contrived input.
 
 On the slower dev box (measured at 2.09x this one, 7 Sep) that is roughly
-**13.8 s against the 20 s budget** — inside it, with the
+**14.0 s against the 20 s budget** — inside it, with the
 smallest margin of anything measured this week. The corpus worst case is
 6.97 s here for comparison, so this input is not an outlier in cost; it is
 simply the first adversarial one measured at all.
@@ -151,13 +151,52 @@ they cost nothing once the harness exists. Both are absence cases.
 ## 7. The six files
 
 `--write-files` writes seed 0 of each case to `reports/s3_adversarial/`
-as a stereo (I, Q) WAV at the declared rate, the same format
-`zoo/rf.write_wav_pair` produces, so they ingest through S0 like any
-corpus file. They are **not** in `zoo/corpus/rf/` on purpose: every S3
-study globs that directory and six extra files would silently move the
-denominator of every corpus number in this project.
+as a stereo (I, Q) WAV at the declared rate, so they ingest through S0
+like any corpus file. They are **not** in `zoo/corpus/rf/` on purpose:
+every S3 study globs that directory and six extra files would silently
+move the denominator of every corpus number in this project.
 
-## 8. What the six files found OUTSIDE S3 — for Naidhruv, and one for Dheeraj
+**They are 32-bit float, not PCM_16 like the corpus, and that is not
+cosmetic.** The first version followed the corpus format; checked
+afterwards, `empty_band.wav` had **2 distinct sample values** across
+240,000 samples. At a peak of 4.85e-06 one PCM_16 quantum is 3.05e-05, so
+the capture collapsed onto ±1 LSB — a one-bit dither pattern where the
+array in memory is thermal noise 120 dB down. **The one property that case
+exists to test is the one a fixed-point format cannot carry.**
+`read_wav_iq` calls `sf.read`, which returns float64 for any subtype, so
+nothing downstream sees a difference.
+
+Regeneration is **sample-exact, not byte-exact**, and the distinction is
+the format's rather than a weakness in the check: libsndfile writes a
+`PEAK` chunk on float WAVs carrying a creation **timestamp**, so all six
+differ at byte 60 and nowhere else.
+`test_the_committed_files_are_reproducible_from_the_study` regenerates into
+a temp directory and compares decoded samples, rate and subtype — which is
+all anything downstream reads.
+
+## 8. Every refusal says why, in numbers
+
+The day's integration line is "nothing unhandled remains; every failure has
+a message a human can act on". S3's half, seed 0 of each case, verbatim from
+`reason`:
+
+| case | status | reason |
+|---|---|---|
+| pure noise | `failed` | every candidate was refused by the cheap screen: no symbol-rate line at 45351 Hz (3.8x local median, needs 4.5x) - either nothing is here or the rate is wrong |
+| DC only | `failed` | every candidate was refused by the cheap screen: no symbol-rate line at 5000 Hz (0.0x local median, needs 4.5x) - either nothing is here or the rate is wrong |
+| clipped (saturated) | `ok` | *none, and correctly so — there is nothing to explain* |
+| two overlapping signals | `low_confidence` | the receiver estimates its own output BER at 0.451, over the 0.05 a lock should produce - it is describing a demodulation it cannot claim; mean tone margin 0.058 below 0.150; search truncated by a ceiling of 12 chain runs: 12 of 18 surviving candidates were run and 6 never reached - this is the best of what ran, not a survey of the field |
+| empty band | `low_confidence` | carrier lock 0.07 below 0.59; the receiver estimates its own output BER at 0.0895, over the 0.05 a lock should produce - it is describing a demodulation it cannot claim |
+| wrong sample rate | `ok` | *none, and correctly so — there is nothing to explain* |
+
+Each one names the statistic, the threshold it missed and by how much. The
+two `ok` rows carry no reason, which is right — there is nothing to
+explain. `two overlapping signals` also reports its own truncation
+("12 of 18 surviving candidates were run and 6 never reached — this is the
+best of what ran, not a survey of the field"), which is the 7 Sep fix #3
+doing its job on an input it was not written for.
+
+## 9. What the six files found OUTSIDE S3 — for Naidhruv, and one for Dheeraj
 
 Running the six through `python -m service.cli analyze` end to end (S0-S6,
 no tracebacks, every stage returned a status) shows the whole chain's
