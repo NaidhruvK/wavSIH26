@@ -827,6 +827,181 @@ entry and the fact that it happened.
 
 ## Anvith — S3 receiver chain
 
+### 9 Sep, small hours — the Core Lock S3 failure is a test asserting a property of the MACHINE, plus one real defect it turned up
+
+**Naidhruv's report:** Core Lock Docker full pytest, one S3 failure,
+`tests/unit/test_s3_lockcheck.py::test_a_search_the_clock_cut_short_says_so`,
+expected `search_budget_exhausted=True`, got `False`.
+
+**The receiver is not at fault and neither is his image. The test was.** It ran
+the real search against a real `budget_s=0.9` and asserted the clock won — which
+is an assertion about how fast the box is, not about what the code does.
+Measured here on the same signal (`synth("qpsk", n_bits=120000, snr_db=16,
+cfo_norm=0.0015, timing_offset_sym=0.42, seed=11)`):
+
+| budget | wall | `search_budget_exhausted` | chain runs |
+|---|---|---|---|
+| unbounded | 3.62 s | False | 3 |
+| 0.9 s | 2.13 s | **True** | 1 |
+| 1.5 s | 1.99 s | **True** | 1 |
+| **2.0 s** | 3.23 s | **False** | **3** |
+| 5.0 s | 3.88 s | False | 3 |
+
+The whole search costs 3.62 s on this box, so a 0.9 s budget cuts it off after
+one chain run. **Any box that runs this workload ~4x faster finishes the field
+inside 0.9 s and correctly reports `exhausted=False`** — which is what Docker
+saw. I could not reproduce it: there is no Docker on this machine (Dheeraj has
+the daemon, per his 8 Sep entry), so the exact ratio is his to confirm, not
+mine to assert. **One datapoint settles it if you want it on the record**, run
+inside the image:
+
+```bash
+python -c "
+from tests.fixtures.corpus import synth
+from pipeline.s2_estimate import estimate
+from pipeline.s3_receive.search import receive_best, params_from_s2
+import time
+x, fs, rs, _ = synth('qpsk', n_bits=120000, snr_db=16.0, sps=4,
+                     cfo_norm=0.0015, timing_offset_sym=0.42, seed=11)
+p = params_from_s2(estimate(x, fs), fs)
+t = time.perf_counter(); r = receive_best(x, p, budget_s=600.0)
+print(round(time.perf_counter()-t, 2), 's,', r.values['search_chain_runs'], 'runs')"
+```
+
+Under 0.9 s there means it is pure speed and nothing else is going on.
+
+**This is the wall-clock-assertion trap my own notes already name, sprung from
+the fast side instead of the slow one.** The 7 Sep entry says every new test
+here asserts on WORK — keys, ordering, chain runs — "which reads the same on any
+machine", and names `assert elapsed < N` as the instrument that produced Nehal's
+flake in the first place. Then I wrote `budget_s=0.9` and asserted the outcome
+of a race. The sibling test one line below,
+`test_a_search_stopped_by_the_run_ceiling_does_not_blame_the_clock`, had it
+right all along: it bounds the search with `max_chain_runs=1`, a unit of work,
+and cannot flake anywhere.
+
+**The fix: the budget is now spent in ticks of work.** `search.time` is swapped
+for a counter that advances one unit per `perf_counter()` reading, and
+`receive_best` reads it once on entry, once per screened candidate and once per
+chain-run iteration — so a tick budget is a work budget. Two candidates and 3.5
+ticks put entry at 1.0, the two screened candidates at 2.0 and 3.0, the first
+chain run admitted at 4.0 and the second refused at 5.0: **one run made, one
+survivor never reached, on every machine at every speed.** The shape the
+arithmetic assumes is asserted from an unbounded reference run in the same test
+rather than trusted, and the failure message says so if it ever moves.
+
+Two tests added beside it:
+
+- `test_the_truncation_flag_and_the_note_never_disagree` — the only claim about
+  real seconds that is safe to make on an unknown box. Not "0.9 s truncates
+  this search", which is a claim about the box; the invariant is that
+  `search_budget_exhausted` and the `truncated` note in `reason` cannot
+  contradict each other, whichever way the clock falls. Swept over four real
+  budgets, so a fast box exercises the `False` branch of every one and a slow
+  box the `True` branch.
+- `test_a_search_cut_short_before_any_run_does_not_blame_the_screen` — the
+  defect below.
+
+#### The defect the probing turned up, and it is mine
+
+**A search the clock stopped mid-screen claimed it had surveyed the field.**
+Measured on the same signal at a 0.2 s budget, before the fix:
+
+```
+status=failed  exhausted=True  runs=0
+reason: every candidate was refused by the cheap screen: no symbol-rate line
+        at 27040 Hz (3.6x local median, needs 4.5x) - either nothing is here
+        or the rate is wrong
+```
+
+**12 of 54 candidates had been screened. 42 were never looked at**, and one of
+the twelve's rejection detail is quoted after the sentence as though it were the
+finding. This is exactly the false claim fix #3 closed on 7 Sep — for the path
+that HAS a result. The path that has none was left open, and it is the one a
+tight budget reaches first. It now reads:
+
+```
+search truncated by a 0.2 s budget before anything could be demodulated: 12 of
+54 candidates were screened, 5 survived and none was run - this is not a
+verdict over the field
+```
+
+The one-candidate rejection detail is dropped in that case for the same reason:
+it is not why the search stopped. The appended note on the path that does have a
+result also grew a second clause, because "survived the screen and was never
+run" and "the screen never reached it" are two different facts and a truncated
+screen produces both.
+
+#### Verification
+
+- S3 unit set + `tests/contract`: **372 passed, 4 skipped, 5m36s** (S3 unit was
+  308, now 310 with the two new tests; contract 62/4).
+- **Before/after on 32 corpus files**, every 8th of the 252 so the sample spans
+  every modulation x SNR cell, blind `search` arm at the default budget:
+  **all nine outcome columns identical on all 32** — status, modulation, chain
+  runs, candidates, screened out, exhausted, chosen, rate used, and `reason`
+  byte for byte.
+- **State that sample's limit rather than let it read as more than it is:**
+  `exhausted` was True on **0 of the 32**, so the sample never entered the
+  branch I changed. It shows the normal path did not move; it is not evidence
+  about the fix. What covers the fix is the budget sweep above (0.05 / 0.2 /
+  0.6 / 600 s plus a `max_chain_runs=1` ceiling stop) and the three tests.
+- On the path where screening completes, the appended note is **byte-identical
+  before and after** — measured, not argued: same signal at a 0.6 s budget
+  produces the same sentence on both trees.
+- Both changed files compiled from the source string with the `.pyc` bypassed
+  and `SyntaxWarning` as an error, per the 8 Sep lesson about a check that
+  answers from a cache.
+
+**Scope against today's row**, which says read S3 for anything that can throw,
+no new code, guard commits only: the diff is one red test made
+machine-independent, two tests added, and a false claim removed from a `reason`
+string. No status, no LLR, no threshold and no constant moved. `SEARCH_BUDGET_S`
+is untouched — widening it would have bought the test a pass and left both
+mechanisms, which is the 7 Sep lesson.
+
+#### The other two failures in the same report — neither is on `main`, neither is S3's
+
+Naidhruv asked the S2/eval owners to check ownership and regression on
+`tests/eval/test_harness.py::TestEvalHarness::test_cli_main_entry` and
+`tests/service/test_orchestrator.py::TestOrchestrator::test_get_s2_estimate_does_not_import_local_s2`.
+Traced both, touched neither:
+
+1. **`test_cli_main_entry` fails when the corpus is absent — which is what the
+   Core Lock image is.** `eval/__main__.py:112` on `main` looks for
+   `zoo/corpus/rf/*.json`; with none it calls `parser.print_help()` and returns
+   0, so `--json` mode prints the argparse usage text and the test's
+   `json.loads(output)` raises `JSONDecodeError: Expecting value: line 1
+   column 1`. Reproduced here by pointing `config.repo_root` at an empty
+   directory: corpus present → parses as JSON; corpus absent → usage text.
+   **Same root cause as the corpus-missing report Dheeraj traced yesterday**:
+   `fc259ea` on `naidhruv/integration` adds `zoo/corpus/` to `.dockerignore`.
+   **Naidhruv already has the fix on his own branch — `8c6bd0e` "fix: make eval
+   json mode work without corpus" — and it is not on `main`.** Merging that
+   branch or cherry-picking that commit closes it.
+
+2. **`test_get_s2_estimate_does_not_import_local_s2` does not exist on `main`** —
+   it is only on `origin/naidhruv/integration`, at `test_orchestrator.py:406`.
+   It is a test-isolation defect, not a regression in anyone's stage. It patches
+   `sys.modules["pipeline.s2_estimate"] = None` and expects `get_s2_estimate()`
+   to return None, but `service/orchestrator.py:183` does `from pipeline import
+   s2_estimate`, which reads the **attribute off the already-imported `pipeline`
+   package** and never consults `sys.modules`. So it passes in a cold process
+   and fails in any run where something has already imported the module — which
+   in a full suite is everything. Measured in one process:
+
+   ```
+   COLD (pipeline.s2_estimate not yet imported): get_s2_estimate() -> None
+   WARM (after `import pipeline.s2_estimate`):   get_s2_estimate() -> <function estimate>
+   ```
+
+   His file and his branch, so his call, but the smallest fix is to patch the
+   package attribute alongside the `sys.modules` entry —
+   `mock.patch.object(pipeline, "s2_estimate", None)` is enough to make
+   `get_s2_estimate()` fall through to the `return None` it is testing for.
+   Worth noting the branch also carries `test_s2_resolves_to_the_real_pipeline_stage`,
+   which pins the same behaviour without the isolation problem.
+
 ### 8 Sep — "break it deliberately": the six adversarial inputs, and three findings that are not mine
 
 **The row is met and the verify line is met.** Six adversarial inputs to S3 —

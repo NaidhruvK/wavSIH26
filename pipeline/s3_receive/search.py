@@ -603,10 +603,39 @@ def receive_best(iq: np.ndarray, params: dict[str, Any],
     elapsed = (time.perf_counter() - t0) * 1e3
     trail = _trail(tried, survivors, screen, runs, exhausted)
 
+    # Name the bound that actually applied. `exhausted` is set by EITHER the
+    # clock or `max_chain_runs`, and blaming the clock for a run-ceiling stop
+    # is the same species of false claim as the note below exists to prevent:
+    # 11 of the 252 corpus files run to the ceiling, several of them flagged
+    # exhausted at about 2 s, where the 20 s budget was never the constraint.
+    bound = (f"a ceiling of {max_chain_runs} chain runs"
+             if runs >= max_chain_runs else f"a {budget_s:g} s budget")
+    # Candidates still sitting in the queue when the screening pass stopped.
+    # NOT `len(candidates) - len(tried)`: the screen grows the queue as it goes.
+    unscreened = max(len(queue) - len(tried), 0)
+
     if best is None:
-        why = ("every candidate was refused by the cheap screen"
-               if tried else "no candidates were built")
-        detail = next((c.rejected for c in tried if c.rejected), None)
+        # 9 Sep. This branch said "every candidate was refused by the cheap
+        # screen" whatever had actually happened, and on a search the clock cut
+        # short mid-screen that is a verdict over a field it never opened.
+        # Measured on Nehal's file at a 0.2 s budget: 12 of 54 candidates
+        # screened, 42 never looked at, and this sentence returned with one
+        # rejection detail quoted after it as though it were the finding. Same
+        # defect fix #3 closed on 7 Sep for the path that HAS a result, left
+        # open on the path that has none - which is the one a tight budget
+        # reaches first. The detail is dropped in that case for the same
+        # reason: one candidate's rejection is not why the search stopped.
+        if not tried:
+            why = "no candidates were built"
+        elif exhausted:
+            why = (f"search truncated by {bound} before anything could be "
+                   f"demodulated: {len(tried)} of {len(tried) + unscreened} "
+                   f"candidates were screened, {len(survivors)} survived and "
+                   "none was run - this is not a verdict over the field")
+        else:
+            why = "every candidate was refused by the cheap screen"
+        detail = (None if (tried and exhausted)
+                  else next((c.rejected for c in tried if c.rejected), None))
         return S3Result(
             status="failed", confidence=0.0,
             values={"search_candidates": len(tried),
@@ -643,18 +672,21 @@ def receive_best(iq: np.ndarray, params: dict[str, Any],
     # The result itself is kept, not downgraded. It is the best of what was
     # actually run, and throwing it away would lose files to a slow machine
     # rather than merely mislabelling them.
-    # Name the bound that actually applied. `exhausted` is set by EITHER the
-    # clock or `max_chain_runs`, and blaming the clock for a run-ceiling stop
-    # would be the same species of false claim this note exists to prevent: 11
-    # of the 252 corpus files run to the ceiling, several of them flagged
-    # exhausted at about 2 s, where 20 s was never the constraint.
+    # The bound is named above, for both this branch and the one that returns
+    # no result at all. Two ways to have seen less than the whole field and
+    # they are different facts: candidates that survived the screen and were
+    # never run, and candidates the screen itself never reached.
     unreached = max(len(survivors) - runs, 0)
-    if exhausted and unreached:
-        bound = (f"a ceiling of {max_chain_runs} chain runs"
-                 if runs >= max_chain_runs else f"a {budget_s:g} s budget")
-        note = (f"search truncated by {bound}: {runs} of {len(survivors)} "
-                f"surviving candidates were run and {unreached} never reached "
-                "- this is the best of what ran, not a survey of the field")
+    if exhausted and (unreached or unscreened):
+        parts = []
+        if unreached:
+            parts.append(f"{runs} of {len(survivors)} surviving candidates "
+                         f"were run and {unreached} never reached")
+        if unscreened:
+            parts.append(f"{unscreened} of {len(tried) + unscreened} "
+                         "candidates were never screened")
+        note = (f"search truncated by {bound}: " + "; ".join(parts) +
+                " - this is the best of what ran, not a survey of the field")
         res.reason = f"{res.reason}; {note}" if res.reason else note
 
     res.hypotheses = trail + list(res.hypotheses)

@@ -768,27 +768,156 @@ def test_a_wrong_classifier_call_does_not_cost_the_whole_budget():
     assert not res.values["search_budget_exhausted"]
 
 
-def test_a_search_the_clock_cut_short_says_so():
+class _TickClock:
+    """A clock that advances one unit per reading, and never reads a machine.
+
+    `receive_best` reads `time.perf_counter()` once on entry, once per screened
+    candidate and once per chain-run iteration, so a budget denominated in
+    ticks is a budget denominated in WORK. That is the whole point of it: see
+    `test_a_search_the_clock_cut_short_says_so` for what it replaced and why.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def perf_counter(self) -> float:
+        self.calls += 1
+        return float(self.calls)
+
+
+def _two_candidate_params(rs: float) -> dict:
+    """One rate, one offset, no CFO to correct: exactly two candidates.
+
+    Both survive the cheap screen (`presence_of` is memoised per family, and
+    both plug-ins are family `psk` at the same rate), and neither is rejected,
+    so the screen does not grow the queue. Every tick count below is built on
+    that, and every test using it asserts the count rather than trusting it.
+    """
+    return {"fs": FS,
+            "symbol_rate_hypotheses": [(rs, 90.0)],
+            "cfo_hypotheses": [(0.0, 4, 50.0)]}
+
+
+def test_a_search_the_clock_cut_short_says_so(monkeypatch):
     """House rule: a check that cannot see must say so.
 
     A truncated search has not seen the candidates it never reached. It said so
     only in `search_budget_exhausted`, a key nothing was obliged to read, while
     `status` and `reason` looked exactly like a finished search that had weighed
     the field and come back unsure. Those are different claims.
+
+    **The clock is a fake, and that is the fix rather than a convenience.**
+    Until 9 Sep this ran the real search under a real 0.9 s budget and asserted
+    the clock won - which asserts a property of the MACHINE, not of the code.
+    Measured here on Nehal's file: the whole search costs 3.62 s and 0.9 s cuts
+    it off after one chain run, so any box roughly 4x faster finishes the field
+    inside the budget and correctly reports `exhausted=False`. Naidhruv's Core
+    Lock Docker run reported exactly that failure
+    (`Expected search_budget_exhausted=True, got False`) against code that was
+    behaving properly. It is the wall-clock-assertion trap §10 already names,
+    sprung from the fast side instead of the slow one, and the countermeasure
+    is the one the sibling ceiling test below already used: assert on work.
+
+    So: two candidates and a budget of 3.5 ticks. Entry reads 1.0, the two
+    screened candidates read 2.0 and 3.0, the first chain run is admitted at
+    4.0 (inside 1.0 + 3.5) and the second is refused at 5.0. One run made, one
+    survivor never reached, on every machine at every speed.
     """
-    x, fs, rs, _ = synth("qpsk", n_bits=120000, snr_db=16.0, sps=4,
-                         cfo_norm=0.0015, timing_offset_sym=0.42, seed=11)
-    s2 = estimate(x, fs)
-    res = receive_best(x, params_from_s2(s2, fs), budget_s=0.9)
+    from pipeline.s3_receive import search as search_module
+
+    x, fs, rs, _ = synth("qpsk", n_bits=30000, snr_db=16.0, sps=4, seed=11)
+    params = _two_candidate_params(rs)
+    mods = ["qpsk", "8psk"]
+
+    # the same search under no bound at all, so the tick arithmetic is checked
+    # against the shape it assumes rather than against a comment
+    ref = receive_best(x, params, modulations=mods, budget_s=600.0,
+                       stop_on_clean_lock=False)
+    assert ref.values["search_candidates"] == 2, ref.values
+    assert ref.values["search_screened_out"] == 0, ref.values
+    assert ref.values["search_chain_runs"] == 2, ref.values
+    assert ref.values["search_budget_exhausted"] is False
+
+    clock = _TickClock()
+    monkeypatch.setattr(search_module, "time", clock)
+    res = receive_best(x, params, modulations=mods, budget_s=3.5,
+                       stop_on_clean_lock=False)
+
+    assert res.values["search_chain_runs"] == 1, (
+        "the tick budget is built on `receive_best` reading the clock once on "
+        "entry, once per screened candidate and once per chain-run iteration; "
+        f"it made {res.values['search_chain_runs']} runs in {clock.calls} "
+        "readings, so that pattern has changed and the arithmetic in this "
+        "test's docstring needs redoing")
     assert res.values["search_budget_exhausted"] is True
     assert "truncated" in (res.reason or "").lower(), (
         f"a search that ran out of clock reported {res.reason!r}, which reads "
         "like a verdict over the whole field")
     # and it names the bound that actually applied, because `exhausted` is set
     # by EITHER the clock or the run ceiling and they are different facts
-    assert "0.9 s budget" in (res.reason or "")
-    # the result it does return is still the best of what actually ran
-    assert res.values["search_chain_runs"] >= 1
+    assert "3.5 s budget" in (res.reason or "")
+
+
+def test_a_search_cut_short_before_any_run_does_not_blame_the_screen(monkeypatch):
+    """The branch that returns NO result, which had the same defect still open.
+
+    9 Sep. `receive_best` returning `best is None` said "every candidate was
+    refused by the cheap screen" whatever had actually happened, and quoted one
+    candidate's rejection detail after it. On a search the clock stopped
+    mid-screen that is a verdict over a field it never opened: measured on
+    Nehal's file at a 0.2 s budget, 12 of 54 candidates screened, 42 never
+    looked at, and the sentence read as a finding about all 54. Fix #3 closed
+    exactly this on 7 Sep for the path that HAS a result; the path that has
+    none is the one a tight budget reaches first, and it was left open.
+
+    Two candidates, 1.5 ticks: entry 1.0, the first candidate screened at 2.0,
+    the second refused at 3.0 (outside 1.0 + 1.5), the run loop refused at 4.0.
+    """
+    from pipeline.s3_receive import search as search_module
+
+    x, fs, rs, _ = synth("qpsk", n_bits=30000, snr_db=16.0, sps=4, seed=11)
+    params = _two_candidate_params(rs)
+
+    clock = _TickClock()
+    monkeypatch.setattr(search_module, "time", clock)
+    res = receive_best(x, params, modulations=["qpsk", "8psk"], budget_s=1.5,
+                       stop_on_clean_lock=False)
+
+    assert res.status == "failed"
+    assert res.values["search_chain_runs"] == 0, res.values
+    assert res.values["search_budget_exhausted"] is True
+    reason = res.reason or ""
+    assert "truncated" in reason.lower(), (
+        f"a search stopped mid-screen reported {reason!r}, which reads like a "
+        "verdict over candidates it never opened")
+    assert "1.5 s budget" in reason, reason
+    # it says how much of the field it actually looked at, and does not offer
+    # one candidate's rejection as the reason the search came back empty
+    assert "1 of 2 candidates were screened" in reason, reason
+    assert "refused by the cheap screen" not in reason, reason
+
+
+def test_the_truncation_flag_and_the_note_never_disagree():
+    """The one thing about REAL seconds that is safe to assert on any machine.
+
+    Not "0.9 s truncates this search" - that is a claim about the box, and it
+    is the claim that broke in Docker. The invariant is that the two ways a
+    result reports a truncation cannot contradict each other, whichever way the
+    clock falls on the machine running the test. A fast box takes the `False`
+    branch of every one of these and a slow box takes the `True` branch; both
+    are correct and both are checked here.
+    """
+    x, fs, rs, _ = synth("qpsk", n_bits=30000, snr_db=16.0, sps=4, seed=11)
+    params = _two_candidate_params(rs)
+
+    for budget in (0.001, 0.05, 0.5, 600.0):
+        res = receive_best(x, params, modulations=["qpsk", "8psk"],
+                           budget_s=budget, stop_on_clean_lock=False)
+        said = "truncated" in (res.reason or "").lower()
+        flagged = bool(res.values["search_budget_exhausted"])
+        assert said == flagged, (
+            f"at a {budget} s budget the flag said {flagged} and the reason "
+            f"said {said}: {res.reason!r}")
 
 
 def test_a_search_stopped_by_the_run_ceiling_does_not_blame_the_clock():
