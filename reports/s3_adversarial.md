@@ -48,8 +48,9 @@ would be worse, not safer.
 
 ## 4. The six, through the blind search
 
-The path the service takes: `estimate()` on the input, then `receive_best`
-over S2's ranked hypotheses.
+`estimate()` on the input, then `receive_best` over S2's ranked
+hypotheses — what S3 can do when it is asked properly. **This is not what
+the service currently calls; see §10.**
 
 | case | class | declared fs | statuses over seeds | modulation | reported Rs | measured BER | worst s |
 |---|---|---|---|---|---|---|---|
@@ -125,8 +126,9 @@ with two right answers and no way to choose.
 ## 5. The same inputs through every named plug-in
 
 `MODULATIONS[name].receive(iq, params)` with a plausible rate — what the
-4 Sep unit tests cover. Kept so the two paths can be compared: a plug-in
-handed an explicit rate has no search, no rescue and no deadline.
+4 Sep unit tests cover, and — per §10 — **what the service actually does
+today**, with `name` hardcoded to `qpsk`. A plug-in handed an explicit rate
+has no search, no rescue and no deadline.
 
 | case | statuses over all plug-ins x seeds | `ok` | tracebacks |
 |---|---|---|---|
@@ -257,4 +259,70 @@ Naidhruv's. Both are one-line changes in his adapters, both are reproducible
 from `reports/s3_adversarial/pure_noise.wav`, and the second one is a
 two-character fix (`if score else` -> `if score is not None else`, or drop
 the fallback). Raised here with the measurement attached rather than edited.
+
+## 10. The service never calls the blind search, and demodulates everything as QPSK
+
+**This is the largest finding of the day and it was found by accident** —
+by running the six adversarial files through `python -m service.cli analyze`
+and noticing that all six reported `modulation: qpsk`, including the ones
+`receive_best` calls `16qam` and `2fsk`. It is not S3's to fix and nothing
+here has been changed; `service/` is Naidhruv's.
+
+### Measured, 40 random corpus files, both paths
+
+| path | decodes | modulation correct |
+|---|---|---|
+| `receive_best(iq, params_from_s2(s2, fs))` — what S3 can do | **35/40** | **37/40** |
+| `MODULATIONS[chosen_scheme].receive(...)` — what the service does | **11/40** | **11/40** |
+
+24 of 40 files decode on one path and not the other. Every disagreement
+has `chosen_scheme == "qpsk"` against a true scheme of 2fsk, 4fsk, 8psk or
+16qam. Scored with the repo's own `corpus.measured_ber` against the
+transmitted bits.
+
+### The chain, read rather than inferred
+
+1. **`adapt_s2` reads a field that does not exist.**
+   `service/orchestrator.py:323` is
+   `order_hint = getattr(raw, "order_hint", 0)`. **`S2Result` has no
+   `order_hint`** — its field is `fsk_order_hint`. So the `getattr` default
+   fires on every input and `order_hint` is **0 on 30 of 30** corpus files
+   measured.
+2. **`order_hint == 0` takes the `else` branch** of the if/elif ladder at
+   `orchestrator.py:341-349`, which returns
+   `[Hypothesis("qpsk", 0.7), Hypothesis("bpsk", 0.3)]` — always.
+3. **Dheeraj's classifier is computed and discarded.**
+   `S2Result.modulation_hypotheses` carries the ML ranking and is populated
+   on **28 of 30** files; `adapt_s2` never reads it. On `2fsk_15dB_6028` it
+   says `2fsk` at **0.9987** while the adapter hands S3 `qpsk` at 0.7.
+4. **`orchestrate` takes `s2_res.hypotheses[0].value`** (line 844) — `qpsk`.
+5. **`_run_s3` (line 856) runs that ONE plug-in**, never `receive_best`. No
+   search, no ranked fallback, no rate rescue, no breadth-first ordering —
+   the whole of `e7b9649` is unreachable from the API and the CLI.
+
+### Why it is invisible
+
+Same shape as the two other integration defects found this week, and the
+third instance of the same species in this one file: a `getattr` against a
+field name that does not exist, silently taking its default. The 7 Sep
+notes already record “one orchestrator test asserting `est.symbol_rate`
+where `S2Result` has `symbol_rate_hz`”. Nothing raises, every stage returns
+`ok`, and the report looks complete — it is simply wrong about the
+modulation. A corpus file that decodes perfectly in S3's own tests comes
+back as noise through the service, and no test compares the two paths.
+
+### The fix is small and it is Naidhruv's
+
+Stated because it is a day before freeze, not to pre-empt his call:
+
+* `adapt_s2` should prefer `raw.modulation_hypotheses` when it is present
+  and fall back to the ladder only when it is not — that alone restores
+  Dheeraj's classifier, which is right on 28 of 30.
+* `_run_s3` should call `receive_best(iq, params_from_s2(s2_raw, fs))`, the
+  entry point S3 exposes for exactly this. It reads the ranking as a PRIOR
+  rather than a restriction, so it still recovers files the classifier gets
+  wrong — which is the difference between 35/40 and 11/40.
+* If neither lands before freeze, the honest fallback is to stop reporting
+  a modulation the service did not determine: `qpsk` is a hardcoded default
+  presented to a judge as a finding.
 

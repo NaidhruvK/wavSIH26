@@ -761,6 +761,55 @@ every seed at **6.15–6.58 s** here, ~13.8 s on Nehal's 2.09x box against the
 exhausts its list) and inside budget, but it is the smallest margin in the set
 and two emitters in one band is not a contrived input.
 
+#### NAIDHRUV — READ THIS ONE FIRST: the service demodulates everything as QPSK
+
+Found by running the six adversarial files through `python -m service.cli
+analyze` and noticing all six reported `modulation: qpsk`, including the ones
+`receive_best` calls `16qam` and `2fsk`. Not touched — `service/` is yours.
+Full write-up `reports/s3_adversarial.md` §10.
+
+**Measured, 40 random corpus files, both paths, scored with
+`corpus.measured_ber` against the transmitted bits:**
+
+| path | decodes | modulation correct |
+|---|---|---|
+| `receive_best(...)` — what S3 can do | **35/40** | **37/40** |
+| `MODULATIONS[chosen_scheme].receive(...)` — what the service does | **11/40** | **11/40** |
+
+24 of 40 disagree, and every disagreement has `chosen_scheme == "qpsk"` against
+a true scheme of 2fsk / 4fsk / 8psk / 16qam.
+
+**The chain, read rather than inferred:**
+
+1. **`orchestrator.py:323` reads a field that does not exist.**
+   `order_hint = getattr(raw, "order_hint", 0)` — **`S2Result` has no
+   `order_hint`**; its field is `fsk_order_hint`. The default fires on every
+   input: `order_hint` is **0 on 30 of 30** corpus files measured.
+2. `order_hint == 0` takes the `else` branch of the ladder at 341-349, which
+   returns `[qpsk 0.7, bpsk 0.3]` — always.
+3. **Dheeraj's classifier is computed and discarded.**
+   `S2Result.modulation_hypotheses` is populated on **28 of 30** files and
+   `adapt_s2` never reads it. On `2fsk_15dB_6028` it says `2fsk` at **0.9987**
+   while the adapter hands S3 `qpsk` at 0.7.
+4. `orchestrate:844` takes `s2_res.hypotheses[0].value` → `qpsk`.
+5. **`_run_s3` (856) runs that one plug-in, never `receive_best`** — so the
+   search, rate rescue and breadth-first ordering from `e7b9649` are
+   unreachable from the API and the CLI.
+
+This is the third instance of the same species in this file — a `getattr`
+against a name that does not exist, silently taking its default. My 7 Sep notes
+already record "one orchestrator test asserting `est.symbol_rate` where
+`S2Result` has `symbol_rate_hz`". Nothing raises; every stage returns `ok`; the
+report just says the wrong modulation.
+
+**Suggested, and it is your call:** have `adapt_s2` prefer
+`raw.modulation_hypotheses` when present, and have `_run_s3` call
+`receive_best(iq, params_from_s2(s2_raw, fs))`. `receive_best` treats the
+ranking as a PRIOR rather than a restriction, which is the difference between
+35/40 and 11/40. If neither lands before freeze, the honest fallback is to stop
+reporting a modulation the service did not determine — `qpsk` is currently a
+hardcoded default shown to a judge as a finding.
+
 #### NAIDHRUV — two confidence bugs the six files found, both in your adapters
 
 Running `pure_noise.wav` end to end. No tracebacks anywhere; the final answer is

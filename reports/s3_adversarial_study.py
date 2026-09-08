@@ -9,11 +9,20 @@ WHY THIS RUNS THE BLIND SEARCH AND NOT ONLY THE PLUG-INS
 --------------------------------------------------------
 `tests/unit/test_s3_receive.py` has covered most of this set since 4 Sep, but it
 covers it through `MODULATIONS[name].receive(iq, params)` - a NAMED plug-in
-handed a symbol rate. That is not the path the service takes. The orchestrator
-calls `receive_best(iq, params_from_s2(s2, fs))`, which runs a ranked search
-over every plug-in, a rate rescue, a de-duplication grid and a deadline, none of
-which the plug-in path exercises. All of that machinery landed on 7 Sep
-(`e7b9649`) and none of it had ever been shown an adversarial input.
+handed a symbol rate. `receive_best(iq, params_from_s2(s2, fs))` is the entry
+point an orchestrator is meant to use: a ranked search over every plug-in, a
+rate rescue, a de-duplication grid and a deadline, none of which the plug-in
+path exercises. All of that landed on 7 Sep (`e7b9649`) and none of it had ever
+been shown an adversarial input.
+
+CORRECTION, 8 Sep, found by running the six files through the real CLI: an
+earlier draft of this file said `receive_best` is "the path the service takes".
+**IT IS NOT.** `service/orchestrator.py:856` calls
+`MODULATIONS[chosen_scheme].receive(...)` - one named plug-in - and
+`chosen_scheme` is `qpsk` on every corpus file measured. See section 10 of the
+report; it is the largest finding of the day and it is not S3's to fix. Both
+paths are still measured here, and the plug-in table in section 5 is now the
+one that describes production behaviour.
 
 The rate rescue is the specific thing worth pointing at. When every candidate is
 refused for absence, `lockcheck.strongest_line` reads the peak off the spectrum
@@ -502,8 +511,9 @@ def _fmt(rows):
 
     a("## 4. The six, through the blind search")
     a("")
-    a("The path the service takes: `estimate()` on the input, then `receive_best`")
-    a("over S2's ranked hypotheses.")
+    a("`estimate()` on the input, then `receive_best` over S2's ranked")
+    a("hypotheses — what S3 can do when it is asked properly. **This is not what")
+    a("the service currently calls; see §10.**")
     a("")
     a("| case | class | declared fs | statuses over seeds | modulation | reported Rs | measured BER | worst s |")
     a("|---|---|---|---|---|---|---|---|")
@@ -605,8 +615,9 @@ def _fmt(rows):
     a("## 5. The same inputs through every named plug-in")
     a("")
     a("`MODULATIONS[name].receive(iq, params)` with a plausible rate — what the")
-    a("4 Sep unit tests cover. Kept so the two paths can be compared: a plug-in")
-    a("handed an explicit rate has no search, no rescue and no deadline.")
+    a("4 Sep unit tests cover, and — per §10 — **what the service actually does")
+    a("today**, with `name` hardcoded to `qpsk`. A plug-in handed an explicit rate")
+    a("has no search, no rescue and no deadline.")
     a("")
     a("| case | statuses over all plug-ins x seeds | `ok` | tracebacks |")
     a("|---|---|---|---|")
@@ -746,6 +757,73 @@ def _fmt(rows):
     a("from `reports/s3_adversarial/pure_noise.wav`, and the second one is a")
     a("two-character fix (`if score else` -> `if score is not None else`, or drop")
     a("the fallback). Raised here with the measurement attached rather than edited.")
+    a("")
+
+    a("## 10. The service never calls the blind search, and demodulates everything as QPSK")
+    a("")
+    a("**This is the largest finding of the day and it was found by accident** \u2014")
+    a("by running the six adversarial files through `python -m service.cli analyze`")
+    a("and noticing that all six reported `modulation: qpsk`, including the ones")
+    a("`receive_best` calls `16qam` and `2fsk`. It is not S3\u0027s to fix and nothing")
+    a("here has been changed; `service/` is Naidhruv\u0027s.")
+    a("")
+    a("### Measured, 40 random corpus files, both paths")
+    a("")
+    a("| path | decodes | modulation correct |")
+    a("|---|---|---|")
+    a("| `receive_best(iq, params_from_s2(s2, fs))` \u2014 what S3 can do | **35/40** | **37/40** |")
+    a("| `MODULATIONS[chosen_scheme].receive(...)` \u2014 what the service does | **11/40** | **11/40** |")
+    a("")
+    a("24 of 40 files decode on one path and not the other. Every disagreement")
+    a("has `chosen_scheme == \"qpsk\"` against a true scheme of 2fsk, 4fsk, 8psk or")
+    a("16qam. Scored with the repo\u0027s own `corpus.measured_ber` against the")
+    a("transmitted bits.")
+    a("")
+    a("### The chain, read rather than inferred")
+    a("")
+    a("1. **`adapt_s2` reads a field that does not exist.**")
+    a("   `service/orchestrator.py:323` is")
+    a("   `order_hint = getattr(raw, \"order_hint\", 0)`. **`S2Result` has no")
+    a("   `order_hint`** \u2014 its field is `fsk_order_hint`. So the `getattr` default")
+    a("   fires on every input and `order_hint` is **0 on 30 of 30** corpus files")
+    a("   measured.")
+    a("2. **`order_hint == 0` takes the `else` branch** of the if/elif ladder at")
+    a("   `orchestrator.py:341-349`, which returns")
+    a("   `[Hypothesis(\"qpsk\", 0.7), Hypothesis(\"bpsk\", 0.3)]` \u2014 always.")
+    a("3. **Dheeraj\u0027s classifier is computed and discarded.**")
+    a("   `S2Result.modulation_hypotheses` carries the ML ranking and is populated")
+    a("   on **28 of 30** files; `adapt_s2` never reads it. On `2fsk_15dB_6028` it")
+    a("   says `2fsk` at **0.9987** while the adapter hands S3 `qpsk` at 0.7.")
+    a("4. **`orchestrate` takes `s2_res.hypotheses[0].value`** (line 844) \u2014 `qpsk`.")
+    a("5. **`_run_s3` (line 856) runs that ONE plug-in**, never `receive_best`. No")
+    a("   search, no ranked fallback, no rate rescue, no breadth-first ordering \u2014")
+    a("   the whole of `e7b9649` is unreachable from the API and the CLI.")
+    a("")
+    a("### Why it is invisible")
+    a("")
+    a("Same shape as the two other integration defects found this week, and the")
+    a("third instance of the same species in this one file: a `getattr` against a")
+    a("field name that does not exist, silently taking its default. The 7 Sep")
+    a("notes already record \u201cone orchestrator test asserting `est.symbol_rate`")
+    a("where `S2Result` has `symbol_rate_hz`\u201d. Nothing raises, every stage returns")
+    a("`ok`, and the report looks complete \u2014 it is simply wrong about the")
+    a("modulation. A corpus file that decodes perfectly in S3\u0027s own tests comes")
+    a("back as noise through the service, and no test compares the two paths.")
+    a("")
+    a("### The fix is small and it is Naidhruv\u0027s")
+    a("")
+    a("Stated because it is a day before freeze, not to pre-empt his call:")
+    a("")
+    a("* `adapt_s2` should prefer `raw.modulation_hypotheses` when it is present")
+    a("  and fall back to the ladder only when it is not \u2014 that alone restores")
+    a("  Dheeraj\u0027s classifier, which is right on 28 of 30.")
+    a("* `_run_s3` should call `receive_best(iq, params_from_s2(s2_raw, fs))`, the")
+    a("  entry point S3 exposes for exactly this. It reads the ranking as a PRIOR")
+    a("  rather than a restriction, so it still recovers files the classifier gets")
+    a("  wrong \u2014 which is the difference between 35/40 and 11/40.")
+    a("* If neither lands before freeze, the honest fallback is to stop reporting")
+    a("  a modulation the service did not determine: `qpsk` is a hardcoded default")
+    a("  presented to a judge as a finding.")
     a("")
 
     if raised:
