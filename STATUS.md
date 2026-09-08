@@ -3900,3 +3900,20 @@ Two things to know:
   on 6 Sep and 9 Sep — it turns "the container built" into "the container works".
 - S4 has a working CLI path already (`python -m pipeline.s4_recover.cli`), so
   the "if only 48 hours remain" floor is covered for my stages from day one.
+
+### 8 Sep, later — synced dhiraj/zoo-v0 with main before opening the 7-8 Sep PR
+
+`dhiraj/zoo-v0` had drifted 53 commits behind `origin/main` (PR #17 had already
+carried the earlier zoo work in; the 7-8 Sep commits — S0 format sniffer,
+`random_case`/`make_rs_stream` port, the reproducibility lock — were sitting on
+top of that, unmerged). Rather than open a PR against a stale base, merged
+`origin/main` in first: Anvith's S3 LDPC decode path, Nehal's S3/S6 CCSDS
+integration fixes, and the new service/eval/web layer. Clean auto-merge, no
+conflicts, verified with a dry run before committing for real.
+
+Ran the full suite against the merged result, not just my own files:
+**771 passed, 2 xfailed** (my pinned 4FSK layout-detection gap, plus one from
+the newly-merged S3 work), zero failures, ~28 min. Pushed as `d5b4238`.
+
+No PR opened yet — no `gh` CLI in this environment. Compare view is at
+`https://github.com/NaidhruvK/wavSIH26/compare/main...dhiraj/zoo-v0`.
