@@ -829,6 +829,13 @@ entry and the fact that it happened.
 
 ### 9 Sep — the guard pass: five things in S3 left the stage as a traceback, and none of them can now
 
+**MERGED to `origin/main` as `1d181ab`**, five commits behind it, pushed at
+17:46 against the 18:00 freeze. Self-merged, the seventh in this repo - branch
+protection is still an open ask to Naidhruv. Verified ON MAIN after the merge
+rather than on the branch: the merged tree is byte-identical to the branch tip
+the full suite passed on, and `reports/s3_guard_probe.py` re-run on merged main
+gives 803 cases, 0 unexpected throws, 4 of 4 control cells ok.
+
 **The row:** "No new code. Read S3 end to end for anything that can throw.
 Guards only." Definition of done: guard commits only, and the diff contains no
 new functionality.
