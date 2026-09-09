@@ -1024,24 +1024,33 @@ now guards the tests written to prevent its cousins.
 
 Written down rather than rehearsed silently, because 10 Sep's row is "each can
 narrate their stage in 60 s, practise once against each other" and a version on
-paper is one the others can hold me to. Timed at about 62 seconds spoken.
+paper is one the others can hold me to.
 
-> Stage 3 is the receiver. It gets a raw capture, and from Stage 2 a ranked list
-> of guesses: symbol rate, carrier offset, modulation. It never gets the answer
-> — there is a test that greps this whole directory for that word and fails if
-> it appears even in a comment.
+**Length, counted rather than felt.** The first draft ran 169 words. A person
+explaining something technical speaks at 130-150 words per minute, so that is
+68-78 s - over budget, and I had written "about 62 s" under it by assuming 160.
+**137 words is what fits**, counted on the block below: 55 s at 150, 59 s at
+140, 63 s at 130. The blindness gate came out of the narration and into the follow-ups
+below, where it answers a question rather than spending eight seconds unasked.
+
+> Stage 3 is the receiver. It gets a raw capture and, from Stage 2, ranked
+> guesses at symbol rate, carrier offset and modulation. It never gets the
+> answer.
 >
 > For each guess it runs one cheap check first: is there a symbol-rate line
-> where you say there is? That is a single FFT, and it throws out most of the
-> field before any real work happens. What survives goes through the chain —
-> matched filter, Gardner timing recovery, a blind equaliser, a Costas carrier
-> loop — and comes out as soft bits, the log-likelihood ratios Stages 4 and 5
-> need.
+> where you say there is? One FFT, and most of the field is gone before any real
+> work. What survives goes through the chain - matched filter, Gardner timing
+> recovery, blind equaliser, Costas carrier loop - and comes out as soft bits,
+> the log-likelihood ratios Stages 4 and 5 need.
 >
-> The part I would point you at is that it refuses. Seven checks run, six of
-> them get a vote, and any one can veto. Across 252 files it is confidently
-> wrong zero times. A wrong answer given confidently is worse than no answer,
-> and that is the whole design.
+> The part I would point you at is that it refuses. Seven checks run, six get a
+> vote, any one can veto. Across 252 files it is confidently wrong zero times. A
+> wrong answer given confidently is worse than no answer. That is the design.
+
+**"How do you know it never sees the answer?"** A test greps every file in this
+directory, case-insensitively, for the word - and fails if it appears even in a
+comment. `reports/` and `tests/` are exempt and may read the answer key; the
+stage itself may not.
 
 **The follow-up I expect, and the answer, because "where does it fail" is the
 question a judge actually asks.** 8-PSK and 16-QAM at 4 dB — fourteen files. It
