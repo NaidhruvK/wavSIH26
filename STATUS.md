@@ -827,6 +827,254 @@ entry and the fact that it happened.
 
 ## Anvith — S3 receiver chain
 
+### 9 Sep — the guard pass: five things in S3 left the stage as a traceback, and none of them can now
+
+**The row:** "No new code. Read S3 end to end for anything that can throw.
+Guards only." Definition of done: guard commits only, and the diff contains no
+new functionality.
+
+**Done. The diff, stated so it can be checked rather than taken on trust:**
+three files under `pipeline/s3_receive/`, **+102/-8**. Counted rather than
+eyeballed: 50 of the added lines are neither blank nor comment, 10 of those are a
+docstring paragraph, so **40 lines of code** — and every one of them is either
+`if <unusable>: return <the sentinel this function already documents>`,
+`try/except: <the default it already had>`, or an existing expression re-indented
+into one of those. **No new function, no new key on any
+result, no new status, no threshold moved, no constant touched, no signature
+changed.** Beside them, two files that are not stage code: 184 lines of tests in
+`tests/unit/test_s3_adversarial.py` pinning the guards, and
+`reports/s3_guard_probe.py`, the sweep that found them - so tomorrow's reader can
+re-run the measurement instead of believing this entry. `git status` lists
+`pipeline/s3_receive/`, `tests/unit/test_s3_*`, `reports/s3_*` and this
+insertion, and nothing else.
+
+**Method, because "I read it and it looked fine" is not a measurement.** Read
+all 18 files in `pipeline/s3_receive/` plus `pipeline/s5_decode/ldpc_code.py`
+(4 740 lines), then exercised the surface rather than trusting the read. The
+sweep is committed as `reports/s3_guard_probe.py` and runs in about 90 s; it
+exits non-zero on an unexpected throw, so it is a check and not only a report.
+**Run on a pristine `0cc87b3` worktree and on this tree, same script, same
+signal:**
+
+| sweep | what it covers | cases | UNEXPECTED before | after |
+|---|---|---|---|---|
+| A | every plug-in x `receive`/`demodulate`/`classify_features` x 12 hostile captures | 216 | 0 | 0 |
+| B | `receive_best` x 34 hostile parameter sets x 5 captures, plus `params_from_s2` | 187 | **24** | **0** |
+| C | `lockcheck`, `softmap`, `bitmap`, the LDPC decode path | 165 | **24** | **0** |
+| D | everything else `__init__` exports | 235 | 0 | 0 |
+| | **total** | **803** | **48** | **0** |
+
+55 further raises are the documented refusal contract - a record too short for
+the timing loop, an order that is not a power of two, an unregistered scheme
+name - and that count is **identical on both arms**, so nothing was quietly
+turned from a deliberate refusal into a silent pass. Each is listed with its
+reason in the script's `EXPECTED`. All four control cells read `ok` on both
+arms.
+
+**Sweep A is the one worth reading twice: the plug-in surface was already
+airtight, 216 of 216, before I changed anything.** The catch-all in
+`LinearDemod.receive` and `FSKDemod.receive` does what it claims on every
+hostile capture I could build - empty, one sample, all-NaN, all-inf, 1e300,
+1e-300, real-valued, integer dtype, 2-D, a Python list. **Everything found today
+is outside those two try blocks**, which is exactly where a stage stops being
+defended by them.
+
+#### The five, in the order they would have cost time
+
+**1. An unusable sample rate left the whole stage as a `ZeroDivisionError`.**
+`receive_best` defaults `fs` to `0.0` when the mapping carries no `fs` key, and
+zero is not a small sample rate — it is no frequency axis at all. Measured on a
+clean 15 dB QPSK capture:
+
+| `fs` | before | after |
+|---|---|---|
+| `0.0` | **ZeroDivisionError** | `failed`, names the rate |
+| key absent | **ZeroDivisionError** | `failed`, names the rate |
+| `inf` | **ZeroDivisionError** | `failed`, names the rate |
+| `"wide"` | **ValueError** | `failed`, names the rate |
+| `None` | **TypeError** | `failed`, names the rate |
+| `nan` | `failed`: "every candidate was refused by the cheap screen" | `failed`, names the rate |
+| `-200000.0` | `failed`: "every candidate was refused by the cheap screen" | `failed`, names the rate |
+
+Both throwing frames are one line: `np.fft.rfftfreq(n, d=1.0 / fs)` in
+`lockcheck._averaged_spectrum`. `1.0 / fs` is a plain Python division, so `0.0`
+raises there and `inf` makes `d` exactly `0.0` and raises the same thing inside
+numpy. `carrier_offset` reaches it by a second route — `scipy.signal.welch`
+rejects a non-positive or NaN `fs` itself.
+
+**The last two rows are the quieter half and I nearly missed them.** They did
+not raise; they returned a `failed` whose reason was *"every candidate was
+refused by the cheap screen"* — a verdict over a field that had no frequency
+axis to be measured on. That is the same false-claim defect fix #3 closed on
+7 Sep and §9c closed again this morning, arriving a third time through a
+different door.
+
+**Every plug-in has refused exactly this by name since 4 Sep**
+(`base.unusable_reason`). The search never reached one, because the screening
+pass runs first. Guarded in both places: in `lockcheck`, where the division is,
+and in `receive_best`, so the reason names the rate instead of blaming the
+screen.
+
+**Reachability, stated precisely rather than talked up: this is NOT reachable
+from the service today.** `service/orchestrator.py:762` reads
+`getattr(s0_raw, "fs", None) or fs_hint or 200000.0`, and that `or` chain floors
+any falsy rate at 200000.0. It is reachable from the documented public entry
+point — `receive_best(iq, params)` with a hand-built mapping, or
+`params_from_s2(s2_result)` with no `fs` argument — and what invites it is S3's
+own default, not anybody else's input.
+
+**2. `params_from_s2` survived an S2 that lost a field and not one that changed
+its type.** Its docstring promises "everything here is a `getattr` with a
+default, so an S2 that grows a field gets used and an S2 that lacks one still
+works". A present-but-`None` attribute takes the attribute, not the default, so
+`float(None)` raised TypeError; a ranked list arriving as a scalar raised
+`TypeError: 'int' object is not iterable`. **This is the exact shape of 8 Sep's
+`order_hint` finding** — a default that cannot fire because the attribute is
+there — now in my own file rather than in Naidhruv's. An unreadable number
+becomes `0.0`, which finding 1 now refuses by name; an unreadable ranking
+becomes an empty ranking, which is what the function already returns for an
+absent field.
+
+**3. A symbol rate that would not coerce raised out of `_build_candidates`.**
+`_ranked` has dropped an uncoercible hypothesis since the morning the classifier
+landed and handed this module the string `'qpsk'` where it expected a number.
+The two singleton fallbacks beside it were the same coercion written without the
+same care. **The scores are unchanged, so no valid input moves prior** — only
+the failure path is new, and it lands on the empty list `receive_best` already
+answers with "S2 supplied no usable symbol rate hypothesis".
+
+**4. `bits_per_symbol(0)` raised from inside the check that exists to catch it.**
+`(0).bit_length() - 1` is `-1`, and `1 << -1` raises
+`ValueError: negative shift count` one line before the message that would have
+said what was wrong. It did raise — about its own arithmetic rather than about
+the input. Every valid order is untouched and an invalid one still raises
+`ValueError`; only what it says changed.
+
+**5. No hang anywhere in S3, and this was checked rather than assumed.** Three
+real `while` loops in the package. `bitmap.gray_inverse` is bounded at 64.
+`search.receive_best`'s screening loop grows its own queue as it goes, and is
+bounded by `MAX_CANDIDATES` and a `seen` set with the index advancing every
+iteration. `timing.gardner_sync` advances `pos` by `period / 2` twice per
+iteration, and `period` is clipped to `sps * (1 ± max_rate_dev)` with
+`max_rate_dev = 0.05` and `sps >= 2.0` enforced at entry — so the tracked period
+cannot reach zero and the loop cannot stall. **A stall would be worse than a
+throw on demo day and the row does not name it, so it is worth saying that it is
+not there.** `filters.rrc_taps` already caps taps at 8 191, which is the
+allocation blow-up I went looking for and someone had already closed.
+
+#### What did NOT change, and where this has no power
+
+**252 corpus files, 15 outcome columns, run end to end through
+`estimate` → `params_from_s2` → `receive_best` on a pristine `0cc87b3` worktree
+and on this tree: zero differing cells out of 3 780, `reason` byte for byte.**
+`status == "ok"` on 238 of 252 both sides; confidently wrong 0 both sides.
+
+**Say the limit out loud: every corpus file carries `fs = 200000.0` and
+well-formed parameters, so NOT ONE ROW enters any branch this diff touches.**
+That table is evidence that the normal path did not move and is **not** evidence
+about the guards. The evidence about the guards is the 803-case sweep above and
+the tests below. This is house rule 8 applied to a regression check, and it is
+the same caution §9c had to add this morning.
+
+**Tests.** S3 unit + `tests/contract` on the guarded tree, before the new tests
+were written: **372 passed, 4 skipped** — the same number §9c recorded this
+morning, so nothing that already existed moved. With the new section:
+**386 passed, 4 skipped**. `tests/unit/test_s3_adversarial.py` goes
+**56 -> 70**: 5 new tests, 14 cases, every assertion on a status, a reason or a
+sentinel and not one on the clock.
+
+**The FULL suite on the guarded tree: 945 passed, 4 skipped, 2 xfailed, 0
+failed, 17m37s.** Run because a freeze day is the wrong day to merge on a
+targeted subset, and because `lockcheck` is imported by `reports/` and `search`
+by anything that adapts S2 - neither is S3-private. The one warning is a
+starlette/anyio deprecation that predates this branch. For comparison, 8 Sep
+recorded 900 passed / 4 skipped / 2 xfailed in 18m36s on this box.
+
+**The known-answer cell is FIRST in the new section, not after it.** Every other
+test there asserts that something is REFUSED, and a capture S3 could not
+demodulate at all would make all of them pass while proving nothing. That is
+precisely the 8 Sep hand-rolled-transmitter failure, where three of six
+adversarial cases could only ever have reported a refusal — so the countermeasure
+now guards the tests written to prevent its cousins.
+
+#### Found, measured, NOT touched
+
+- **`filters.estimate_occupied_band` and `estimate_rolloff` raise
+  `IndexError: index -1 is out of bounds` on an EMPTY capture**, where every
+  other function in the package answers cleanly. Left alone deliberately:
+  `estimate_occupied_band` has no caller in the repo at all, and
+  `estimate_rolloff`'s single caller (`linear.py:288`) sits behind the
+  record-length check that already refuses a capture this short. Unreachable
+  today, and inventing an occupied band for an empty array would be a worse
+  answer than a raise. It is the message that is wrong, not the refusal.
+- **`carrier_alignment` returns PASS when `carrier_offset` had nothing to
+  measure.** `carrier_offset` documents 0.0 as "absence of evidence", and
+  alignment reads it as a measured zero and passes. Not reachable as a false
+  confirmation today — `signal_presence` fails first on every input where the
+  offset is unmeasurable, and the search now refuses an unusable `fs` before
+  either runs — but it is a `pass` with no evidence behind it, which house rule
+  3 says is worse than no check. **Changing a check's verdict is not a guard**,
+  so it is not a freeze-day change. Worth twenty minutes after the 11th.
+- **`bitmap.symbol_labels` has no ceiling** where `rrc_taps` has one:
+  `symbol_labels(2**40)` asks for 8 TiB. Its order always arrives from a
+  registered `Scheme` (largest is 16), so there is no path to it. Recorded
+  because the asymmetry with `rrc_taps` is the kind of thing that reads as an
+  oversight later.
+- **`pipeline/s5_decode/ldpc_code.py` is in Nehal's directory and I did not
+  touch it.** Probed through `CODES["ldpc"].decode` on empty, short, all-NaN and
+  all-inf streams and with no parameters: every case raises a deliberate
+  `ValueError` naming the shortfall, which matches how `ConvCode` and `RsCode`
+  behave, and nothing on the service path dispatches LDPC anyway
+  (`reports/s3_ldpc_design.md` §7). Nothing owed.
+
+#### Block D — the 60-second explanation of the receiver chain
+
+Written down rather than rehearsed silently, because 10 Sep's row is "each can
+narrate their stage in 60 s, practise once against each other" and a version on
+paper is one the others can hold me to.
+
+**Length, counted rather than felt.** The first draft ran 169 words. A person
+explaining something technical speaks at 130-150 words per minute, so that is
+68-78 s - over budget, and I had written "about 62 s" under it by assuming 160.
+**137 words is what fits**, counted on the block below: 55 s at 150, 59 s at
+140, 63 s at 130. The blindness gate came out of the narration and into the follow-ups
+below, where it answers a question rather than spending eight seconds unasked.
+
+> Stage 3 is the receiver. It gets a raw capture and, from Stage 2, ranked
+> guesses at symbol rate, carrier offset and modulation. It never gets the
+> answer.
+>
+> For each guess it runs one cheap check first: is there a symbol-rate line
+> where you say there is? One FFT, and most of the field is gone before any real
+> work. What survives goes through the chain - matched filter, Gardner timing
+> recovery, blind equaliser, Costas carrier loop - and comes out as soft bits,
+> the log-likelihood ratios Stages 4 and 5 need.
+>
+> The part I would point you at is that it refuses. Seven checks run, six get a
+> vote, any one can veto. Across 252 files it is confidently wrong zero times. A
+> wrong answer given confidently is worse than no answer. That is the design.
+
+**"How do you know it never sees the answer?"** A test greps every file in this
+directory, case-insensitively, for the word - and fails if it appears even in a
+comment. `reports/` and `tests/` are exempt and may read the answer key; the
+stage itself may not.
+
+**The follow-up I expect, and the answer, because "where does it fail" is the
+question a judge actually asks.** 8-PSK and 16-QAM at 4 dB — fourteen files. It
+refuses all fourteen rather than guessing. How much of that is physics is
+measured, not asserted: `reports/s3_bound.md` puts seven cells at 1.0–1.5x the
+ideal AWGN bound and those two at 7.2x and 12.5x, so most of the gap is the
+carrier loop and is written up rather than explained away. Do **not** say "it is
+the operating envelope" — that claim was repeated for two days on an
+observation that never tested it, and the bound calculation is what disproved
+it.
+
+**Numbers checked today before saying them out loud**, because the 7 Sep entry
+records a worst-case second being copied rather than re-read: seven checks with
+six voting is measured on `qpsk_20dB_2011` (`equaliser_converged` records
+`unknown` and does not vote, which §8 already lists as open); 252 files and zero
+confidently wrong are from today's own before/after run, both arms.
+
 ### 9 Sep, small hours — the Core Lock S3 failure is a test asserting a property of the MACHINE, plus one real defect it turned up
 
 **Naidhruv's report:** Core Lock Docker full pytest, one S3 failure,

@@ -51,6 +51,15 @@ def gray_inverse(g: np.ndarray) -> np.ndarray:
 
 
 def bits_per_symbol(order: int) -> int:
+    # 9 Sep, guard pass. The power-of-two check below could not see order 0:
+    # `(0).bit_length() - 1` is -1, and `1 << -1` raises
+    # `ValueError: negative shift count` from inside the check itself, one
+    # line before the message that would have said what was wrong. Same class
+    # as a check that cannot see - it did raise, but about the arithmetic
+    # rather than about the input. Every valid order is unaffected, and an
+    # invalid one still raises ValueError; only the message changes.
+    if int(order) < 1:
+        raise ValueError(f"constellation order {order} is not a power of two")
     b = int(order).bit_length() - 1
     if 1 << b != int(order):
         raise ValueError(f"constellation order {order} is not a power of two")

@@ -274,15 +274,39 @@ def params_from_s2(s2_result: Any, fs: float | None = None) -> dict[str, Any]:
     upstream, and a stage that imports the stage feeding it cannot be tested,
     swapped or run without it. Everything here is a `getattr` with a default,
     so an S2 that grows a field gets used and an S2 that lacks one still works.
+
+    9 Sep, guard pass. The paragraph above promises this survives an S2 that
+    changed shape, and it delivered that for a field that went MISSING and not
+    for one that changed TYPE - `getattr` returns a present-but-None attribute
+    rather than the default beside it, so `float(None)` raised, and a ranked
+    list arriving as a scalar raised in `list()`. Both are the shape of 8 Sep's
+    `order_hint` finding: a default that cannot fire because the attribute is
+    there. An unreadable number becomes 0.0, which `receive_best` now refuses
+    by name, and an unreadable ranking becomes an empty ranking, which is what
+    this function already returns when the field is absent. Nothing here
+    invents a value; it declines to raise on the way to one.
     """
     get = lambda n, d=None: getattr(s2_result, n, d)          # noqa: E731
+
+    def num(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def ranking(value: Any) -> list:
+        try:
+            return list(value or [])
+        except TypeError:
+            return []
+
     return {
-        "fs": float(fs if fs is not None else get("fs", 0.0)),
+        "fs": num(fs if fs is not None else get("fs", 0.0), 0.0),
         "symbol_rate": get("symbol_rate_hz"),
-        "cfo_hz": get("cfo_hz") or 0.0,
-        "symbol_rate_hypotheses": list(get("symbol_rate_hypotheses") or []),
-        "cfo_hypotheses": list(get("cfo_hypotheses") or []),
-        "modulation_hypotheses": list(get("modulation_hypotheses") or []),
+        "cfo_hz": num(get("cfo_hz") or 0.0, 0.0),
+        "symbol_rate_hypotheses": ranking(get("symbol_rate_hypotheses")),
+        "cfo_hypotheses": ranking(get("cfo_hypotheses")),
+        "modulation_hypotheses": ranking(get("modulation_hypotheses")),
     }
 
 
@@ -339,12 +363,26 @@ def _normalise(scores: Sequence[float]) -> list[float]:
 def _build_candidates(base: dict[str, Any],
                       modulations: Sequence[str]) -> list[Candidate]:
     rates = _ranked(base.get("symbol_rate_hypotheses"))
+    # 9 Sep, guard pass. `_ranked` above already drops a hypothesis it cannot
+    # coerce - that guard was added the morning the classifier landed and
+    # handed this module a string where it expected a number. These two
+    # singleton fallbacks are the same coercion written without the same care,
+    # and a `symbol_rate` of "fast" left the stage as a bare ValueError. The
+    # scores are kept exactly as they were so no valid input changes prior:
+    # only the failure path is new, and it lands on the empty list that
+    # `receive_best` already answers with "no usable symbol rate hypothesis".
     if not rates:
         r = base.get("symbol_rate")
-        rates = [(float(r), 1.0)] if r else []
+        try:
+            rates = [(float(r), 1.0)] if r else []
+        except (TypeError, ValueError):
+            rates = []
     cfos = _ranked(base.get("cfo_hypotheses"))
     if not cfos:
-        cfos = [(float(base.get("cfo_hz") or 0.0), 1.0)]
+        try:
+            cfos = [(float(base.get("cfo_hz") or 0.0), 1.0)]
+        except (TypeError, ValueError):
+            cfos = [(0.0, 1.0)]
 
     # Zero is always a candidate. It is the hypothesis "the upstream estimate
     # is wrong and there is no offset", and on this corpus it is the correct
@@ -497,7 +535,30 @@ def receive_best(iq: np.ndarray, params: dict[str, Any],
     t0 = time.perf_counter()
     deadline = t0 + float(budget_s)
     x = np.asarray(iq, dtype=np.complex128)
-    fs = float(params.get("fs", 0.0))
+
+    # 9 Sep, guard pass. The default below is 0.0, and a sample rate of zero is
+    # not a small sample rate - it is no frequency axis at all. Every plug-in
+    # already refuses this by name in `base.unusable_reason`, but nothing gets
+    # that far: the screening pass runs first, and until today an absent `fs`
+    # key reached `np.fft.rfftfreq(n, d=1.0 / fs)` and left the stage as a
+    # ZeroDivisionError rather than a status. Guarded in `lockcheck` as well,
+    # where the division is; named here, because a search that reports "every
+    # candidate was refused by the cheap screen" over an unusable frequency
+    # axis has given a verdict on a field it could not measure - house rule 3.
+    # Reachable today only in-process, not from the service: `orchestrator.py`
+    # builds this rate through an `or` chain that floors a falsy value at
+    # 200000.0. It is the documented public entry point that is exposed.
+    try:
+        fs = float(params.get("fs", 0.0))
+    except (TypeError, ValueError):
+        fs = float("nan")
+    if not np.isfinite(fs) or fs <= 0:
+        return S3Result(
+            status="failed", confidence=0.0,
+            values={"envelope": "outside"},
+            reason=f"sample rate {params.get('fs')!r} is not a usable number, "
+                   "so there is no frequency axis to search along",
+            elapsed_ms=(time.perf_counter() - t0) * 1e3)
 
     ranked_input = bool(modulations) or bool(params.get("modulation_hypotheses"))
     if stop_on_clean_lock is None:
