@@ -3866,13 +3866,20 @@ decisions are the same decision.
 
 ## Naidhruv — contract · service · UI · integration
 
-_(not started here)_
+**Landed 9 Sep.** v1.0 Freeze: CCSDS Real-Signal Synchronization & Production Budget Lock.
 
-**From me, when you freeze the contract:** `RecoveryResult` in
-`rank_collapse.py` is already shaped for `StageResult` — it carries `status`
-(`ok` / `low_confidence` / `failed`), `confidence`, ranked `hypotheses` with
-scores and evidence strings, and a `reason` on every failure. Point me at the
-real Pydantic model and I will conform to it exactly rather than approximately.
+- **CCSDS Sub-byte Synchronization**: Fixed sub-byte bit phase search ($0..7$) in `peel_ccsds_outer` over post-Viterbi bitstreams. Verified on canonical real signal `ccsds_qpsk_20dB_depth1_9001.wav` (locks at `shift=4`).
+- **Real Randomiser Synchronization**: Exploits the algebraic property that the CCSDS 131.0-B randomiser period ($255$ bytes) divides the RS codeword length ($255$ bytes) and interleave group length ($I \times 255$ bytes). Aligning to codeword and group boundaries locks the LFSR phase deterministically to seed `0xFF`.
+- **Arbitrary Depth > 1 Interleave Group Alignment**: Implemented bounded group boundary search for symbol interleaving $I \in [2, 3, 4, 6, 8]$. Decodes all $I$ parallel codewords and validates against Shannon payload entropy ($< 6.5$ bits/byte) to reject false positives.
+- **Production S5 Decode Budget**: Locked `S5_DECODE_MAX_BITS = 32_000` in `service/orchestrator.py`. Mathematical analysis and empirical sweep proved $30,500$ bits is the exact minimum required to assemble a complete depth-4 group after an arbitrary $881$-byte offset; $32,000$ provides safe margin with $25.1$s S5 runtime (total $28.1$s), comfortably within the $90$s envelope.
+- **Canonical Validation**:
+  - `depth-1` (9001): PASS (1,561 bytes, exact truth match at byte offset 223).
+  - `depth-4` (9002): PASS (892 bytes, exact truth match at byte offset 180).
+  - Canonical suite: 6/6 QPSK/8PSK/16QAM depth-1 and depth-4 files match truth payload 100%. Depth-8 files (9007, 9008) execute S0-S6 within envelope ($< 51$s) but exceed 32k budget for full group assembly.
+- **Test Suites**:
+  - `tests/unit/test_ccsds_real_order.py`: 23/23 PASSED (including 3 new regression tests for sub-byte shift, arbitrary codeword start, and depth-4 arbitrary start).
+  - `tests/e2e/test_e2e_real_signal.py`: 6/6 PASSED (7 subtests passed, runtime ~39s).
+  - Web UI: `npm test` 17/17 PASSED, `npm run build` PASSED.
 
 Two things to know:
 

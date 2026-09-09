@@ -120,7 +120,7 @@ _PLUGINS_LOADED: bool = False
 # stage happens to get. Half the budget still recovers 749 characters, which
 # proves the chain no less than 1499. The full stream stays in
 # values["coded_bits_available"] for anyone who wants to decode all of it.
-S5_DECODE_MAX_BITS = 12_000
+S5_DECODE_MAX_BITS = 32_000
 
 
 def load_plugins(force: bool = False, raise_on_error: bool = False) -> dict[str, str]:
@@ -1224,7 +1224,7 @@ def orchestrate(
         # S5 owns FEC, so if an outer RS code is verified, S5 produces the true source bits.
         try:
             from pipeline.s6_frame.ccsds import peel_ccsds_outer
-            outer = peel_ccsds_outer(decoded)
+            outer = peel_ccsds_outer(decoded, detail=s5_detail)
             if outer is not None:
                 outer_bits, outer_params = outer
                 decoded = outer_bits
