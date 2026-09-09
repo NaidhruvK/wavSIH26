@@ -404,8 +404,17 @@ def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None,
                 result = _classify(iq, fs, rate)
                 mod_hyps = result["hypotheses"]
                 mod_low_conf = result["low_confidence"]
-            except FileNotFoundError:
-                pass   # model not trained in this checkout yet -- degrade, don't crash S2
+            except Exception:
+                # model not trained in this checkout (FileNotFoundError), or
+                # classification itself failed on this capture -- either way,
+                # degrade to no classification rather than lose the rate/cfo
+                # estimate already computed above. 9 Sep guard pass: this used
+                # to catch only FileNotFoundError, so any other exception from
+                # classify() (a corrupt model file, a feature-extraction edge
+                # case on adversarial input) fell through to estimate()'s
+                # outer handler and reported the WHOLE S2 result as failed,
+                # discarding a valid rate/cfo for a classifier-only problem.
+                pass
 
         return S2Result(status="ok", fs=fs, symbol_rate_hz=rate,
                          symbol_rate_hypotheses=rate_hyps, cfo_hz=cfo,

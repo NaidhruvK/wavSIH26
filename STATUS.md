@@ -4121,3 +4121,39 @@ the corpus-dependent unit tests inside it are in direct conflict. Not my file
 to fix (`.dockerignore`/Dockerfile is Naidhruv's) — relaying the exact commit
 and the reproduction so he can pick the resolution (multi-stage test layer,
 mount the corpus in at test time, or scope the exclusion narrower).
+
+### 9 Sep — demo freeze day: guard pass on S0/S1/S2/classify, no new code
+
+Today's row: read my own stages for anything that can throw, guard commits
+only, nothing else. Matches Anvith's identical pass on S3 this morning
+(`08832de`/`fab99be`).
+
+Walked `pipeline/s0_ingest.py`, `pipeline/s1_detect.py`,
+`pipeline/s2_estimate.py`, `models/classify.py`, `models/features.py`.
+`ingest()`, `detect()` and `estimate()` all already wrap their body in a
+broad `except Exception`, so nothing in any of them can reach a caller
+uncaught — confirmed, not assumed, by running S0->S1->S2->classify over
+Anvith's six adversarial `.wav` files (`reports/s3_adversarial/`: pure
+noise, DC-only, clipped, two overlapping signals, empty band, wrong sample
+rate). All six: `status="ok"` at every stage, no exception, and the two
+with nothing to classify (`pure_noise`, `empty_band`) correctly degrade to
+`modulation_hypotheses=[]` rather than a false guess.
+
+**One real gap found and fixed.** `estimate()`'s classify block caught only
+`FileNotFoundError` around the call into `models.classify.classify` --
+its own comment says "degrade, don't crash S2", but any OTHER exception
+from classification (a corrupt `classifier.txt`, a feature-extraction edge
+case) fell through to `estimate()`'s own outer handler instead, which
+reports `status="failed"` for the WHOLE result -- discarding a symbol-rate
+and CFO estimate that had already been computed successfully, over a
+classifier-only failure that has nothing to do with either. Widened to
+`except Exception`, matching the comment's stated intent. Pinned with
+`test_a_classifier_exception_degrades_instead_of_failing_s2`
+(`tests/unit/test_s2_estimate.py`): monkeypatches `models.classify.classify`
+to raise `RuntimeError`, asserts `estimate()` still returns `status="ok"`
+with a valid `symbol_rate_hz`/`cfo_hz` and an empty, honest
+`modulation_hypotheses=[]`.
+
+**Verification:** full suite, **774 passed, 2 xfailed, 0 failed** (22m),
+plus the six-file adversarial run above. Scope held to the row: one
+narrowed exception clause, one test, no thresholds or estimators touched.
