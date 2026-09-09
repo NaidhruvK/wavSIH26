@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import os
 import sys
+import zlib
 import traceback
 import warnings
 
@@ -310,17 +311,27 @@ def sweep_d(good, fs, rs) -> Sweep:
     that sentence is here.
     """
     s = Sweep("D remaining exports", "the rest of the published surface")
-    rng = np.random.default_rng(11)
     sch = S3.SCHEMES["qpsk"]
     const = sch.points
+    # One generator PER CASE, not one stream shared across them. A shared
+    # stream is deterministic within a run and changes every case after any
+    # case you insert, which is 8 Sep's mistake in this repo: `empty band`
+    # changed verdict between two runs of what looked like the same experiment
+    # because a case had been added above it. Seeding by name means a case's
+    # data depends on the case and on nothing else.
+    def _rng(name: str):
+        return np.random.default_rng(zlib.crc32(name.encode()) & 0xFFFFFFFF)
+
+    r_known, r_noise = _rng("known-answer"), _rng("noise")
     # CONTROL: a clean recovered QPSK stream must pass every one of these.
-    known = np.tile(const, 800) + 0.01 * (rng.normal(size=3200)
-                                          + 1j * rng.normal(size=3200))
+    known = np.tile(const, 800) + 0.01 * (r_known.normal(size=3200)
+                                          + 1j * r_known.normal(size=3200))
     arrs = [("empty", np.zeros(0, np.complex128)),
             ("zeros", np.zeros(3000, np.complex128)),
             ("nan", np.full(3000, np.nan + 0j)),
             ("inf", np.full(3000, np.inf + 0j)),
-            ("noise", rng.normal(size=3000) + 1j * rng.normal(size=3000)),
+            ("noise", r_noise.normal(size=3000)
+                      + 1j * r_noise.normal(size=3000)),
             ("one sample", np.ones(1, complex)),
             ("CONTROL known-answer", known)]
 
@@ -347,10 +358,12 @@ def sweep_d(good, fs, rs) -> Sweep:
     for o in (0, -4, 2, 3, 4, 8, 16):
         s.run(f"constellation {o}", S3.constellation, o)
         s.run(f"bits_per_symbol {o}", S3.bits_per_symbol, o)
+    noise = dict(arrs)["noise"]          # by name; an index would re-break on
+                                        # any case inserted above it
     for beta in (0.0, 0.01, 0.35, 1.0, 1.5, np.nan):
         for sps in (2.0, 4.0, 8.0, np.nan):
             s.run(f"matched_filter beta={beta} sps={sps}",
-                  S3.matched_filter, arrs[4][1], beta, sps)
+                  S3.matched_filter, noise, beta, sps)
             s.run(f"rrc_taps beta={beta} sps={sps}", S3.rrc_taps, beta, sps)
     for nm in ("qpsk", "nope", "", None, 7):
         s.run(f"scheme {nm!r}", S3.scheme, nm)
