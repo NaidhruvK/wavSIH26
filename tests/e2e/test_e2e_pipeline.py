@@ -608,19 +608,29 @@ class TestE2EPipeline(unittest.TestCase):
         with open(wav_path, "rb") as f:
             content = f.read()
 
+        # The 8 Sep gate says TEN concurrent uploads, not four. Raised to ten so
+        # the test measures the stated condition rather than a smaller one that
+        # happens to pass - the thread pool and the SQLite writer are exactly
+        # what ten is meant to stress and four is not.
+        N_CONCURRENT = 10
         run_ids = []
-        for i in range(4):
+        for i in range(N_CONCURRENT):
             files = {"file": (f"signal_{i}.wav", content, "audio/wav")}
             resp = self.client.post("/analyze", files=files)
             self.assertEqual(resp.status_code, 202)
             run_ids.append(resp.json()["run_id"])
 
-        self.assertEqual(len(set(run_ids)), 4)
+        self.assertEqual(len(set(run_ids)), N_CONCURRENT)
 
-        # Await all 4 jobs
         reports = [self._wait_for_job(rid) for rid in run_ids]
         for rep in reports:
-            self.assertIn(rep["status"], ("completed", "failed"))
+            # "completed" or "failed" are the ONLY two terminal values, so
+            # asserting membership in both cannot fail. The gate word is
+            # "complete", so assert that.
+            self.assertEqual(
+                rep["status"], "completed",
+                "concurrent run %s ended %s - ten uploads must all complete"
+                % (rep.get("run_id"), rep["status"]))
             self.assertEqual(len(rep["stages"]), 7)
 
         # Verify all 4 are persisted in SQLite without concurrency errors
