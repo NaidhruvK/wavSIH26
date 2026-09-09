@@ -972,7 +972,7 @@ and on this tree: zero differing cells out of 3 780, `reason` byte for byte.**
 **Say the limit out loud: every corpus file carries `fs = 200000.0` and
 well-formed parameters, so NOT ONE ROW enters any branch this diff touches.**
 That table is evidence that the normal path did not move and is **not** evidence
-about the guards. The evidence about the guards is the 570-case sweep above and
+about the guards. The evidence about the guards is the 803-case sweep above and
 the tests below. This is house rule 8 applied to a regression check, and it is
 the same caution §9c had to add this morning.
 
