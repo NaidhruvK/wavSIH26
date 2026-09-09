@@ -280,3 +280,187 @@ def test_the_empty_band_file_still_holds_an_empty_band():
     assert np.max(np.abs(data)) < 1e-4, "level was normalised away"
     assert len(np.unique(data)) > 1000, (
         f"only {len(np.unique(data))} distinct sample values — quantised flat")
+
+
+# --- 9 Sep: the guard pass --------------------------------------------------
+#
+# The 9 Sep row is "read S3 end to end looking for anything that can throw,
+# guards only". These pin what that read found. EVERY case below left the stage
+# as a traceback on `origin/main` at `0cc87b3`, and the exception each one used
+# to produce is named in its assertion message, so a revert that restores the
+# old behaviour fails here rather than in front of a judge.
+#
+# Nothing here asserts on the clock - see this module's docstring. Every
+# assertion is on a status, a reason or a sentinel, which read the same on any
+# machine at any speed.
+
+_CONTROL = "control: clean qpsk"
+"""The study's own clean 20 dB QPSK capture. Named here so this section and
+the study cannot drift into two different controls."""
+
+_NO_KEY = object()
+"""Sentinel: drop the key entirely rather than set it to something."""
+
+
+def _valid_capture():
+    """The known-answer control, as a capture and its S2-derived params.
+
+    The clean case, not an adversarial one, on purpose: these tests are about a
+    parameter that is wrong, over a signal that is right. If the capture were
+    also degenerate a refusal would prove nothing, which is the mistake the
+    8 Sep entry in day2day records against this very file.
+    """
+    iq, declared_fs, _ = STUDY.CASES[_CONTROL](STUDY._seed(_CONTROL, 0))
+    iq = np.asarray(iq, dtype=complex)
+    return iq, params_from_s2(estimate(iq, declared_fs), declared_fs)
+
+
+def test_the_control_capture_still_demodulates():
+    """The known-answer cell, first in the section rather than after it.
+
+    Every test below asserts that something is REFUSED. A capture S3 cannot
+    demodulate at all would make all of them pass while proving nothing - the
+    exact failure the 8 Sep hand-rolled transmitter produced, where three of six
+    adversarial cases could only ever have reported a refusal.
+    """
+    iq, params = _valid_capture()
+    res = receive_best(iq, params)
+    assert res.status == "ok", (
+        f"the control capture came back {res.status!r} ({res.reason}); every "
+        "refusal asserted below is meaningless until this line passes")
+
+
+@pytest.mark.parametrize("fs_value", [
+    pytest.param(0.0, id="zero"),
+    pytest.param(_NO_KEY, id="absent-key"),
+    pytest.param(float("inf"), id="inf"),
+    pytest.param(float("nan"), id="nan"),
+    pytest.param(-200000.0, id="negative"),
+    pytest.param("wide", id="unreadable-string"),
+    pytest.param(None, id="none"),
+])
+def test_an_unusable_sample_rate_is_refused_rather_than_raising(fs_value):
+    """A sample rate S3 cannot use ends the search with a status, not a stack.
+
+    `receive_best` defaults `fs` to 0.0 when the mapping carries no `fs` key,
+    and zero is not a small sample rate - it is no frequency axis at all. That
+    default reached `np.fft.rfftfreq(n, d=1.0 / fs)`, where `1.0 / fs` is a
+    plain Python division: measured on this capture, `0.0`, an absent key and
+    `inf` all left the stage as **ZeroDivisionError**, while `"wide"` and
+    `None` raised ValueError and TypeError coercing on the way in. `nan` and a
+    negative rate did not raise and were worse in a quieter way - they returned
+    `failed` saying "every candidate was refused by the cheap screen", which is
+    a verdict over a field that could not be measured at all.
+
+    Every modulation plug-in has refused exactly this by name since 4 Sep
+    (`base.unusable_reason`). The search never reached one, because the
+    screening pass runs first. This asserts it now gives the same answer.
+    """
+    iq, params = _valid_capture()
+    if fs_value is _NO_KEY:
+        params.pop("fs")
+    else:
+        params["fs"] = fs_value
+
+    res = receive_best(iq, params)
+
+    assert res.status == "failed"
+    assert res.reason and "not a usable number" in res.reason, (
+        f"reason was {res.reason!r}; an unusable sample rate must be named, "
+        "not reported as a field the screen looked at and refused")
+    assert res.values["envelope"] == "outside", (
+        "an unusable sample rate is an input outside what S3 supports, which "
+        "is the distinction `values['envelope']` carries for /envelope")
+
+
+@pytest.mark.parametrize("fs_value", [0.0, -200000.0, float("nan"), float("inf")])
+def test_the_cheap_spectral_checks_answer_on_an_unusable_sample_rate(fs_value):
+    """The same guard sits in `lockcheck`, and it is not redundant.
+
+    These four are exported and called directly - by `reports/` today, and by
+    anything that wants the spectral evidence without paying for the chain. The
+    search guard above cannot help those callers. Two different frames raised:
+    `1.0 / fs` inside `_averaged_spectrum` for `0.0` and `inf`, and scipy's
+    `welch`, which rejects a non-positive or NaN `fs` itself with
+    "Sampling frequency fs=... must be positive!".
+
+    Each now returns the value its own docstring already promises for "nothing
+    measurable" - None for the line search, 0.0 for the offset - so no caller
+    needs a new branch and no new sentinel enters the module.
+    """
+    from pipeline.s3_receive.lockcheck import (carrier_alignment, carrier_offset,
+                                               signal_presence, strongest_line,
+                                               symbol_rate_line)
+    iq, _ = _valid_capture()
+
+    for family in ("psk", "fsk"):
+        assert strongest_line(iq, fs_value, family) is None
+        assert symbol_rate_line(iq, fs_value, 50000.0, family) == 0.0
+        assert signal_presence(iq, fs_value, 50000.0, family).failed, (
+            "with no frequency axis there is no line to find, so the presence "
+            "check must refuse rather than pass on absent evidence")
+    assert carrier_offset(iq, fs_value) == 0.0
+    assert carrier_alignment(iq, fs_value, 50000.0).verdict in ("pass", "fail",
+                                                                "unknown")
+
+
+class _S2ThatChangedType:
+    """An S2 result whose fields are present and the wrong type.
+
+    Not a shape this repo produces today - `S2Result` annotates `fs: float` and
+    defaults every ranked list to `[]`. It is the shape `params_from_s2`
+    promises in its own docstring to survive, and the shape 8 Sep's
+    `order_hint` finding actually took: an attribute that IS there, so the
+    `getattr` default beside it never fires.
+    """
+    fs = None
+    symbol_rate_hz = "fifty thousand"
+    cfo_hz = None
+    symbol_rate_hypotheses = 7
+    cfo_hypotheses = None
+    modulation_hypotheses = None
+
+
+def test_the_s2_adapter_survives_an_s2_whose_fields_changed_type():
+    """`params_from_s2` declines to raise on the way to a value.
+
+    Its docstring says everything is "a `getattr` with a default, so an S2 that
+    grows a field gets used and an S2 that lacks one still works". That held for
+    a field that went MISSING and not for one that changed TYPE: `float(None)`
+    raised TypeError, and a ranked list arriving as a scalar raised
+    `TypeError: 'int' object is not iterable` inside `list()`.
+
+    The adapter does not invent a rate. It returns 0.0, which the test above
+    asserts `receive_best` refuses by name - so an S2 that changed shape gives a
+    clean refusal naming the sample rate, rather than a traceback from an
+    adapter three frames from anything a reader would suspect.
+    """
+    params = params_from_s2(_S2ThatChangedType(), None)
+
+    assert params["fs"] == 0.0
+    assert params["symbol_rate_hypotheses"] == []
+    assert params["cfo_hypotheses"] == []
+    assert params["modulation_hypotheses"] == []
+
+    iq, _ = _valid_capture()
+    res = receive_best(iq, params)
+    assert res.status == "failed"
+    assert "not a usable number" in (res.reason or "")
+
+
+def test_a_constellation_order_of_zero_says_what_is_wrong():
+    """The power-of-two check could not see the one order that most needs it.
+
+    `bits_per_symbol(0)` computed `(0).bit_length() - 1 == -1` and then raised
+    `ValueError: negative shift count` from inside the check itself, one line
+    before the message that would have said what was wrong. Same family as a
+    check that cannot see: it did raise, but about its own arithmetic rather
+    than about the input. Every valid order is untouched and an invalid one
+    still raises ValueError; only what it says changed.
+    """
+    from pipeline.s3_receive.bitmap import bits_per_symbol
+
+    assert bits_per_symbol(2) == 1 and bits_per_symbol(16) == 4
+    for bad in (0, -4):
+        with pytest.raises(ValueError, match="not a power of two"):
+            bits_per_symbol(bad)

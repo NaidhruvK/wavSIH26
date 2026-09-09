@@ -351,6 +351,20 @@ def _cyclo_spectrum(x: np.ndarray, fs: float,
     "there is nothing here to measure" rather than each inventing a sentinel.
     """
     x = np.asarray(x, dtype=np.complex128).ravel()
+    # 9 Sep, guard pass. A sample rate that is zero, negative or non-finite is
+    # unmeasurable in exactly the sense this function already has an answer
+    # for, and without this it does not return that answer - it raises.
+    # `_averaged_spectrum` ends in `np.fft.rfftfreq(n, d=1.0 / fs)`, and
+    # `1.0 / fs` is a PYTHON float division: `fs = 0.0` raises
+    # ZeroDivisionError there, and `fs = inf` makes `d` exactly 0.0 so numpy
+    # raises the same thing one frame further in. Measured through
+    # `search.receive_best`, which defaults `fs` to 0.0 when the mapping has
+    # no `fs` key: a ZeroDivisionError out of the whole stage on a real
+    # signal. `fs` is not a measurement this stage makes - it arrives from the
+    # capture header - so it is checked by name, the way `base.unusable_reason`
+    # checks it before the plug-in chain runs.
+    if not np.isfinite(fs) or fs <= 0:
+        return None
     if x.size < 256 or float(np.mean(np.abs(x) ** 2)) <= 1e-20:
         return None
 
@@ -507,6 +521,16 @@ def carrier_offset(x: np.ndarray, fs: float) -> float:
     as absence of evidence - `carrier_alignment` does.
     """
     x = np.asarray(x, dtype=np.complex128).ravel()
+    # 9 Sep, guard pass. Same reasoning as `_cyclo_spectrum`, different frame:
+    # `_psd` hands `fs` to `scipy.signal.welch`, which raises
+    # `ValueError: Sampling frequency fs=... must be positive!` on zero,
+    # negative and NaN, and ZeroDivisionError on inf. 0.0 is the reading this
+    # function already documents for "nothing measurable", and the docstring
+    # above already tells the caller to read it as absence of evidence rather
+    # than as a measured zero - so the guard needs no new value and no new
+    # branch in `carrier_alignment`.
+    if not np.isfinite(fs) or fs <= 0:
+        return 0.0
     if x.size < 512 or float(np.mean(np.abs(x) ** 2)) <= 1e-20:
         return 0.0
     f, p = _psd(x, fs)
