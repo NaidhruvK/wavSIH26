@@ -983,6 +983,13 @@ morning, so nothing that already existed moved. With the new section:
 **56 -> 70**: 5 new tests, 14 cases, every assertion on a status, a reason or a
 sentinel and not one on the clock.
 
+**The FULL suite on the guarded tree: 945 passed, 4 skipped, 2 xfailed, 0
+failed, 17m37s.** Run because a freeze day is the wrong day to merge on a
+targeted subset, and because `lockcheck` is imported by `reports/` and `search`
+by anything that adapts S2 - neither is S3-private. The one warning is a
+starlette/anyio deprecation that predates this branch. For comparison, 8 Sep
+recorded 900 passed / 4 skipped / 2 xfailed in 18m36s on this box.
+
 **The known-answer cell is FIRST in the new section, not after it.** Every other
 test there asserts that something is REFUSED, and a capture S3 could not
 demodulate at all would make all of them pass while proving nothing. That is
