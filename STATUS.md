@@ -3133,6 +3133,95 @@ merges rather than guess at it now.
 
 ---
 
+## 8 Sep, part 3 - the service demodulated EVERYTHING as QPSK, and the one
+## real end-to-end test could not see it because its capture is QPSK
+
+**Anvith found this and said it was not his to fix. It is mine - every line of
+it is in `service/orchestrator.py`.** He measured it, I traced and fixed it.
+
+### What was wrong, in one line
+
+`adapt_s2` read `getattr(raw, "order_hint", 0)`. **S2Result has no
+`order_hint`** - its field is `fsk_order_hint`. The default fired on every
+input ever measured (0 on 30 of 30 corpus files), the ladder fell through to
+its else branch, and every signal on the wire was announced as `qpsk`. Then
+`_run_s3` ran that one named plug-in and never called `receive_best`, so the
+blind search, the rate rescue and the breadth-first ordering were unreachable
+from the API and the CLI alike.
+
+Anvith's measurement, 40 random corpus files scored against transmitted bits:
+
+| path | decodes | modulation correct |
+|---|---|---|
+| `receive_best(iq, params_from_s2(s2, fs))` | 35/40 | 37/40 |
+| what the service actually did | **11/40** | **11/40** |
+
+### What it cost end to end, measured here
+
+One 20 dB file per scheme, through the real `orchestrate()`:
+
+| truth | before | stages ok | after | stages ok |
+|---|---|---|---|---|
+| bpsk | qpsk, low_confidence | 5/7 | **bpsk, ok** | **7/7** |
+| qpsk | qpsk, ok | 7/7 | qpsk, ok | 7/7 |
+| 8psk | qpsk, low_confidence | 3/7 | **8psk, ok** | **7/7** |
+| 16qam | qpsk, low_confidence | 3/7 | **16qam, ok** | **7/7** |
+| 2fsk | qpsk, **FAILED** | 3/7 | **2fsk, ok** | **7/7** |
+| 4fsk | qpsk, **FAILED** | 3/7 | **4fsk, ok** | **7/7** |
+
+**One of six schemes worked, and it was the one my e2e test uses.**
+`test_e2e_real_signal.py` runs `qpsk_15dB_2010.wav`, so the wrong answer was
+the right answer and all seven stages stayed green. That is the same lesson as
+this morning wearing different clothes: the test existed, it ran the real
+chain, and it still could not fail. There is now a second capture in that file,
+`2fsk_20dB_2029.wav`, chosen because 2-FSK failed hardest and no amount of
+guessing qpsk can pass it. Confirmed it FAILS on the pre-fix code with
+"s3_receive is FAILED - no symbol-rate line at 50000 Hz".
+
+### The fix
+
+1. `adapt_s2` reads `fsk_order_hint`, keeping `order_hint` as the fallback for
+   dict-shaped S2s.
+2. `adapt_s2` reads `modulation_hypotheses` - Dheeraj's classifier, populated
+   on 28 of 30 files and 0.9987 on the worked example - which it had never
+   read. The FSK ladder cannot name 16qam or 4fsk at all, so those were
+   unreachable as a first hypothesis no matter what S2 found. The ladder stays
+   as the fallback.
+3. `_run_s3` calls `receive_best` with `params_from_s2(s2_raw, fs)` on the
+   unhinted path. An explicit `mod_scheme_hint` stays a RESTRICTION - the
+   caller named the scheme, so we run that one and nothing else.
+
+**The budget is the part worth reading.** S3's own `SEARCH_BUDGET_S` is 20.0
+and the service caps a stage at 15 s, so passing the default through would hand
+the search a budget 1.3x longer than the stage it runs in and the stage would
+die on the clock rather than return its best answer. `S3_SEARCH_BUDGET_S =
+10.0`. Exactly the trap of the CLI's `DECODE_BITS = 24_000` carried into S5,
+third time this pattern has bitten: a constant that is right for a caller with
+no deadline, reused by one that has.
+
+### A fourth instance of the same species, reported not acted on
+
+`adapt_s2` also reads `symbol_rate_score`, which **S2Result does not have
+either** - the ranked list is `symbol_rate_hypotheses`. So it was 0.0 on every
+real input and `confidence` took its 0.9 default. The two test doubles set it
+to 9.5 and 9.8, values chosen to sit just under the `/10` in the formula: the
+formula was written against a field that does not exist, using numbers nothing
+ever produced.
+
+I did NOT wire the real number into that formula. Measured across the RF corpus
+the statistic runs **19.0 at 4 dB to 48.2 at 20 dB**, so `score/10` would clip
+to 1.0 for every file on disk - swapping a constant 0.9 for a constant 1.0,
+which is worse for being confidently maximal. The real value is now reported as
+`symbol_rate_peak_score` and the confidence mapping is untouched.
+**Dheeraj - S2 is yours and this is a judgement about what the number means.**
+
+### Verification
+
+Three orchestrator tests and three e2e tests, all confirmed to FAIL on the
+pre-fix code. Full suite: see the run below.
+
+---
+
 ## 8 Sep, part 2 - the S5 seam hands soft LLRs to a byte-domain de-interleaver,
 ## and the re-encode check I added this morning cannot see it
 

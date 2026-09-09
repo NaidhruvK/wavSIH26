@@ -613,5 +613,90 @@ class TestOrchestrator(unittest.TestCase):
         self.assertIn("soft", (s5.reason or "").lower())
 
 
+    def test_adapt_s2_reads_the_order_field_s2result_actually_has(self):
+        """`order_hint` has never existed on S2Result; the field is `fsk_order_hint`.
+
+        The getattr took its default on every input ever measured - 0 on 30 of
+        30 corpus files - so the ladder fell through to its else branch and
+        announced qpsk for every signal on the wire. Nothing raised.
+        """
+        from pipeline.s2_estimate import S2Result
+
+        est = S2Result(status="ok", fs=200000.0, symbol_rate_hz=25000.0,
+                       cfo_hz=0.0, fsk_order_hint=2, modulation_hypotheses=[])
+        out = adapt_s2(est, 5.0)
+        self.assertEqual(out.values["order_hint"], 2,
+                         "adapt_s2 is still reading a field S2Result does not have")
+        self.assertEqual(out.hypotheses[0].value, "bpsk")
+
+    def test_adapt_s2_prefers_the_modulation_classifier_over_the_fsk_ladder(self):
+        """The classifier ranks modulation directly; the ladder cannot say 16qam.
+
+        S2Result.modulation_hypotheses is populated on 28 of 30 corpus files
+        and scored 0.9987 on the worked example, and adapt_s2 never read it.
+        The FSK-order ladder can only ever return bpsk/qpsk/8psk, so 16-QAM and
+        4-FSK were unreachable as a first hypothesis no matter what S2 found.
+        """
+        from pipeline.s2_estimate import S2Result
+
+        est = S2Result(status="ok", fs=200000.0, symbol_rate_hz=25000.0,
+                       cfo_hz=0.0, fsk_order_hint=None,
+                       modulation_hypotheses=[("16qam", 0.9987), ("8psk", 0.0011)])
+        out = adapt_s2(est, 5.0)
+        self.assertEqual(out.hypotheses[0].value, "16qam")
+        self.assertAlmostEqual(out.hypotheses[0].score, 0.9987, places=4)
+
+    def test_s3_runs_the_blind_search_when_no_scheme_was_named(self):
+        """Unhinted runs must search; a named hint stays a restriction.
+
+        The service ran ONE plug-in and never called receive_best, so the
+        search, the rate rescue and the breadth-first ordering were unreachable
+        from the API and the CLI alike. Measured over 40 corpus files:
+        receive_best 35/40 decode and 37/40 modulation correct, against 11/40
+        and 11/40 for the named plug-in.
+
+        Also pins the budget. S3's own default is 20 s and the service caps a
+        stage at 15 s, so passing the default through would hand the search a
+        budget longer than the stage it runs in.
+        """
+        import service.orchestrator as orch
+
+        seen: dict[str, Any] = {}
+
+        def fake_receive_best(iq, params, budget_s=None, **kw):
+            seen["params"] = params
+            seen["budget_s"] = budget_s
+            return DummyS3Result()
+
+        def fake_params_from_s2(s2_result, fs=None):
+            return {"fs": fs, "modulation_hypotheses":
+                    list(getattr(s2_result, "modulation_hypotheses", []) or [])}
+
+        overrides = make_clean_overrides()
+        overrides.pop("s3_receive", None)          # exercise the real dispatch
+
+        with unittest.mock.patch.object(
+                orch, "get_s3_search",
+                lambda: (fake_receive_best, fake_params_from_s2)):
+            report = orchestrate(
+                run_id="run-s3-blind-search",
+                file_path=self.test_file,
+                runner=self.runner,
+                stage_overrides=overrides,
+                db_path=self.db_path,
+            )
+
+        self.assertIn("params", seen,
+                      "S3 never called receive_best - the blind search is "
+                      "still unreachable from the service")
+        self.assertLess(seen["budget_s"], config.stage_timeout_seconds,
+                        "the search was given a budget longer than its own stage cap")
+        self.assertIn("modulation_hypotheses", seen["params"],
+                      "S3 was handed the three-key mapping, which throws away "
+                      "S2's ranked lists")
+        s3_stage = next(s for s in report.stages if s.stage == "s3_receive")
+        self.assertEqual(s3_stage.status, StageStatus.OK)
+
+
 if __name__ == "__main__":
     unittest.main()
