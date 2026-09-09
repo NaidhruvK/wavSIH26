@@ -310,3 +310,30 @@ def test_envelope_cv_matches_nehals_independent_measurement(scheme, snr, expecte
     assert abs(result.envelope_cv - expected) < 0.002, (
         f"{f.name}: envelope_cv={result.envelope_cv:.3f}, expected {expected}"
     )
+
+
+def test_a_classifier_exception_degrades_instead_of_failing_s2(monkeypatch):
+    """9 Sep guard pass. estimate()'s classify block used to catch only
+    FileNotFoundError (the model-not-trained-yet case) -- any OTHER
+    exception from models.classify.classify (a corrupt classifier.txt, a
+    feature-extraction edge case on adversarial input) fell through to
+    estimate()'s own outer handler and reported status="failed" for the
+    WHOLE result, discarding a rate/cfo estimate that had already been
+    computed successfully. classify() failing is not a reason to also
+    throw away demodulation parameters that never depended on it."""
+    import models.classify
+
+    def _boom(iq, fs, symbol_rate):
+        raise RuntimeError("classifier blew up on this capture")
+
+    monkeypatch.setattr(models.classify, "classify", _boom)
+
+    f = _corpus_files("qpsk_20dB_*.wav")[0]
+    r = ingest(f)
+    result = estimate(r.iq, r.fs, classify=True)
+
+    assert result.status == "ok"
+    assert result.symbol_rate_hz is not None
+    assert result.cfo_hz is not None
+    assert result.modulation_hypotheses == []
+    assert result.modulation_low_confidence is None
