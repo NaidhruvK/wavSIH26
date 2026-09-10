@@ -1,28 +1,91 @@
 @charset "UTF-8";
 
+/* ============================================================
+   RAAYA — RF Signal Intelligence
+   Design system: "flight instrument" language.
+   Precision over decoration. Hairline borders, sharp geometry,
+   LED status semantics, mono for telemetry.
+   ============================================================ */
+
 :root {
-  --bg-main: #0a0d14;
-  --bg-card: #111726;
-  --bg-card-hover: #161f33;
-  --bg-input: #0e1422;
-  --border: #1e293b;
-  --border-focus: #06b6d4;
+  /* ---- Surfaces ---- */
+  --bg: #090c12;
+  --surface-1: #0e1219;
+  --surface-2: #121722;
+  --surface-3: #171e2b;
+  --surface-inset: #0b0f16;
 
-  --text-main: #f1f5f9;
-  --text-muted: #94a3b8;
-  --text-dim: #64748b;
+  /* ---- Strokes ---- */
+  --border: #1c2433;
+  --border-strong: #2b3850;
 
-  --cyan: #06b6d4;
-  --cyan-glow: rgba(6, 182, 212, 0.15);
-  --emerald: #10b981;
-  --emerald-glow: rgba(16, 185, 129, 0.15);
-  --amber: #f59e0b;
-  --amber-glow: rgba(245, 158, 11, 0.15);
-  --rose: #f43f5e;
-  --rose-glow: rgba(244, 63, 94, 0.15);
+  /* ---- Text ---- */
+  --text-primary: #e8edf4;
+  --text-secondary: #97a3b6;
+  --text-tertiary: #5d6b80;
 
-  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* ---- Accent & status ---- */
+  --accent: #4db8d8;
+  --accent-strong: #6fd0ec;
+  --accent-dim: rgba(77, 184, 216, 0.12);
+  --accent-border: rgba(77, 184, 216, 0.35);
+
+  --ok: #3ecf8e;
+  --ok-dim: rgba(62, 207, 142, 0.1);
+  --ok-border: rgba(62, 207, 142, 0.35);
+
+  --warn: #e0a83e;
+  --warn-dim: rgba(224, 168, 62, 0.1);
+  --warn-border: rgba(224, 168, 62, 0.35);
+
+  --danger: #e0564d;
+  --danger-dim: rgba(224, 86, 77, 0.1);
+  --danger-border: rgba(224, 86, 77, 0.35);
+
+  --neutral: #64748b;
+  --neutral-dim: rgba(100, 116, 139, 0.1);
+  --neutral-border: rgba(100, 116, 139, 0.3);
+
+  /* ---- Legacy aliases (kept for compatibility) ---- */
+  --bg-main: var(--bg);
+  --bg-card: var(--surface-1);
+  --bg-card-hover: var(--surface-2);
+  --bg-input: var(--surface-inset);
+  --border-focus: var(--accent);
+  --text-main: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --text-dim: var(--text-tertiary);
+  --cyan: var(--accent);
+  --cyan-glow: var(--accent-dim);
+  --emerald: var(--ok);
+  --emerald-glow: var(--ok-dim);
+  --amber: var(--warn);
+  --amber-glow: var(--warn-dim);
+  --rose: var(--danger);
+  --rose-glow: var(--danger-dim);
+
+  /* ---- Type ---- */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Space Grotesk', var(--font-sans);
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ---- Geometry ---- */
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+
+  /* ---- Spacing scale ---- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* ---- Elevation ---- */
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-overlay: 0 12px 40px rgba(0, 0, 0, 0.55);
 }
 
 * {
@@ -31,10 +94,20 @@
   padding: 0;
 }
 
+html {
+  color-scheme: dark;
+}
+
 body {
-  background-color: var(--bg-main);
-  color: var(--text-main);
+  background-color: var(--bg);
+  /* Faint engineering grid — barely-there, structural not decorative */
+  background-image:
+    linear-gradient(rgba(151, 163, 182, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(151, 163, 182, 0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+  color: var(--text-primary);
   font-family: var(--font-sans);
+  font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
@@ -44,30 +117,459 @@ code, pre, .font-mono {
   font-family: var(--font-mono);
 }
 
-/* Custom Scrollbars */
+a {
+  color: var(--accent);
+}
+
+button {
+  font-family: inherit;
+}
+
+/* Accessible focus — visible ring on keyboard nav only */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+::selection {
+  background: rgba(77, 184, 216, 0.3);
+  color: var(--text-primary);
+}
+
+/* ---- Scrollbars ---- */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg-main);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 3px;
+  border-radius: 4px;
+  border: 2px solid var(--bg);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-dim);
+  background: var(--border-strong);
 }
 
-/* Animations */
-@keyframes pulse-subtle {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.8; transform: scale(1.02); }
+/* ============================================================
+   TYPOGRAPHY
+   ============================================================ */
+
+.t-display {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
 }
-.pulse-anim {
-  animation: pulse-subtle 2s infinite ease-in-out;
+
+.t-section {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-primary);
 }
+
+.t-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.t-body {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.t-caption {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.t-data {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   PANEL — primary container with corner ticks
+   ============================================================ */
+
+.panel {
+  position: relative;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+}
+
+.panel--pad {
+  padding: var(--sp-5);
+}
+
+/* Corner tick accents: subtle instrument-panel registration marks */
+.panel--ticks::before,
+.panel--ticks::after {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+.panel--ticks::before {
+  top: -1px;
+  left: -1px;
+  border-top: 1px solid var(--border-strong);
+  border-left: 1px solid var(--border-strong);
+}
+.panel--ticks::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border-strong);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-4);
+}
+
+.inset {
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  padding: 7px 14px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06121a;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #06121a;
+}
+
+.btn--primary:disabled {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-tertiary);
+  opacity: 1;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: transparent;
+}
+
+.btn--icon {
+  padding: 6px;
+  line-height: 0;
+}
+
+/* Segmented tab buttons (viz center, chart switchers) */
+.tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+
+.tab-btn:hover {
+  color: var(--text-secondary);
+  background: var(--surface-2);
+}
+
+.tab-btn.is-active {
+  background: var(--accent-dim);
+  border-color: var(--accent-border);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.tab-btn .tab-count {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text-tertiary);
+}
+
+.tab-btn.is-active .tab-count {
+  background: var(--accent);
+  color: #06121a;
+}
+
+/* ============================================================
+   FORMS
+   ============================================================ */
+
+.field-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+
+.input,
+.select {
+  width: 100%;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  transition: border-color 0.15s ease;
+}
+
+.input:hover,
+.select:hover {
+  border-color: var(--border-strong);
+}
+
+.input:focus,
+.select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%235d6b80' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+}
+
+/* ============================================================
+   STATUS LANGUAGE
+   ============================================================ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--neutral-border);
+  background: var(--neutral-dim);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.badge--ok      { background: var(--ok-dim);      border-color: var(--ok-border);      color: var(--ok); }
+.badge--warn    { background: var(--warn-dim);    border-color: var(--warn-border);    color: var(--warn); }
+.badge--danger  { background: var(--danger-dim);  border-color: var(--danger-border);  color: var(--danger); }
+.badge--accent  { background: var(--accent-dim);  border-color: var(--accent-border);  color: var(--accent-strong); }
+.badge--neutral { background: var(--neutral-dim); border-color: var(--neutral-border); color: var(--text-tertiary); }
+
+/* LED status dot */
+.led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--neutral);
+  flex-shrink: 0;
+}
+.led--ok     { background: var(--ok); }
+.led--warn   { background: var(--warn); }
+.led--danger { background: var(--danger); }
+.led--accent { background: var(--accent); }
+.led--pulse  { animation: led-pulse 1.6s ease-in-out infinite; }
+
+@keyframes led-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Metric pill: label + mono value */
+.metric-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 5px 10px;
+  font-size: 11px;
+}
+.metric-pill .mp-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.metric-pill .mp-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   PIPELINE RAIL — S0→S6 progression strip
+   ============================================================ */
+
+.pipeline-rail {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  padding: 2px 0;
+}
+
+.rail-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 52px;
+  flex-shrink: 0;
+}
+
+.rail-node .rail-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-inset);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  transition: border-color 0.25s ease, color 0.25s ease, background 0.25s ease;
+}
+
+.rail-node .rail-label {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.rail-node--ok .rail-dot {
+  border-color: var(--ok-border);
+  background: var(--ok-dim);
+  color: var(--ok);
+}
+.rail-node--warn .rail-dot {
+  border-color: var(--warn-border);
+  background: var(--warn-dim);
+  color: var(--warn);
+}
+.rail-node--danger .rail-dot {
+  border-color: var(--danger-border);
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+.rail-node--active .rail-dot {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent-strong);
+  animation: led-pulse 1.4s ease-in-out infinite;
+}
+
+.rail-connector {
+  height: 1px;
+  flex: 1;
+  min-width: 12px;
+  background: var(--border-strong);
+  margin-bottom: 14px;
+}
+.rail-connector--done {
+  background: var(--ok-border);
+}
+
+/* ============================================================
+   ANIMATION UTILITIES (restrained)
+   ============================================================ */
 
 @keyframes spin {
   from { transform: rotate(0deg); }
@@ -75,4 +577,56 @@ code, pre, .font-mono {
 }
 .spin-anim {
   animation: spin 1s linear infinite;
+}
+
+@keyframes fade-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.enter-anim {
+  animation: fade-rise 0.25s ease-out both;
+}
+
+/* Legacy alias kept: subtle pulse */
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+.pulse-anim {
+  animation: pulse-subtle 2s infinite ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================
+   LAYOUT HELPERS
+   ============================================================ */
+
+.app-main {
+  flex: 1;
+  max-width: 1360px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--sp-6) var(--sp-5);
+}
+
+.stage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: var(--sp-3);
+}
+
+@media (max-width: 640px) {
+  .app-main {
+    padding: var(--sp-4) var(--sp-3);
+  }
+  .stage-grid {
+    grid-template-columns: 1fr;
+  }
 }

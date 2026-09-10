@@ -12,7 +12,19 @@ python demo/run_demo.py --twice    # the gate: correct, twice consecutively
 ```
 
 Exit code is 0 only if every capture passed every pass, so it is a gate and not
-just a screen. In the container:
+just a screen.
+
+**What a pass means, exactly.** For each capture the runner scores four things
+against the truth JSON beside it: the modulation was identified; the
+interleaver family, depth, width and period S4 recovered EQUAL the truth; the
+code rate, constraint length K and both generator polynomials EQUAL the truth;
+and all seven stages reported ok inside 90 s. Before 10 Sep it scored only the
+modulation name and the stage statuses, so a run that recovered the wrong
+interleaver would still have printed a pass.
+
+The truth JSON is read ONLY to score the answer, never to produce it.
+
+In the container:
 
 ```bash
 docker run --rm --network none raaya:v1.0 python demo/run_demo.py --twice
@@ -68,6 +80,22 @@ boundary is stated as a number and the system declines outside it.
 
 That is why a 16-QAM capture at 13 dB is **not** in this set — it does not
 complete, and it is excluded for that measured reason.
+
+## What the recovered bits are checked against
+
+The gate above scores PARAMETERS. The bits themselves are scored by
+`tests/e2e/test_decoded_bits_match_transmitter.py`, which regenerates the
+payload the transmitter actually sent (the corpus generator is seeded, and the
+seed is in the filename) and compares it against what S5 decoded.
+
+Measured 10 Sep across all eight captures: **every residual bit error sits at
+index 6 or lower, and three of the eight are exact from bit 0.** Those first
+few bits are a Viterbi decoder entering the trellis mid-codeword with no state
+history. Past bit 6 there is not one wrong bit in any capture.
+
+Say it this way to a scientist: the chain returns the transmitted payload bit
+for bit, apart from a decoder start-up transient of at most seven bits at the
+head of the stream.
 
 ## If a judge asks to change something
 

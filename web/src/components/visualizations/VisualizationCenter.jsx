@@ -6,14 +6,16 @@ import RankProfilePlot from './RankProfilePlot';
 import EnvelopePlot from './EnvelopePlot';
 import HypothesisChart from './HypothesisChart';
 import { getArtifactUrl } from '../../api';
+import Icon from '../ui/icons';
+import SectionHeader from '../ui/SectionHeader';
 
 const TABS = [
-  { id: 'psd', label: 'PSD Spectrum (S1)', icon: '📡' },
-  { id: 'waterfall', label: 'Waterfall / Spectrogram (S1)', icon: '🌊' },
-  { id: 'constellation', label: 'Constellation (S3)', icon: '🎯' },
-  { id: 'rank_profile', label: 'Rank Profile (S4)', icon: '📉' },
-  { id: 'envelope', label: 'Operating Envelope', icon: '📈' },
-  { id: 'hypotheses', label: 'Hypotheses Ranking', icon: '⚖️' },
+  { id: 'psd', label: 'PSD Spectrum', stage: 'S1', icon: 'spectrum' },
+  { id: 'waterfall', label: 'Waterfall', stage: 'S1', icon: 'layers' },
+  { id: 'constellation', label: 'Constellation', stage: 'S3', icon: 'crosshair' },
+  { id: 'rank_profile', label: 'Rank Profile', stage: 'S4', icon: 'barChart' },
+  { id: 'envelope', label: 'Operating Envelope', stage: null, icon: 'boundary' },
+  { id: 'hypotheses', label: 'Hypotheses', stage: null, icon: 'scale' },
 ];
 
 export default function VisualizationCenter({ runId, report, envelope }) {
@@ -53,12 +55,23 @@ export default function VisualizationCenter({ runId, report, envelope }) {
       }
     }
 
+    // The artifact endpoint serves files by their stored basename (e.g. "psd"
+    // from reports/artifacts/<run>/psd.json), not by the stage's artifact key
+    // (e.g. "psd_plot"). Derive the served name from the declared path.
+    function artifactNameFrom(stage, key, fallback) {
+      const declaredPath = stage?.artifacts?.[key];
+      if (typeof declaredPath === 'string' && declaredPath) {
+        const base = declaredPath.split(/[\\/]/).pop();
+        if (base) return base.replace(/\.json$/i, '');
+      }
+      return fallback;
+    }
+
     async function loadAll() {
-      // Check stage declared artifact keys or standard names
-      const s1ArtKey = s1Stage?.artifacts?.psd_plot ? 'psd_plot' : 'psd';
-      const s1WfKey = s1Stage?.artifacts?.waterfall_plot ? 'waterfall_plot' : 'waterfall';
-      const s3ArtKey = s3Stage?.artifacts?.constellation_plot ? 'constellation_plot' : 'constellation';
-      const s4ArtKey = s4Stage?.artifacts?.rank_profile_plot ? 'rank_profile_plot' : 'rank_profile';
+      const s1ArtKey = artifactNameFrom(s1Stage, 'psd_plot', 'psd');
+      const s1WfKey = artifactNameFrom(s1Stage, 'waterfall_plot', 'waterfall');
+      const s3ArtKey = artifactNameFrom(s3Stage, 'constellation_plot', 'constellation');
+      const s4ArtKey = artifactNameFrom(s4Stage, 'rank_profile_plot', 'rank_profile');
 
       const [psd, waterfall, constellation, rankProfile] = await Promise.all([
         fetchArtifact(s1ArtKey),
@@ -137,79 +150,48 @@ export default function VisualizationCenter({ runId, report, envelope }) {
   };
 
   return (
-    <section style={{
-      background: 'var(--bg-card)',
-      border: '1px solid var(--border)',
-      borderRadius: '10px',
-      padding: '20px',
-      marginBottom: '24px',
-      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
-    }}>
-      {/* Header */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '16px',
-        flexWrap: 'wrap',
-        gap: '10px',
-      }}>
-        <div>
-          <h2 style={{ fontSize: '15px', fontWeight: 800, color: '#fff', letterSpacing: '0.3px', margin: 0 }}>
-            RF TELEMETRY & SIGNAL VISUALIZATION
-          </h2>
-          <span style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px', display: 'block' }}>
-            Interactive Spectral, Demodulation, Coding Analysis & Operating Envelope
-          </span>
-        </div>
-
+    <section className="panel panel--ticks panel--pad" style={{ marginBottom: 'var(--sp-5)' }}>
+      <SectionHeader
+        icon="waveform"
+        title="Signal Visualization"
+        caption="Spectral, demodulation, coding analysis & operating envelope."
+      >
         {runId && (
-          <div style={{
-            fontSize: '11px',
-            fontFamily: 'var(--font-mono)',
-            background: 'var(--bg-input)',
-            padding: '4px 10px',
-            borderRadius: '4px',
-            color: 'var(--cyan)',
-            border: '1px solid rgba(6, 182, 212, 0.2)',
-          }}>
-            Source Run: {runId}
-          </div>
+          <span className="metric-pill">
+            <span className="mp-label">Source Run</span>
+            <span className="mp-value" style={{ color: 'var(--accent-strong)' }}>{runId}</span>
+          </span>
         )}
-      </div>
+      </SectionHeader>
 
       {/* Tabs Navigation */}
-      <div style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: '6px',
-        borderBottom: '1px solid var(--border)',
-        paddingBottom: '12px',
-        marginBottom: '16px',
-      }}>
+      <div
+        role="tablist"
+        aria-label="Visualization panels"
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 4,
+          borderBottom: '1px solid var(--border)',
+          paddingBottom: 10,
+          marginBottom: 'var(--sp-4)',
+        }}
+      >
         {TABS.map(tab => {
           const isActive = activeTab === tab.id;
           return (
             <button
               key={tab.id}
+              role="tab"
+              aria-selected={isActive}
               onClick={() => setActiveTab(tab.id)}
-              style={{
-                background: isActive ? 'var(--cyan-glow)' : 'transparent',
-                border: `1px solid ${isActive ? 'var(--cyan)' : 'transparent'}`,
-                color: isActive ? '#fff' : 'var(--text-dim)',
-                padding: '6px 14px',
-                borderRadius: '6px',
-                fontSize: '12px',
-                fontWeight: isActive ? 700 : 500,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                transition: 'all 0.15s ease',
-              }}
+              className={`tab-btn${isActive ? ' is-active' : ''}`}
             >
-              <span>{tab.icon}</span>
+              <Icon name={tab.icon} size={12} />
               <span>{tab.label}</span>
+              {tab.stage && (
+                <span className="tab-count">{tab.stage}</span>
+              )}
             </button>
           );
         })}
@@ -218,15 +200,21 @@ export default function VisualizationCenter({ runId, report, envelope }) {
       {/* Content Area */}
       <div>
         {isLoadingArtifacts && runId && activeTab !== 'envelope' && activeTab !== 'hypotheses' ? (
-          <div style={{
-            padding: '40px',
-            textAlign: 'center',
-            color: 'var(--cyan)',
-            fontSize: '12px',
-            fontFamily: 'var(--font-mono)',
-          }}>
-            <div style={{ fontSize: '24px', marginBottom: '8px', animation: 'spin 1.5s linear infinite' }}>⚙️</div>
-            Loading Stage Artifacts...
+          <div
+            className="inset"
+            role="status"
+            style={{
+              padding: 40,
+              textAlign: 'center',
+              color: 'var(--text-secondary)',
+              fontSize: 12,
+              fontFamily: 'var(--font-mono)',
+            }}
+          >
+            <span className="spin-anim" style={{ display: 'inline-flex', color: 'var(--accent)', marginBottom: 8 }}>
+              <Icon name="reset" size={20} />
+            </span>
+            <div>Loading stage artifacts…</div>
           </div>
         ) : (
           renderActivePlot()

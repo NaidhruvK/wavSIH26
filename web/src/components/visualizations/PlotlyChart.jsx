@@ -2,33 +2,33 @@ import React, { useEffect, useRef } from 'react';
 import Plotly from 'plotly.js-dist-min';
 
 const DEFAULT_THEME_LAYOUT = {
-  paper_bgcolor: '#0f172a',
-  plot_bgcolor: '#0b1120',
+  paper_bgcolor: '#0b0f16',
+  plot_bgcolor: '#090c12',
   font: {
-    family: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    family: "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
     size: 11,
-    color: '#94a3b8',
+    color: '#97a3b6',
   },
   margin: { l: 50, r: 24, t: 40, b: 45 },
   xaxis: {
-    gridcolor: '#1e293b',
-    zerolinecolor: '#334155',
-    tickfont: { color: '#64748b' },
+    gridcolor: '#161d29',
+    zerolinecolor: '#2b3850',
+    tickfont: { color: '#5d6b80' },
   },
   yaxis: {
-    gridcolor: '#1e293b',
-    zerolinecolor: '#334155',
-    tickfont: { color: '#64748b' },
+    gridcolor: '#161d29',
+    zerolinecolor: '#2b3850',
+    tickfont: { color: '#5d6b80' },
   },
   legend: {
-    font: { color: '#cbd5e1' },
-    bgcolor: 'rgba(15, 23, 42, 0.8)',
-    bordercolor: '#334155',
+    font: { color: '#97a3b6' },
+    bgcolor: 'rgba(11, 15, 22, 0.85)',
+    bordercolor: '#1c2433',
   },
   hoverlabel: {
-    bgcolor: '#1e293b',
-    bordercolor: '#06b6d4',
-    font: { color: '#fff', family: 'ui-monospace, monospace' },
+    bgcolor: '#121722',
+    bordercolor: '#4db8d8',
+    font: { color: '#e8edf4', family: "'IBM Plex Mono', ui-monospace, monospace" },
   },
 };
 
@@ -91,7 +91,8 @@ export default function PlotlyChart({ data = [], layout = {}, config = {}, style
       style={{
         width: '100%',
         minHeight: '340px',
-        borderRadius: '8px',
+        borderRadius: 'var(--radius-md)',
+        border: '1px solid var(--border)',
         overflow: 'hidden',
         ...style,
       }}

@@ -1,4 +1,27 @@
 import React from 'react';
+import Modal from './ui/Modal';
+
+function PluginList({ title, items, fallback }) {
+  return (
+    <div>
+      <h4 className="t-label" style={{ fontSize: 10, marginBottom: 8 }}>{title}</h4>
+      {items.length === 0 ? (
+        <div className="t-caption" style={{ fontSize: 12, fontStyle: 'italic' }}>{fallback}</div>
+      ) : (
+        items.map((item, i) => (
+          <div
+            key={i}
+            className="t-data"
+            style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}
+          >
+            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{item.name}</span>
+            <span style={{ color: 'var(--text-tertiary)' }}> · {item.module}</span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
 
 export default function RegistryDrawer({ registry, onClose }) {
   if (!registry) return null;
@@ -8,148 +31,49 @@ export default function RegistryDrawer({ registry, onClose }) {
   const interleavers = registry.interleavers || [];
   const codes = registry.codes || [];
 
+  const summary = [
+    { label: 'Modulations', value: counts.modulations || 0, tone: 'var(--accent-strong)' },
+    { label: 'Interleavers', value: counts.interleavers || 0, tone: 'var(--ok)' },
+    { label: 'Codes', value: counts.codes || 0, tone: 'var(--warn)' },
+  ];
+
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: 'rgba(0, 0, 0, 0.75)',
-      backdropFilter: 'blur(4px)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 50,
-      padding: '20px',
-    }}>
-      <div style={{
-        background: 'var(--bg-card)',
-        border: '1px solid var(--border)',
-        borderRadius: '12px',
-        width: '100%',
-        maxWidth: '620px',
-        maxHeight: '85vh',
-        overflowY: 'auto',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
-        padding: '24px',
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <div>
-            <h2 style={{ fontSize: '16px', fontWeight: 800, color: '#fff' }}>
-              PLUGIN REGISTRIES INTROSPECTION
-            </h2>
-            <p style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
-              Live registration tables for modular modulation, interleaver, and code algorithms.
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--text-dim)',
-              fontSize: '20px',
-              cursor: 'pointer',
-            }}
-          >
-            ✕
-          </button>
-        </div>
-
-        {/* Counts summary */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: '10px',
-          marginBottom: '20px',
-        }}>
-          <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '10px', color: 'var(--text-dim)', fontWeight: 600 }}>MODULATIONS</div>
-            <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--cyan)', fontFamily: 'var(--font-mono)' }}>
-              {counts.modulations || 0}
+    <Modal
+      title="Plugin Registries Introspection"
+      subtitle="Live registration tables for modular modulation, interleaver, and code algorithms."
+      onClose={onClose}
+      maxWidth={620}
+    >
+      {/* Counts summary */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 20 }}>
+        {summary.map(({ label, value, tone }) => (
+          <div key={label} className="inset" style={{ padding: 10 }}>
+            <div className="t-label" style={{ fontSize: 9, marginBottom: 3 }}>{label}</div>
+            <div className="t-data" style={{ fontSize: 16, fontWeight: 700, color: tone }}>
+              {value}
             </div>
           </div>
-          <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '10px', color: 'var(--text-dim)', fontWeight: 600 }}>INTERLEAVERS</div>
-            <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--emerald)', fontFamily: 'var(--font-mono)' }}>
-              {counts.interleavers || 0}
-            </div>
-          </div>
-          <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '10px', color: 'var(--text-dim)', fontWeight: 600 }}>CODES</div>
-            <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--amber)', fontFamily: 'var(--font-mono)' }}>
-              {counts.codes || 0}
-            </div>
-          </div>
-        </div>
-
-        {/* Plugin lists */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div>
-            <h4 style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px' }}>
-              MODULATIONS
-            </h4>
-            {modulations.length === 0 ? (
-              <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontStyle: 'italic' }}>No external plugins registered (built-in S3 receiver active)</div>
-            ) : (
-              modulations.map((m, i) => (
-                <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: '12px', fontFamily: 'var(--font-mono)' }}>
-                  <span style={{ color: '#fff', fontWeight: 700 }}>{m.name}</span> • <span style={{ color: 'var(--text-dim)' }}>{m.module}</span>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div>
-            <h4 style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px' }}>
-              INTERLEAVERS
-            </h4>
-            {interleavers.length === 0 ? (
-              <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontStyle: 'italic' }}>No external plugins registered (built-in S4 rank collapse active)</div>
-            ) : (
-              interleavers.map((it, i) => (
-                <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: '12px', fontFamily: 'var(--font-mono)' }}>
-                  <span style={{ color: '#fff', fontWeight: 700 }}>{it.name}</span> • <span style={{ color: 'var(--text-dim)' }}>{it.module}</span>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div>
-            <h4 style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '8px' }}>
-              ERROR-CORRECTING CODES
-            </h4>
-            {codes.length === 0 ? (
-              <div style={{ fontSize: '12px', color: 'var(--text-dim)', fontStyle: 'italic' }}>No external plugins registered (built-in S5 Viterbi active)</div>
-            ) : (
-              codes.map((c, i) => (
-                <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: '12px', fontFamily: 'var(--font-mono)' }}>
-                  <span style={{ color: '#fff', fontWeight: 700 }}>{c.name}</span> • <span style={{ color: 'var(--text-dim)' }}>{c.module}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div style={{ marginTop: '20px', textAlign: 'right' }}>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'var(--bg-input)',
-              border: '1px solid var(--border)',
-              color: '#fff',
-              padding: '8px 18px',
-              borderRadius: '6px',
-              fontSize: '12px',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            Close
-          </button>
-        </div>
+        ))}
       </div>
-    </div>
+
+      {/* Plugin lists */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <PluginList
+          title="Modulations"
+          items={modulations}
+          fallback="No external plugins registered (built-in S3 receiver active)"
+        />
+        <PluginList
+          title="Interleavers"
+          items={interleavers}
+          fallback="No external plugins registered (built-in S4 rank collapse active)"
+        />
+        <PluginList
+          title="Error-Correcting Codes"
+          items={codes}
+          fallback="No external plugins registered (built-in S5 Viterbi active)"
+        />
+      </div>
+    </Modal>
   );
 }

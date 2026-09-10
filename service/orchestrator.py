@@ -139,7 +139,24 @@ _PLUGINS_LOADED: bool = False
 # 16_000 keeps more data for the RS outer layer than the 12_000 this file
 # carried before, and still leaves 1.6x. The CCSDS peel runs on top of the
 # figures above, so the margin is the point, not the bit count.
-S5_DECODE_MAX_BITS = 16_000
+# 16_000 was set at the 10 Sep merge from the 32_000 the CCSDS work arrived
+# with. Re-measured under REAL load (a service container up, other work running)
+# rather than on an idle box, and 16_000 is not safe:
+#
+#     10 000 ->  7.4-9.4 s   16 000 -> 11.2-11.6 s   1.3x margin
+#     12 000 ->  8.5-8.7 s   1.7-1.8x margin   <- chosen
+#
+# 1.3x is how a stage becomes a flake: it passes on a quiet machine and times
+# out when eight captures run back to back, which is exactly what
+# test_decoded_bits_match_transmitter.py does - S5 timed out on
+# qpsk_20dB_2011 there and the test crashed on the None it got back.
+# Same class as the S3 wall-clock flake removed on 7 Sep: correctness must not
+# depend on how much CPU the stage happens to get.
+#
+# The concatenated CCSDS path needs more than this and says so - its test
+# declares its own S5_DECODE_MAX_BITS and its own stage_timeout, so lowering the
+# default here does not touch it.
+S5_DECODE_MAX_BITS = 12_000
 
 # Wall clock for S3's blind modulation search. Its own default is
 # SEARCH_BUDGET_S = 20.0, which is right for a caller with no per-stage
@@ -347,12 +364,26 @@ def adapt_s1(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
         psd_db = getattr(raw, "psd_db", None)
         psd_freqs = getattr(raw, "psd_freqs", None)
 
+    # Which SNR estimator produced the number. S1 runs two -- a percentile
+    # spectral one and a constant-modulus moment one -- because neither covers
+    # all six modulations, and the reported figure is only readable next to the
+    # method that produced it. Named explicitly rather than read with a bare
+    # getattr default, which is the class of defect this file has hit five
+    # times: a literal that never matched a field and silently returned None.
+    def _snr_field(name):
+        if isinstance(raw, dict):
+            return raw.get(name)
+        return getattr(raw, name, None)
+
     values = {
         "snr_db": snr_db,
         "noise_floor_db": noise_floor_db,
         "occupied_bw_hz": occupied_bw_hz,
         "burst_count": len(bursts) if bursts is not None else 0,
         "fs": fs,
+        "snr_method": _snr_field("snr_method"),
+        "snr_db_spectral": _snr_field("snr_db_spectral"),
+        "snr_db_moment": _snr_field("snr_db_moment"),
     }
 
     # Envelope check: SNR below declared operating envelope (-5.0 dB)

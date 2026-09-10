@@ -42,34 +42,106 @@ def test_snr_accurate_for_psk_qam(prefix):
         assert abs(diff) < 1.5, f"{f.name}: truth={truth['snr_db']} measured={snr_db:.1f} diff={diff:+.1f}"
 
 
-def test_snr_accurate_for_2fsk_at_moderate_snr():
-    """2fsk holds to the same 1.5 dB bar up through 15 dB; the high-SNR case
-    is covered separately below as a known, measured gap."""
+def test_snr_accurate_for_2fsk_at_every_snr():
+    """2fsk now holds to the same 1.5 dB bar at EVERY corpus SNR.
+
+    This used to skip everything above 15 dB, where the percentile-floor
+    estimator ran 2 dB low. The moment estimator carries it: measured within
+    0.01 dB of truth across the whole sweep.
+    """
     for f in _corpus_files("2fsk"):
         truth = json.loads(f.with_suffix(".json").read_text())
-        if truth["snr_db"] > 15:
-            continue
         r = ingest(f)
         snr_db, _ = estimate_snr(r.iq, r.fs)
         diff = snr_db - truth["snr_db"]
         assert abs(diff) < 1.5, f"{f.name}: truth={truth['snr_db']} measured={snr_db:.1f} diff={diff:+.1f}"
 
 
-@pytest.mark.xfail(
-    reason="Unshaped CPFSK's sidelobes never decay to the true noise floor "
-           "within the captured band, so the percentile-floor SNR estimator "
-           "has no clean noise-only region to sample. See estimate_snr's "
-           "docstring. Needs a constant-modulus/moment-based estimator, not "
-           "a percentile tweak -- checked 1st-50th percentile, none within "
-           "4 dB of truth.",
-    strict=True,
-)
-def test_snr_known_gap_4fsk():
+def test_snr_accurate_for_4fsk():
+    """WAS A STRICT XFAIL until 10 Sep, and the gap it recorded was worse than
+    a wrong number on a stage card.
+
+    Every 4fsk capture in the corpus, true SNR 4 to 20 dB, measured between
+    -3.16 and -4.58 dB: the estimate carried no information about the true SNR
+    at all, and `adapt_s1` refuses anything below -5.0 dB and marks every
+    downstream stage out_of_envelope. The worst cell sat 0.42 dB from refusing
+    a capture the pipeline decodes to the exact transmitted bits.
+
+    estimate_snr now takes the larger of the spectral and moment estimates.
+    """
     for f in _corpus_files("4fsk"):
         truth = json.loads(f.with_suffix(".json").read_text())
         r = ingest(f)
         snr_db, _ = estimate_snr(r.iq, r.fs)
-        assert abs(snr_db - truth["snr_db"]) < 1.5
+        diff = snr_db - truth["snr_db"]
+        assert abs(diff) < 1.5, f"{f.name}: truth={truth['snr_db']} measured={snr_db:.1f} diff={diff:+.1f}"
+
+
+def test_no_capture_is_pushed_below_the_refusal_gate():
+    """The consequence test, stated in the units that matter.
+
+    adapt_s1 refuses below -5.0 dB. No corpus capture -- every one of which is
+    a real signal at 4 dB or better -- may be estimated anywhere near it.
+    """
+    for prefix in ("bpsk", "qpsk", "8psk", "16qam", "2fsk", "4fsk"):
+        for f in _corpus_files(prefix):
+            truth = json.loads(f.with_suffix(".json").read_text())
+            r = ingest(f)
+            snr_db, _ = estimate_snr(r.iq, r.fs)
+            assert snr_db > 0.0, (
+                f"{f.name}: truth={truth['snr_db']} dB estimated {snr_db:.2f} dB, "
+                "which is heading for the -5.0 dB envelope refusal")
+
+
+def test_moment_estimator_never_overstates_snr():
+    """The property that makes taking the max of the two estimators sound.
+
+    S_hat = S*sqrt(2 - ka) with ka >= 1 for every signal, so the moment
+    estimator can only understate. Checked against truth on every corpus file
+    rather than argued: if this direction ever inverts, the max is unsafe and
+    the combination in estimate_snr has to be revisited.
+    """
+    from pipeline.s1_detect import estimate_snr_moment
+    for prefix in ("bpsk", "qpsk", "8psk", "16qam", "2fsk", "4fsk"):
+        for f in _corpus_files(prefix):
+            truth = json.loads(f.with_suffix(".json").read_text())
+            r = ingest(f)
+            moment_db, _norm_m4 = estimate_snr_moment(r.iq)
+            if moment_db is None:
+                continue
+            assert moment_db < truth["snr_db"] + 0.5, (
+                f"{f.name}: moment estimator returned {moment_db:.2f} dB against "
+                f"truth {truth['snr_db']} dB -- it is supposed to understate")
+
+
+def test_moment_estimator_is_exact_on_a_synthetic_constant_modulus_signal():
+    """Ground truth built here, not read from a corpus: a unit-modulus signal
+    with a known amount of circular Gaussian noise added."""
+    from pipeline.s1_detect import estimate_snr_moment
+    rng = np.random.default_rng(20260910)
+    n = 200_000
+    phase = rng.uniform(-np.pi, np.pi, n)
+    signal = np.exp(1j * phase)                      # |s| = 1 exactly, so ka = 1
+    for true_snr_db in (0.0, 5.0, 10.0, 20.0, 30.0):
+        npow = 10 ** (-true_snr_db / 10.0)
+        noise = (rng.normal(0, np.sqrt(npow / 2), n)
+                 + 1j * rng.normal(0, np.sqrt(npow / 2), n))
+        est, _ = estimate_snr_moment(signal + noise)
+        assert est is not None
+        assert abs(est - true_snr_db) < 0.3, (
+            f"true {true_snr_db} dB, moment estimate {est:.2f} dB")
+
+
+def test_moment_estimator_declines_on_pure_noise():
+    """Pure circular Gaussian noise has ka_eff = 2 exactly, so 2*M2^2 - M4
+    collapses to zero and there is no constant-modulus decomposition. Returning
+    None is the honest answer; a number here would be invented."""
+    from pipeline.s1_detect import estimate_snr_moment
+    rng = np.random.default_rng(7)
+    noise = rng.normal(0, 1, 100_000) + 1j * rng.normal(0, 1, 100_000)
+    est, norm_m4 = estimate_snr_moment(noise)
+    assert est is None
+    assert abs(norm_m4 - 2.0) < 0.05
 
 
 def test_compute_psd_shape_and_symmetry():

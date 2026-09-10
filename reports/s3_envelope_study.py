@@ -186,30 +186,62 @@ def _write_markdown(rows: list[dict], charts: list[str]) -> None:
             f"{r['evm_percent'] or '-'} | {r['timing_converged_at'] or '-'} | "
             f"{r['estimated_ber']:.5f} | {r['measured_ber']:.5f} |")
 
-    bad = [r for r in rows if r["status"] != "ok"
-           and r["measured_ber"] > 4 * max(r["estimated_ber"], 1e-9)]
+    # EVERY row is checked, not only the ones that already failed.
+    #
+    # This filter used to read `r["status"] != "ok" and ...`, which made the
+    # section below unfalsifiable: the claim under test is "the estimate is
+    # only untrustworthy when status is not ok", and the filter looked at
+    # nothing else. When it was last run that cost nothing. On the 10 Sep
+    # regeneration it hid the two worst cases in the sweep -- 16qam at 18 dB
+    # (estimated 3e-06, measured 2.75e-04, 92x optimistic) and at 15 dB (23x),
+    # both reporting `ok`. A check that can only confirm its own hypothesis is
+    # not a check.
+    optimistic = [r for r in rows
+                  if r["measured_ber"] > 4 * max(r["estimated_ber"], 1e-9)]
+    bad_flagged = [r for r in optimistic if r["status"] != "ok"]
+    bad_while_ok = [r for r in optimistic if r["status"] == "ok"]
+
     lines += [
         "", "## The caveat that matters", "",
-        "**S3's estimated output BER is only trustworthy when it reports "
-        "`ok`.** The estimate is derived from the LLR magnitudes, and those are "
-        "calibrated against a noise variance measured on a constellation the "
-        "receiver believes it has locked. When it has not, the variance is "
-        "measured against the wrong reference and the estimate is optimistic.",
+        "**S3's estimated output BER runs optimistic, and `status == ok` does "
+        "not on its own make it safe to quote.** The estimate comes from the "
+        "LLR magnitudes, which are calibrated against a noise variance measured "
+        "on a constellation the receiver believes it has locked. When it has "
+        "not locked, the variance is measured against the wrong reference. On a "
+        "dense constellation it can also be optimistic while the lock is "
+        "genuine, because the nearest-symbol distance the variance is measured "
+        "over understates the true error probability.",
         "",
     ]
-    if bad:
-        lines.append("Cases in this run where the estimate was more than 4x "
-                     "optimistic, all of them already flagged `low_confidence` "
-                     "or `failed`:")
+    if bad_flagged:
+        lines.append("More than 4x optimistic, AND already flagged "
+                     "`low_confidence` or `failed` -- the case the estimate is "
+                     "expected to get wrong:")
         lines.append("")
-        for r in bad:
+        for r in bad_flagged:
             lines.append(f"- `{r['file']}` — estimated {r['estimated_ber']:.5f}, "
                          f"measured {r['measured_ber']:.5f}")
         lines.append("")
+    if bad_while_ok:
+        lines.append("More than 4x optimistic **while reporting `ok`** -- the "
+                     "case that is not covered by gating on status, and the "
+                     "reason this list is no longer filtered to failures:")
+        lines.append("")
+        for r in bad_while_ok:
+            ratio = r["measured_ber"] / max(r["estimated_ber"], 1e-9)
+            lines.append(f"- `{r['file']}` — estimated {r['estimated_ber']:.5f}, "
+                         f"measured {r['measured_ber']:.5f} ({ratio:.0f}x)")
+        lines.append("")
+    if not optimistic:
+        lines.append("No row in this run is more than 4x optimistic, at either "
+                     "status.")
+        lines.append("")
     lines += [
-        "Anything consuming `estimated_output_ber` must gate on `status` first. "
-        "S4 already does, because it takes the LLRs rather than the number, but "
-        "the UI card and the envelope report both need to.",
+        "Anything consuming `estimated_output_ber` must gate on `status` first, "
+        "and must not treat the number as an upper bound even then. S4 takes "
+        "the LLRs rather than the number, so it is unaffected; the UI card and "
+        "the envelope report quote it and should say which direction it errs "
+        "in.",
         "", "## Charts", "",
     ] + [f"- `{Path(c).relative_to(ROOT)}`" for c in charts]
 

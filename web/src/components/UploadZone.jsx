@@ -1,4 +1,6 @@
 import React, { useState, useRef } from 'react';
+import Icon from './ui/icons';
+import SectionHeader from './ui/SectionHeader';
 
 const SUPPORTED_EXTS = ['.wav', '.iq', '.bin', '.raw', '.sigmf-data', '.dat'];
 
@@ -72,54 +74,57 @@ export default function UploadZone({ onAnalyze, isAnalyzing }) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  const openFilePicker = () => fileInputRef.current?.click();
+
+  const dropzoneBorder = dragOver
+    ? 'var(--accent)'
+    : selectedFile
+      ? 'var(--ok-border)'
+      : 'var(--border-strong)';
+
   return (
-    <div style={{
-      background: 'var(--bg-card)',
-      border: '1px solid var(--border)',
-      borderRadius: '12px',
-      padding: '24px',
-      marginBottom: '24px',
-      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <div>
-          <h2 style={{ fontSize: '15px', fontWeight: 700, color: '#fff', letterSpacing: '0.3px' }}>
-            SIGNAL INGEST & LAUNCHPAD
-          </h2>
-          <p style={{ fontSize: '13px', color: 'var(--text-dim)' }}>
-            Upload raw IQ or RF waveform recordings to trigger the autonomous S0→S6 pipeline.
-          </p>
-        </div>
-        <span style={{
-          fontSize: '11px',
-          fontFamily: 'var(--font-mono)',
-          color: 'var(--text-dim)',
-          background: 'var(--bg-main)',
-          padding: '4px 8px',
-          borderRadius: '4px',
-          border: '1px solid var(--border)',
-        }}>
-          Max: 2 GB
+    <section className="panel panel--ticks panel--pad" style={{ marginBottom: 'var(--sp-5)' }}>
+      <SectionHeader
+        icon="upload"
+        title="Signal Ingest"
+        caption="Upload raw IQ or RF waveform recordings to trigger the autonomous S0→S6 pipeline."
+      >
+        <span className="metric-pill">
+          <span className="mp-label">Max Upload</span>
+          <span className="mp-value">2 GB</span>
         </span>
-      </div>
+      </SectionHeader>
 
       <form onSubmit={handleSubmit}>
         {/* Drop Zone */}
         <div
+          role="button"
+          tabIndex={0}
+          aria-label="Select or drop an RF signal file"
           onDragEnter={handleDrag}
           onDragLeave={handleDrag}
           onDragOver={handleDrag}
           onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={openFilePicker}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              openFilePicker();
+            }
+          }}
           style={{
-            border: `2px dashed ${dragOver ? 'var(--cyan)' : selectedFile ? 'var(--emerald)' : 'var(--border)'}`,
-            borderRadius: '8px',
-            padding: '28px 16px',
+            border: `1px dashed ${dropzoneBorder}`,
+            borderRadius: 'var(--radius-md)',
+            padding: '26px 16px',
             textAlign: 'center',
-            background: dragOver ? 'var(--cyan-glow)' : selectedFile ? 'rgba(16, 185, 129, 0.04)' : 'var(--bg-input)',
+            background: dragOver
+              ? 'var(--accent-dim)'
+              : selectedFile
+                ? 'var(--ok-dim)'
+                : 'var(--surface-inset)',
             cursor: 'pointer',
-            transition: 'all 0.2s ease',
-            marginBottom: '16px',
+            transition: 'border-color 0.15s ease, background 0.15s ease',
+            marginBottom: 'var(--sp-4)',
           }}
         >
           <input
@@ -128,95 +133,91 @@ export default function UploadZone({ onAnalyze, isAnalyzing }) {
             onChange={handleFileChange}
             accept=".wav,.iq,.bin,.raw,.sigmf-data,.dat"
             style={{ display: 'none' }}
+            aria-hidden="true"
+            tabIndex={-1}
           />
 
-          <div style={{ fontSize: '32px', marginBottom: '8px' }}>
-            {selectedFile ? '📡' : '📁'}
+          <div style={{ color: selectedFile ? 'var(--ok)' : 'var(--text-tertiary)', marginBottom: 8 }}>
+            <Icon name={selectedFile ? 'file' : 'upload'} size={22} />
           </div>
 
           {selectedFile ? (
             <div>
-              <div style={{ fontWeight: 700, color: '#fff', fontSize: '14px', fontFamily: 'var(--font-mono)' }}>
+              <div className="t-data" style={{ fontWeight: 600, fontSize: 13 }}>
                 {selectedFile.name}
               </div>
-              <div style={{ fontSize: '12px', color: 'var(--emerald)', marginTop: '4px' }}>
-                {formatBytes(selectedFile.size)} • Ready for analysis
+              <div style={{ fontSize: 12, color: 'var(--ok)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>
+                {formatBytes(selectedFile.size)} · ready for analysis
               </div>
             </div>
           ) : (
             <div>
-              <div style={{ fontWeight: 600, color: 'var(--text-main)', fontSize: '14px' }}>
-                Drag and drop your RF waveform here, or <span style={{ color: 'var(--cyan)', textDecoration: 'underline' }}>browse</span>
+              <div style={{ fontWeight: 500, color: 'var(--text-primary)', fontSize: 13 }}>
+                Drop an RF waveform capture here, or{' '}
+                <span style={{ color: 'var(--accent-strong)', textDecoration: 'underline', textUnderlineOffset: 3 }}>
+                  browse
+                </span>
               </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '4px' }}>
-                Supported: .wav, .iq, .raw, .bin, .sigmf-data
+              <div className="t-caption" style={{ marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                .wav · .iq · .raw · .bin · .sigmf-data · .dat
               </div>
             </div>
           )}
         </div>
 
         {uploadError && (
-          <div style={{
-            background: 'var(--rose-glow)',
-            color: 'var(--rose)',
-            border: '1px solid rgba(244, 63, 94, 0.3)',
-            padding: '10px 14px',
-            borderRadius: '6px',
-            fontSize: '12px',
-            marginBottom: '16px',
-          }}>
-            ⚠️ {uploadError}
+          <div
+            role="alert"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              background: 'var(--danger-dim)',
+              color: 'var(--danger)',
+              border: '1px solid var(--danger-border)',
+              padding: '9px 12px',
+              borderRadius: 'var(--radius-md)',
+              fontSize: 12,
+              marginBottom: 'var(--sp-4)',
+            }}
+          >
+            <Icon name="alert" size={14} />
+            {uploadError}
           </div>
         )}
 
         {/* Hints and Controls */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr)) auto',
-          gap: '12px',
-          alignItems: 'end',
-        }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: 'var(--sp-3)',
+            alignItems: 'end',
+          }}
+        >
           <div>
-            <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '4px' }}>
-              SAMPLE RATE HINT (FS HZ)
+            <label className="field-label" htmlFor="fs-hint-input">
+              Sample Rate Hint (Fs Hz)
             </label>
             <input
+              id="fs-hint-input"
+              className="input"
               type="number"
               value={fsHint}
               onChange={(e) => setFsHint(e.target.value)}
               placeholder="e.g. 200000"
-              style={{
-                width: '100%',
-                background: 'var(--bg-input)',
-                border: '1px solid var(--border)',
-                borderRadius: '6px',
-                padding: '8px 12px',
-                color: '#fff',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '13px',
-                outline: 'none',
-              }}
             />
           </div>
 
           <div>
-            <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '4px' }}>
-              MODULATION HINT (OPTIONAL)
+            <label className="field-label" htmlFor="mod-hint-select">
+              Modulation Hint (Optional)
             </label>
             <select
+              id="mod-hint-select"
+              className="select"
               value={modHint}
               onChange={(e) => setModHint(e.target.value)}
-              style={{
-                width: '100%',
-                background: 'var(--bg-input)',
-                border: '1px solid var(--border)',
-                borderRadius: '6px',
-                padding: '8px 12px',
-                color: '#fff',
-                fontSize: '13px',
-                outline: 'none',
-                cursor: 'pointer',
-              }}
             >
               <option value="">Auto-Detect (Blind)</option>
               <option value="bpsk">BPSK</option>
@@ -231,40 +232,25 @@ export default function UploadZone({ onAnalyze, isAnalyzing }) {
           <button
             type="submit"
             disabled={!selectedFile || isAnalyzing}
-            style={{
-              background: !selectedFile || isAnalyzing
-                ? 'var(--bg-input)'
-                : 'linear-gradient(135deg, #06b6d4 0%, #2563eb 100%)',
-              color: !selectedFile || isAnalyzing ? 'var(--text-dim)' : '#ffffff',
-              border: '1px solid var(--border)',
-              borderRadius: '6px',
-              padding: '8px 24px',
-              fontWeight: 700,
-              fontSize: '13px',
-              cursor: !selectedFile || isAnalyzing ? 'not-allowed' : 'pointer',
-              height: '37px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              boxShadow: !selectedFile || isAnalyzing ? 'none' : '0 0 12px rgba(6, 182, 212, 0.3)',
-              transition: 'all 0.15s ease',
-            }}
+            className="btn btn--primary"
+            style={{ height: 37 }}
           >
             {isAnalyzing ? (
               <>
-                <span className="spin-anim" style={{ display: 'inline-block' }}>⟳</span>
-                <span>PROCESSING...</span>
+                <span className="spin-anim" style={{ display: 'inline-flex' }}>
+                  <Icon name="reset" size={13} />
+                </span>
+                PROCESSING…
               </>
             ) : (
               <>
-                <span>🚀</span>
-                <span>RUN PIPELINE</span>
+                <Icon name="play" size={13} />
+                RUN PIPELINE
               </>
             )}
           </button>
         </div>
       </form>
-    </div>
+    </section>
   );
 }

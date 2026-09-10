@@ -1,10 +1,10 @@
 # S3 operating envelope
 
-**Anvith.** Regenerated from the build on `main`. Every number here comes from `reports/s3_envelope_study.py` run against `tests/fixtures/rf_channel.py`, which is a stand-in for Dheeraj's zoo and dies the day it lands.
+**Anvith.** Regenerated from the build on `main`. Every number here comes from `reports/s3_envelope_study.py`, whose signals are now made by **`zoo.rf`** - Dheeraj's real modulator. The stand-in it used to call, `tests/fixtures/rf_channel.py`, is deleted. The parametric sweep stays a sweep rather than becoming a corpus read because it needs SNRs and samples-per-symbol the 36-file corpus does not carry; `reports/s3_lock_gate.md` is the one measured on the corpus itself.
 
 ## Gate evidence
 
-- **31 Aug, lock rate:** 19 of 20 PSK files report `ok`. Gate asks for at least 18 of 20.
+- **31 Aug, lock rate:** 20 of 20 PSK files report `ok`. Gate asks for at least 18 of 20.
 - **29 Aug, timing convergence:** worst case **817** symbols. Gate asks for under 2000.
 - **30 Aug, EVM per file:** the table below, and `reports/s3_envelope.csv`.
 - **3 Sep, estimated vs measured BER:** both columns below. The estimate is only meaningful where the receiver reports `ok` - see the caveat under the table.
@@ -31,12 +31,12 @@
 | 8psk_20dB_sps4 | ok | 0.957 | 5.138 | 793 | 0.00000 | 0.00000 |
 | 8psk_16dB_sps4 | ok | 0.895 | 8.115 | 106 | 0.00000 | 0.00000 |
 | 8psk_13dB_sps4 | ok | 0.802 | 11.431 | 89 | 0.00000 | 0.00000 |
-| 8psk_10dB_sps4 | ok | 0.641 | 16.059 | 89 | 0.00028 | 0.00025 |
-| 8psk_8dB_sps4 | low_confidence | 0.489 | 20.041 | - | 0.00296 | 0.04785 |
+| 8psk_10dB_sps4 | ok | 0.641 | 16.059 | 89 | 0.00028 | 0.00028 |
+| 8psk_8dB_sps4 | ok | 0.489 | 20.041 | - | 0.00267 | 0.00243 |
 | 16qam_22dB_sps4 | ok | 0.922 | 6.28 | 408 | 0.00000 | 0.00000 |
-| 16qam_18dB_sps4 | ok | 0.917 | 8.093 | 803 | 0.00000 | 0.00003 |
-| 16qam_15dB_sps4 | ok | 0.907 | 10.389 | 813 | 0.00001 | 0.00000 |
-| 16qam_13dB_sps4 | ok | 0.865 | 12.543 | 813 | 0.00014 | 0.00020 |
+| 16qam_18dB_sps4 | ok | 0.917 | 8.093 | 803 | 0.00000 | 0.00028 |
+| 16qam_15dB_sps4 | ok | 0.907 | 10.389 | 813 | 0.00001 | 0.00025 |
+| 16qam_13dB_sps4 | ok | 0.865 | 12.543 | 813 | 0.00015 | 0.00047 |
 | 2fsk_16dB_sps8 | ok | 0.950 | - | - | 0.00000 | 0.00000 |
 | 2fsk_12dB_sps8 | ok | 0.922 | - | - | 0.00000 | 0.00000 |
 | 2fsk_8dB_sps8 | ok | 0.876 | - | - | 0.00000 | 0.00000 |
@@ -48,13 +48,14 @@
 
 ## The caveat that matters
 
-**S3's estimated output BER is only trustworthy when it reports `ok`.** The estimate is derived from the LLR magnitudes, and those are calibrated against a noise variance measured on a constellation the receiver believes it has locked. When it has not, the variance is measured against the wrong reference and the estimate is optimistic.
+**S3's estimated output BER runs optimistic, and `status == ok` does not on its own make it safe to quote.** The estimate comes from the LLR magnitudes, which are calibrated against a noise variance measured on a constellation the receiver believes it has locked. When it has not locked, the variance is measured against the wrong reference. On a dense constellation it can also be optimistic while the lock is genuine, because the nearest-symbol distance the variance is measured over understates the true error probability.
 
-Cases in this run where the estimate was more than 4x optimistic, all of them already flagged `low_confidence` or `failed`:
+More than 4x optimistic **while reporting `ok`** -- the case that is not covered by gating on status, and the reason this list is no longer filtered to failures:
 
-- `8psk_8dB_sps4` — estimated 0.00296, measured 0.04785
+- `16qam_18dB_sps4` — estimated 0.00000, measured 0.00028 (92x)
+- `16qam_15dB_sps4` — estimated 0.00001, measured 0.00025 (23x)
 
-Anything consuming `estimated_output_ber` must gate on `status` first. S4 already does, because it takes the LLRs rather than the number, but the UI card and the envelope report both need to.
+Anything consuming `estimated_output_ber` must gate on `status` first, and must not treat the number as an upper bound even then. S4 takes the LLRs rather than the number, so it is unaffected; the UI card and the envelope report quote it and should say which direction it errs in.
 
 ## Charts
 

@@ -227,61 +227,114 @@ export function parseHypothesesData(hypotheses) {
 }
 
 /**
- * Standard empirical S3 operating envelope data (measured across test zoo in reports/s3_envelope.csv).
- * Provides benchmark performance curves for BPSK, QPSK, 8PSK, 16QAM, 2FSK, 4FSK.
+ * S3 operating-envelope measurements, transcribed from reports/s3_envelope.csv
+ * (columns: modulation, snr_db, evm_percent, carrier_lock). Every value below
+ * appears verbatim in that CSV -- do not add a point that is not in it.
+ *
+ * `evm` is null for 2FSK and 4FSK BECAUSE IT WAS NEVER MEASURED: EVM is a
+ * distance to a fixed constellation point, and the FSK receiver is a
+ * non-coherent frequency discriminator with no constellation to measure
+ * against. `evm_percent` is empty in all four FSK rows of the CSV.
+ *
+ * Until 10 Sep this block carried invented EVM curves for both FSK schemes
+ * (2FSK 18.50/14.20/10.10/6.80 at SNR 10/12/15/20; 4FSK 19.20/15.00/11.20/7.50)
+ * under this same "measured" comment. Neither the EVM values nor the SNR points
+ * existed in the CSV, and the EVM-vs-SNR chart plotted them as measurements.
+ * Carrier-lock is the FSK figure that WAS measured, and it is what is kept.
  */
 export const EMPIRICAL_ENVELOPE_DATA = {
   bpsk: [
-    { snr: 8, evm: 23.48, lock: 0.93 },
-    { snr: 10, evm: 19.60, lock: 0.95 },
-    { snr: 13, evm: 15.42, lock: 0.97 },
-    { snr: 16, evm: 12.72, lock: 0.97 },
-    { snr: 20, evm: 10.55, lock: 0.98 },
+    { snr: 8, evm: 23.479, lock: 0.9294 },
+    { snr: 10, evm: 19.603, lock: 0.9488 },
+    { snr: 13, evm: 15.419, lock: 0.9658 },
+    { snr: 16, evm: 12.717, lock: 0.9747 },
+    { snr: 20, evm: 10.547, lock: 0.9809 },
   ],
   qpsk: [
-    { snr: 8, evm: 20.19, lock: 0.84 },
-    { snr: 10, evm: 16.12, lock: 0.90 },
-    { snr: 13, evm: 11.47, lock: 0.95 },
-    { snr: 16, evm: 8.14, lock: 0.97 },
-    { snr: 20, evm: 5.16, lock: 0.99 },
+    { snr: 8, evm: 20.189, lock: 0.8401 },
+    { snr: 10, evm: 16.120, lock: 0.8964 },
+    { snr: 13, evm: 11.467, lock: 0.9468 },
+    { snr: 16, evm: 8.143, lock: 0.9730 },
+    { snr: 20, evm: 5.158, lock: 0.9891 },
   ],
   '8psk': [
-    { snr: 8, evm: 20.04, lock: 0.49 },
-    { snr: 10, evm: 16.06, lock: 0.64 },
-    { snr: 13, evm: 11.43, lock: 0.80 },
-    { snr: 16, evm: 8.12, lock: 0.90 },
-    { snr: 20, evm: 5.14, lock: 0.96 },
+    { snr: 8, evm: 20.041, lock: 0.4894 },
+    { snr: 10, evm: 16.059, lock: 0.6415 },
+    { snr: 13, evm: 11.431, lock: 0.8016 },
+    { snr: 16, evm: 8.115, lock: 0.8953 },
+    { snr: 20, evm: 5.138, lock: 0.9568 },
   ],
   '16qam': [
-    { snr: 13, evm: 12.54, lock: 0.86 },
-    { snr: 15, evm: 10.39, lock: 0.91 },
-    { snr: 18, evm: 8.09, lock: 0.92 },
-    { snr: 22, evm: 6.28, lock: 0.92 },
+    { snr: 13, evm: 12.543, lock: 0.8649 },
+    { snr: 15, evm: 10.389, lock: 0.9074 },
+    { snr: 18, evm: 8.093, lock: 0.9170 },
+    { snr: 22, evm: 6.280, lock: 0.9222 },
   ],
   '2fsk': [
-    { snr: 10, evm: 18.50, lock: 0.88 },
-    { snr: 12, evm: 14.20, lock: 0.94 },
-    { snr: 15, evm: 10.10, lock: 0.97 },
-    { snr: 20, evm: 6.80, lock: 0.99 },
+    { snr: 5, evm: null, lock: 0.8258 },
+    { snr: 8, evm: null, lock: 0.8761 },
+    { snr: 12, evm: null, lock: 0.9216 },
+    { snr: 16, evm: null, lock: 0.9504 },
   ],
   '4fsk': [
-    { snr: 10, evm: 19.20, lock: 0.85 },
-    { snr: 12, evm: 15.00, lock: 0.92 },
-    { snr: 15, evm: 11.20, lock: 0.96 },
-    { snr: 20, evm: 7.50, lock: 0.98 },
+    { snr: 7, evm: null, lock: 0.7975 },
+    { snr: 10, evm: null, lock: 0.8561 },
+    { snr: 14, evm: null, lock: 0.9090 },
+    { snr: 18, evm: null, lock: 0.9425 },
   ],
 };
 
 /**
- * Declared S3 Zero-Error SNR Gate thresholds (dB) per modulation.
+ * Lowest SNR (dB) at which reports/s3_envelope.csv records measured_ber == 0
+ * for that scheme, straight off the `measured_ber` column.
+ *
+ * READ THIS WITH `ZERO_ERROR_THRESHOLD_IS_EXACT` BELOW. For four of the six
+ * schemes the lowest SNR that was TESTED already decoded with zero errors, so
+ * the number is an UPPER BOUND on the threshold -- the real one is somewhere
+ * at or below it, and the sweep never went low enough to find it. Only 8PSK
+ * has a measured crossing inside the swept range (4.8e-2 at 8 dB, 2.5e-4 at
+ * 10 dB, 0 at 13 dB).
+ *
+ * "ZERO" IS A DETECTION LIMIT, NOT A ZERO. The study compares at most 40,000
+ * demodulated bits per file, so measured_ber == 0 means "no bit errors in
+ * 40,000" -- a true BER below roughly 2.5e-05, not the absence of errors. Say
+ * it that way to anyone who asks; the sweep cannot resolve finer.
+ *
+ * 16QAM is the least settled of the six: 4.75e-04 at 13 dB, 2.5e-04 at 15 dB,
+ * 2.75e-04 at 18 dB, and only 0 at 22 dB. Note this does NOT contradict
+ * demo/README.md's whole-chain envelope of >= 15 dB for 16QAM. These are S3
+ * output errors, and the rate-1/2 K=7 convolutional code downstream corrects
+ * them: the 16QAM capture at 15 dB decodes to the exact transmitted bits
+ * (tests/e2e/test_decoded_bits_match_transmitter.py). A raw demodulator error
+ * rate is not a chain failure.
+ *
+ * Corrected 10 Sep. This map previously read 2fsk 10.0, 4fsk 10.0 and
+ * 16qam 20.0, none of which appeared in the CSV it claims to come from, and
+ * the CSV itself was stale -- regenerated from current code the same day,
+ * which moved 8PSK and 16QAM's measured_ber column.
  */
 export const ZERO_ERROR_SNR_THRESHOLDS = {
   bpsk: 8.0,
   qpsk: 8.0,
-  '2fsk': 10.0,
-  '4fsk': 10.0,
+  '2fsk': 5.0,
+  '4fsk': 7.0,
   '8psk': 13.0,
-  '16qam': 20.0,
+  '16qam': 22.0,
+};
+
+/**
+ * true  -> a crossing was actually observed inside the swept SNR range.
+ * false -> the lowest SNR tested was already error-free, so the paired value in
+ *          ZERO_ERROR_SNR_THRESHOLDS is an upper bound and should be rendered
+ *          and spoken about as "<= x dB", never as "the threshold is x dB".
+ */
+export const ZERO_ERROR_THRESHOLD_IS_EXACT = {
+  bpsk: false,
+  qpsk: false,
+  '2fsk': false,
+  '4fsk': false,
+  '8psk': true,
+  '16qam': true,
 };
 
 /**
@@ -443,11 +496,11 @@ export function buildThresholdBarChartData(thresholds = ZERO_ERROR_SNR_THRESHOLD
   const normMod = currentMod ? String(currentMod).toLowerCase() : null;
 
   const colors = schemes.map(s => {
-    if (s === normMod) return '#10b981';
-    if (s === '16qam') return '#a855f7';
-    if (s === '8psk') return '#f59e0b';
-    if (s.includes('fsk')) return '#38bdf8';
-    return '#06b6d4';
+    if (s === normMod) return '#3ecf8e';
+    if (s === '16qam') return '#b083e8';
+    if (s === '8psk') return '#e0a83e';
+    if (s.includes('fsk')) return '#6fd0ec';
+    return '#4db8d8';
   });
 
   const trace = {
@@ -457,12 +510,21 @@ export function buildThresholdBarChartData(thresholds = ZERO_ERROR_SNR_THRESHOLD
     name: 'Required Min SNR',
     marker: {
       color: colors,
-      line: { color: '#ffffff', width: 1 },
+      line: { color: 'rgba(232, 237, 244, 0.4)', width: 1 },
     },
-    text: yValues.map(v => `${v} dB`),
+    // A scheme whose lowest TESTED SNR was already error-free has an upper
+    // bound, not a threshold, and must not be drawn as though the crossing was
+    // observed. ZERO_ERROR_THRESHOLD_IS_EXACT says which is which.
+    text: schemes.map((sch, i) =>
+      ZERO_ERROR_THRESHOLD_IS_EXACT[sch] === false ? `≤ ${yValues[i]} dB` : `${yValues[i]} dB`),
     textposition: 'outside',
-    textfont: { color: '#cbd5e1', size: 11, family: 'ui-monospace, monospace' },
-    hovertemplate: '<b>%{x}</b><br>Zero-Error SNR Threshold: %{y} dB<extra></extra>',
+    textfont: { color: '#97a3b6', size: 11, family: "'IBM Plex Mono', ui-monospace, monospace" },
+    customdata: schemes.map(sch =>
+      ZERO_ERROR_THRESHOLD_IS_EXACT[sch] === false
+        ? 'upper bound - lowest SNR tested was already error-free'
+        : 'measured crossing inside the swept range'),
+    hovertemplate:
+      '<b>%{x}</b><br>Zero-error SNR: %{y} dB<br>%{customdata}<extra></extra>',
   };
 
   const traces = [trace];
@@ -480,7 +542,7 @@ export function buildThresholdBarChartData(thresholds = ZERO_ERROR_SNR_THRESHOLD
       y0: numSnr,
       y1: numSnr,
       line: {
-        color: '#f43f5e',
+        color: '#e0564d',
         width: 2,
         dash: 'dash',
       },
@@ -495,8 +557,8 @@ export function buildThresholdBarChartData(thresholds = ZERO_ERROR_SNR_THRESHOLD
       showarrow: false,
       xanchor: 'right',
       yanchor: 'bottom',
-      font: { color: '#f43f5e', size: 10, weight: 700 },
-      bgcolor: 'rgba(15, 23, 42, 0.85)',
+      font: { color: '#e0564d', size: 10, weight: 700 },
+      bgcolor: 'rgba(9, 12, 18, 0.85)',
     });
   }
 
@@ -505,15 +567,15 @@ export function buildThresholdBarChartData(thresholds = ZERO_ERROR_SNR_THRESHOLD
   const layout = {
     title: {
       text: 'S3 Zero-Error SNR Gates by Modulation Scheme',
-      font: { color: '#fff', size: 13, weight: 700 },
+      font: { color: '#e8edf4', size: 12, weight: 600 },
       x: 0.02,
     },
     xaxis: {
-      title: { text: 'Modulation Scheme', font: { color: '#94a3b8', size: 11 } },
-      tickfont: { color: '#cbd5e1' },
+      title: { text: 'Modulation Scheme', font: { color: '#97a3b6', size: 11 } },
+      tickfont: { color: '#97a3b6' },
     },
     yaxis: {
-      title: { text: 'Required Channel SNR (dB)', font: { color: '#94a3b8', size: 11 } },
+      title: { text: 'Required Channel SNR (dB)', font: { color: '#97a3b6', size: 11 } },
       range: [0, maxY],
       dtick: 5,
     },

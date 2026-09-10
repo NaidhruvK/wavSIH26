@@ -7,6 +7,7 @@ import PayloadViewer from './components/PayloadViewer';
 import EnvelopeModal from './components/EnvelopeModal';
 import RegistryDrawer from './components/RegistryDrawer';
 import VisualizationCenter from './components/visualizations/VisualizationCenter';
+import Icon from './components/ui/icons';
 import {
   uploadAndAnalyze,
   getRunReport,
@@ -149,25 +150,35 @@ export default function App() {
         onOpenRegistry={() => setShowRegistryDrawer(true)}
       />
 
-      <main style={{ flex: 1, maxWidth: '1280px', width: '100%', margin: '0 auto', padding: '24px 20px' }}>
+      <main className="app-main">
         {appError && (
-          <div style={{
-            background: 'var(--rose-glow)',
-            color: 'var(--rose)',
-            border: '1px solid rgba(244, 63, 94, 0.3)',
-            padding: '12px 16px',
-            borderRadius: '8px',
-            marginBottom: '20px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}>
-            <span>⚠️ {appError}</span>
+          <div
+            role="alert"
+            style={{
+              background: 'var(--danger-dim)',
+              color: 'var(--danger)',
+              border: '1px solid var(--danger-border)',
+              padding: '10px 14px',
+              borderRadius: 'var(--radius-md)',
+              marginBottom: 'var(--sp-5)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 12,
+              fontSize: 13,
+            }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Icon name="alert" size={15} />
+              {appError}
+            </span>
             <button
               onClick={() => setAppError(null)}
-              style={{ background: 'none', border: 'none', color: 'var(--rose)', cursor: 'pointer', fontWeight: 700 }}
+              aria-label="Dismiss error"
+              className="btn btn--ghost btn--icon"
+              style={{ color: 'var(--danger)' }}
             >
-              ✕
+              <Icon name="x" size={13} />
             </button>
           </div>
         )}
@@ -184,21 +195,22 @@ export default function App() {
         />
 
         {/* S0 to S6 Stage Progression Grid */}
-        <section style={{ marginBottom: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-            <h2 style={{ fontSize: '15px', fontWeight: 800, color: '#fff', letterSpacing: '0.3px' }}>
-              PIPELINE EXECUTION STAGES (S0 → S6)
-            </h2>
-            <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>
-              Sequential Demodulation & Coding Resolution
-            </span>
+        <section style={{ marginBottom: 'var(--sp-5)' }} aria-label="Pipeline execution stages">
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'baseline',
+              gap: 12,
+              flexWrap: 'wrap',
+              marginBottom: 12,
+            }}
+          >
+            <h2 className="t-section">Pipeline Execution · S0 → S6</h2>
+            <span className="t-label">Sequential Demodulation & Coding Resolution</span>
           </div>
 
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-            gap: '14px',
-          }}>
+          <div className="stage-grid">
             {STAGE_KEYS.map(stgKey => (
               <StageCard
                 key={stgKey}
@@ -240,14 +252,23 @@ export default function App() {
         />
       )}
 
-      <footer style={{
-        textAlign: 'center',
-        padding: '20px',
-        borderTop: '1px solid var(--border)',
-        fontSize: '12px',
-        color: 'var(--text-dim)',
-      }}>
-        Raaya (wavSIH26) • Team Raaya • Blind RF Signal Intelligence System
+      <footer
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
+          padding: '14px 20px',
+          borderTop: '1px solid var(--border)',
+        }}
+      >
+        <span className="t-label" style={{ fontSize: 9 }}>
+          Raaya (wavSIH26) · Team Raaya
+        </span>
+        <span className="t-label" style={{ fontSize: 9 }}>
+          Blind RF Signal Intelligence System
+        </span>
       </footer>
     </div>
   );

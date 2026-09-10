@@ -1,5 +1,7 @@
 import React from 'react';
 import PlotlyChart from './PlotlyChart';
+import EmptyState from '../ui/EmptyState';
+import Icon from '../ui/icons';
 
 export default function WaterfallPlot({ artifactData, imageUrl, stageValues }) {
   // If artifact is a 2D matrix JSON
@@ -22,29 +24,29 @@ export default function WaterfallPlot({ artifactData, imageUrl, stageValues }) {
       colorscale: 'Viridis',
       hovertemplate: 'Freq: %{x:.2f} kHz<br>Time: %{y:.2f} s<br>Power: %{z:.1f} dB<extra></extra>',
       colorbar: {
-        title: { text: 'dB', font: { color: '#94a3b8', size: 10 } },
-        tickfont: { color: '#94a3b8', size: 9 },
+        title: { text: 'dB', font: { color: '#97a3b6', size: 10 } },
+        tickfont: { color: '#97a3b6', size: 9 },
       },
     };
 
     const layout = {
       title: {
-        text: 'S1 • Spectrogram / Waterfall Matrix',
-        font: { color: '#fff', size: 13, weight: 700 },
+        text: 'S1 · Spectrogram / Waterfall Matrix',
+        font: { color: '#e8edf4', size: 12, weight: 600 },
         x: 0.02,
       },
       xaxis: {
-        title: { text: 'Baseband Frequency (kHz)', font: { color: '#94a3b8', size: 11 } },
+        title: { text: 'Baseband Frequency (kHz)', font: { color: '#97a3b6', size: 11 } },
       },
       yaxis: {
-        title: { text: 'Time (s)', font: { color: '#94a3b8', size: 11 } },
+        title: { text: 'Time (s)', font: { color: '#97a3b6', size: 11 } },
       },
     };
 
     return (
       <div>
-        <div style={{ marginBottom: '10px', fontSize: '11px', color: 'var(--text-dim)' }}>
-          2D Spectrogram Heatmap • Real-time spectral energy density across time and frequency.
+        <div className="t-caption" style={{ marginBottom: 10, fontSize: 11 }}>
+          2D spectrogram heatmap · spectral energy density across time and frequency.
         </div>
         <PlotlyChart data={[trace]} layout={layout} />
       </div>
@@ -54,35 +56,27 @@ export default function WaterfallPlot({ artifactData, imageUrl, stageValues }) {
   // If raster image URL is available (e.g. from artifact endpoint or reports/artifacts)
   if (imageUrl) {
     return (
-      <div style={{
-        background: 'var(--bg-input)',
-        padding: '16px',
-        borderRadius: '8px',
-        textAlign: 'center',
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '12px',
-        }}>
-          <span style={{ fontSize: '12px', fontWeight: 700, color: '#fff' }}>
-            S1 • Spectrogram Artifact
+      <div className="inset" style={{ padding: 16, textAlign: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 12,
+          }}
+        >
+          <span className="t-section" style={{ fontSize: 11 }}>
+            S1 · Spectrogram Artifact
           </span>
           <a
             href={imageUrl}
             target="_blank"
             rel="noreferrer"
-            style={{
-              color: 'var(--cyan)',
-              fontSize: '11px',
-              textDecoration: 'none',
-              background: 'rgba(6, 182, 212, 0.1)',
-              padding: '3px 8px',
-              borderRadius: '4px',
-            }}
+            className="badge badge--accent"
+            style={{ textDecoration: 'none' }}
           >
-            Open Full Size ↗
+            <Icon name="external" size={10} />
+            Full Size
           </a>
         </div>
         <img
@@ -91,8 +85,8 @@ export default function WaterfallPlot({ artifactData, imageUrl, stageValues }) {
           style={{
             maxWidth: '100%',
             height: 'auto',
-            maxHeight: '420px',
-            borderRadius: '6px',
+            maxHeight: 420,
+            borderRadius: 'var(--radius-md)',
             border: '1px solid var(--border)',
           }}
           onError={e => {
@@ -105,23 +99,10 @@ export default function WaterfallPlot({ artifactData, imageUrl, stageValues }) {
 
   // Graceful fallback for missing artifact
   return (
-    <div style={{
-      background: 'var(--bg-input)',
-      padding: '36px 20px',
-      textAlign: 'center',
-      borderRadius: '8px',
-      color: 'var(--text-dim)',
-      fontSize: '13px',
-    }}>
-      <div style={{ fontSize: '24px', marginBottom: '8px' }}>🌊</div>
-      <div style={{ fontWeight: 600, color: '#fff', marginBottom: '4px' }}>
-        Spectrogram Artifact Unavailable
-      </div>
-      <div style={{ maxWidth: '560px', margin: '0 auto', lineHeight: '1.5' }}>
-        Stage S1 completed with 1D Welch PSD spectrum. A 2D waterfall matrix or raster artifact
-        was not generated for this run. Refer to the <strong>Power Spectral Density (PSD)</strong> tab
-        for calibrated frequency and power distribution.
-      </div>
-    </div>
+    <EmptyState icon="layers" title="Spectrogram Artifact Unavailable">
+      Stage S1 completed with 1D Welch PSD spectrum. A 2D waterfall matrix or raster artifact
+      was not generated for this run. Refer to the <strong>PSD Spectrum</strong> tab
+      for calibrated frequency and power distribution.
+    </EmptyState>
   );
 }

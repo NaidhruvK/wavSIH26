@@ -1,62 +1,44 @@
 import React from 'react';
 import PlotlyChart from './PlotlyChart';
 import { parseConstellationData } from '../../utils/visualizerData';
+import EmptyState from '../ui/EmptyState';
+import MetricPill from '../ui/MetricPill';
+import Icon from '../ui/icons';
 
 export default function ConstellationPlot({ artifactData, imageUrl, stageValues }) {
   const parsed = parseConstellationData(artifactData);
 
   if (!parsed && !imageUrl) {
     return (
-      <div style={{
-        background: 'var(--bg-input)',
-        padding: '36px 20px',
-        textAlign: 'center',
-        borderRadius: '8px',
-        color: 'var(--text-dim)',
-        fontSize: '13px',
-      }}>
-        <div style={{ fontSize: '24px', marginBottom: '8px' }}>🎯</div>
-        <div style={{ fontWeight: 600, color: '#fff', marginBottom: '4px' }}>
-          Constellation Artifact Unavailable
-        </div>
-        <div>
-          Symbol constellation data has not been captured for this run or stage S3 has not completed.
-        </div>
-      </div>
+      <EmptyState icon="crosshair" title="Constellation Artifact Unavailable">
+        Symbol constellation data has not been captured for this run or stage S3 has not completed.
+      </EmptyState>
     );
   }
 
   if (!parsed && imageUrl) {
     return (
-      <div style={{
-        background: 'var(--bg-input)',
-        padding: '16px',
-        borderRadius: '8px',
-        textAlign: 'center',
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '12px',
-        }}>
-          <span style={{ fontSize: '12px', fontWeight: 700, color: '#fff' }}>
-            S3 • Constellation Artifact
+      <div className="inset" style={{ padding: 16, textAlign: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 12,
+          }}
+        >
+          <span className="t-section" style={{ fontSize: 11 }}>
+            S3 · Constellation Artifact
           </span>
           <a
             href={imageUrl}
             target="_blank"
             rel="noreferrer"
-            style={{
-              color: 'var(--cyan)',
-              fontSize: '11px',
-              textDecoration: 'none',
-              background: 'rgba(6, 182, 212, 0.1)',
-              padding: '3px 8px',
-              borderRadius: '4px',
-            }}
+            className="badge badge--accent"
+            style={{ textDecoration: 'none' }}
           >
-            Open Full Size ↗
+            <Icon name="external" size={10} />
+            Full Size
           </a>
         </div>
         <img
@@ -65,8 +47,8 @@ export default function ConstellationPlot({ artifactData, imageUrl, stageValues 
           style={{
             maxWidth: '100%',
             height: 'auto',
-            maxHeight: '420px',
-            borderRadius: '6px',
+            maxHeight: 420,
+            borderRadius: 'var(--radius-md)',
             border: '1px solid var(--border)',
           }}
         />
@@ -82,7 +64,7 @@ export default function ConstellationPlot({ artifactData, imageUrl, stageValues 
       mode: 'markers',
       name: 'Symbols (I/Q)',
       marker: {
-        color: '#06b6d4',
+        color: '#4db8d8',
         size: 5,
         opacity: 0.65,
       },
@@ -98,7 +80,7 @@ export default function ConstellationPlot({ artifactData, imageUrl, stageValues 
       x1: parsed.bound,
       y0: 0,
       y1: 0,
-      line: { color: '#334155', width: 1 },
+      line: { color: '#2b3850', width: 1 },
     },
     {
       type: 'line',
@@ -106,7 +88,7 @@ export default function ConstellationPlot({ artifactData, imageUrl, stageValues 
       x1: 0,
       y0: -parsed.bound,
       y1: parsed.bound,
-      line: { color: '#334155', width: 1 },
+      line: { color: '#2b3850', width: 1 },
     },
     // Normalized unit circle reference
     {
@@ -117,23 +99,23 @@ export default function ConstellationPlot({ artifactData, imageUrl, stageValues 
       y0: -1.0,
       x1: 1.0,
       y1: 1.0,
-      line: { color: '#475569', width: 1, dash: 'dot' },
+      line: { color: '#3d4c66', width: 1, dash: 'dot' },
     },
   ];
 
   const layout = {
     title: {
-      text: 'S3 • Complex Baseband Constellation (I/Q)',
-      font: { color: '#fff', size: 13, weight: 700 },
+      text: 'S3 · Complex Baseband Constellation (I/Q)',
+      font: { color: '#e8edf4', size: 12, weight: 600 },
       x: 0.02,
     },
     xaxis: {
-      title: { text: 'In-Phase (I)', font: { color: '#94a3b8', size: 11 } },
+      title: { text: 'In-Phase (I)', font: { color: '#97a3b6', size: 11 } },
       range: [-parsed.bound, parsed.bound],
       zeroline: false,
     },
     yaxis: {
-      title: { text: 'Quadrature (Q)', font: { color: '#94a3b8', size: 11 } },
+      title: { text: 'Quadrature (Q)', font: { color: '#97a3b6', size: 11 } },
       range: [-parsed.bound, parsed.bound],
       scaleanchor: 'x',
       scaleratio: 1,
@@ -148,47 +130,34 @@ export default function ConstellationPlot({ artifactData, imageUrl, stageValues 
 
   return (
     <div>
-      {/* Metric badges */}
-      <div style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: '12px',
-        marginBottom: '12px',
-        fontSize: '11px',
-      }}>
+      {/* Metric readouts */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
         {modulation && (
-          <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px' }}>
-            <span style={{ color: 'var(--text-dim)' }}>Modulation: </span>
-            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--cyan)', fontWeight: 700, textTransform: 'uppercase' }}>
-              {modulation}
-            </span>
-          </div>
+          <MetricPill label="Modulation" value={String(modulation).toUpperCase()} tone="accent" />
         )}
         {evm !== undefined && evm !== null && (
-          <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px' }}>
-            <span style={{ color: 'var(--text-dim)' }}>EVM: </span>
-            <span style={{ fontFamily: 'var(--font-mono)', color: Number(evm) < 15 ? 'var(--emerald)' : 'var(--amber)', fontWeight: 700 }}>
-              {Number(evm).toFixed(2)}%
-            </span>
-          </div>
+          <MetricPill
+            label="EVM"
+            value={`${Number(evm).toFixed(2)}%`}
+            tone={Number(evm) < 15 ? 'ok' : 'warn'}
+          />
         )}
         {lock && (
-          <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px' }}>
-            <span style={{ color: 'var(--text-dim)' }}>Carrier Lock: </span>
-            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--emerald)', fontWeight: 700 }}>
-              {typeof lock === 'number' ? (lock * 100).toFixed(1) + '%' : String(lock)}
-            </span>
-          </div>
+          <MetricPill
+            label="Carrier Lock"
+            value={typeof lock === 'number' ? (lock * 100).toFixed(1) + '%' : String(lock)}
+            tone="ok"
+          />
         )}
-        <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px', marginLeft: 'auto' }}>
-          <span style={{ color: 'var(--text-dim)' }}>Sampled Points: </span>
-          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
-            {parsed.renderedCount} / {parsed.originalCount}
-          </span>
-        </div>
+        <MetricPill
+          label="Sampled"
+          value={`${parsed.renderedCount} / ${parsed.originalCount}`}
+          tone="muted"
+          style={{ marginLeft: 'auto' }}
+        />
       </div>
 
-      <div style={{ maxWidth: '520px', margin: '0 auto' }}>
+      <div style={{ maxWidth: 520, margin: '0 auto' }}>
         <PlotlyChart data={traces} layout={layout} style={{ minHeight: '380px' }} />
       </div>
     </div>

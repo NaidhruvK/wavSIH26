@@ -1,131 +1,111 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import Icon from './ui/icons';
+
+function useUtcClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())} ${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}:${pad(now.getUTCSeconds())}`;
+}
 
 export default function Header({ health, onOpenEnvelope, onOpenRegistry }) {
   const isHealthy = health?.status === 'healthy';
+  const utc = useUtcClock();
 
   return (
-    <header style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      padding: '16px 24px',
-      borderBottom: '1px solid var(--border)',
-      background: 'rgba(17, 23, 38, 0.7)',
-      backdropFilter: 'blur(8px)',
-      position: 'sticky',
-      top: 0,
-      zIndex: 40,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-        <div style={{
-          width: '38px',
-          height: '38px',
-          borderRadius: '8px',
-          background: 'linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontWeight: 800,
-          fontSize: '18px',
-          color: '#ffffff',
-          letterSpacing: '1px',
-          boxShadow: '0 0 16px rgba(6, 182, 212, 0.4)',
-        }}>
-          R
+    <header
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 16,
+        flexWrap: 'wrap',
+        padding: '12px 20px',
+        borderBottom: '1px solid var(--border)',
+        background: 'rgba(9, 12, 18, 0.82)',
+        backdropFilter: 'blur(8px)',
+        position: 'sticky',
+        top: 0,
+        zIndex: 40,
+      }}
+    >
+      {/* Brand block */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div
+          aria-hidden="true"
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--accent-border)',
+            background: 'var(--accent-dim)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--accent-strong)',
+          }}
+        >
+          <Icon name="antenna" size={19} />
         </div>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <h1 style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '0.5px', color: '#fff' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h1
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 17,
+                fontWeight: 700,
+                letterSpacing: '0.18em',
+                color: 'var(--text-primary)',
+              }}
+            >
               RAAYA
             </h1>
-            <span style={{
-              fontSize: '11px',
-              fontFamily: 'var(--font-mono)',
-              background: 'rgba(6, 182, 212, 0.12)',
-              color: 'var(--cyan)',
-              border: '1px solid rgba(6, 182, 212, 0.3)',
-              padding: '2px 8px',
-              borderRadius: '999px',
-              fontWeight: 600,
-            }}>
-              SIH26147
-            </span>
+            <span className="badge badge--accent">SIH26147</span>
           </div>
-          <p style={{ fontSize: '12px', color: 'var(--text-dim)', fontWeight: 500 }}>
-            Blind RF Demodulation, Rank Collapse & Telemetry Recovery
+          <p className="t-caption" style={{ fontSize: 11, marginTop: 1 }}>
+            Blind RF Demodulation · Rank Collapse · Telemetry Recovery
           </p>
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        {/* Operating Envelope Trigger */}
-        <button
-          onClick={onOpenEnvelope}
+      {/* Right cluster: clock, config triggers, health */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span
+          className="t-data"
+          title="Coordinated Universal Time"
           style={{
-            background: 'var(--bg-input)',
-            border: '1px solid var(--border)',
-            color: 'var(--text-muted)',
-            padding: '6px 12px',
-            borderRadius: '6px',
-            fontSize: '12px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            transition: 'all 0.15s ease',
+            fontSize: 11,
+            color: 'var(--text-tertiary)',
+            letterSpacing: '0.05em',
+            padding: '4px 10px',
+            borderRight: '1px solid var(--border)',
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--cyan)'; e.currentTarget.style.color = '#fff'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
         >
-          <span>📐</span> Envelope
+          {utc} UTC
+        </span>
+
+        <button onClick={onOpenEnvelope} className="btn">
+          <Icon name="boundary" size={13} />
+          Envelope
         </button>
 
-        {/* Registry Drawer Trigger */}
-        <button
-          onClick={onOpenRegistry}
-          style={{
-            background: 'var(--bg-input)',
-            border: '1px solid var(--border)',
-            color: 'var(--text-muted)',
-            padding: '6px 12px',
-            borderRadius: '6px',
-            fontSize: '12px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            transition: 'all 0.15s ease',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--cyan)'; e.currentTarget.style.color = '#fff'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-        >
-          <span>🔌</span> Registries
+        <button onClick={onOpenRegistry} className="btn">
+          <Icon name="plug" size={13} />
+          Registries
         </button>
 
-        {/* Service Health Indicator */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          background: isHealthy ? 'rgba(16, 185, 129, 0.08)' : 'rgba(244, 63, 94, 0.08)',
-          border: `1px solid ${isHealthy ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'}`,
-          padding: '4px 12px',
-          borderRadius: '999px',
-          fontSize: '12px',
-          fontWeight: 600,
-          color: isHealthy ? 'var(--emerald)' : 'var(--rose)',
-        }}>
-          <span style={{
-            width: '8px',
-            height: '8px',
-            borderRadius: '50%',
-            background: isHealthy ? 'var(--emerald)' : 'var(--rose)',
-            boxShadow: `0 0 8px ${isHealthy ? 'var(--emerald)' : 'var(--rose)'}`,
-          }} />
-          <span>{isHealthy ? 'BACKEND READY' : 'OFFLINE'}</span>
-        </div>
+        <span
+          className={`badge badge--${isHealthy ? 'ok' : 'danger'}`}
+          role="status"
+          aria-live="polite"
+          style={{ padding: '5px 10px' }}
+        >
+          <span className={`led led--${isHealthy ? 'ok' : 'danger'}${isHealthy ? '' : ' led--pulse'}`} />
+          {isHealthy ? 'BACKEND READY' : 'OFFLINE'}
+        </span>
       </div>
     </header>
   );

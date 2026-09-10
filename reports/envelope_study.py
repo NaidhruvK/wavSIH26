@@ -366,9 +366,13 @@ def _write_markdown(rows: list[dict], floors: dict) -> None:
         "an unfixable single-feature crossover (`reports/s2_envelope.md`).",
         "- 4fsk classifier residual at 20dB: not confidently wrong, "
         "4fsk stays the #2 hypothesis (`reports/classifier_eval.md`).",
-        "- `pipeline.s1_detect.estimate_snr` is off by 8-23dB specifically "
-        "for 4fsk (unshaped CPFSK has no clean noise floor to sample; "
-        "own docstring).",
+        "- `pipeline.s1_detect.estimate_snr` WAS off by 8-23dB specifically "
+        "for 4fsk (unshaped CPFSK has no clean noise floor for a percentile "
+        "estimator to sample). FIXED 10 Sep: it now takes the larger of the "
+        "spectral and a constant-modulus M2M4 moment estimate, and measures "
+        "within 0.02dB of truth for 2fsk and 4fsk across the whole corpus. "
+        "The linear modulations still use the spectral estimate and are "
+        "unchanged at +0.23 to +0.74dB.",
         "- Block interleaver recovery needs an exact stream, zero "
         "tolerance for raw bit errors (`reports/s3_s4_junction.md`).",
         "- Blind LDPC parity-check recovery: explicitly out of scope, "

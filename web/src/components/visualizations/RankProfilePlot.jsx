@@ -1,62 +1,44 @@
 import React from 'react';
 import PlotlyChart from './PlotlyChart';
 import { parseRankProfileData } from '../../utils/visualizerData';
+import EmptyState from '../ui/EmptyState';
+import MetricPill from '../ui/MetricPill';
+import Icon from '../ui/icons';
 
 export default function RankProfilePlot({ artifactData, imageUrl, stageValues }) {
   const parsed = parseRankProfileData(artifactData);
 
   if (!parsed && !imageUrl) {
     return (
-      <div style={{
-        background: 'var(--bg-input)',
-        padding: '36px 20px',
-        textAlign: 'center',
-        borderRadius: '8px',
-        color: 'var(--text-dim)',
-        fontSize: '13px',
-      }}>
-        <div style={{ fontSize: '24px', marginBottom: '8px' }}>📉</div>
-        <div style={{ fontWeight: 600, color: '#fff', marginBottom: '4px' }}>
-          Rank Profile Artifact Unavailable
-        </div>
-        <div>
-          GF(2) rank deficiency profile has not been generated for this run or stage S4 has not completed.
-        </div>
-      </div>
+      <EmptyState icon="barChart" title="Rank Profile Artifact Unavailable">
+        GF(2) rank deficiency profile has not been generated for this run or stage S4 has not completed.
+      </EmptyState>
     );
   }
 
   if (!parsed && imageUrl) {
     return (
-      <div style={{
-        background: 'var(--bg-input)',
-        padding: '16px',
-        borderRadius: '8px',
-        textAlign: 'center',
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '12px',
-        }}>
-          <span style={{ fontSize: '12px', fontWeight: 700, color: '#fff' }}>
-            S4 • Rank Profile Artifact
+      <div className="inset" style={{ padding: 16, textAlign: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 12,
+          }}
+        >
+          <span className="t-section" style={{ fontSize: 11 }}>
+            S4 · Rank Profile Artifact
           </span>
           <a
             href={imageUrl}
             target="_blank"
             rel="noreferrer"
-            style={{
-              color: 'var(--cyan)',
-              fontSize: '11px',
-              textDecoration: 'none',
-              background: 'rgba(6, 182, 212, 0.1)',
-              padding: '3px 8px',
-              borderRadius: '4px',
-            }}
+            className="badge badge--accent"
+            style={{ textDecoration: 'none' }}
           >
-            Open Full Size ↗
+            <Icon name="external" size={10} />
+            Full Size
           </a>
         </div>
         <img
@@ -65,8 +47,8 @@ export default function RankProfilePlot({ artifactData, imageUrl, stageValues })
           style={{
             maxWidth: '100%',
             height: 'auto',
-            maxHeight: '420px',
-            borderRadius: '6px',
+            maxHeight: 420,
+            borderRadius: 'var(--radius-md)',
             border: '1px solid var(--border)',
           }}
         />
@@ -74,9 +56,9 @@ export default function RankProfilePlot({ artifactData, imageUrl, stageValues })
     );
   }
 
-  // Highlight peak period with emerald, others with muted cyan
+  // Highlight peak period; keep other bars muted
   const colors = parsed.periods.map(p =>
-    p === parsed.peakPeriod ? '#10b981' : 'rgba(56, 189, 248, 0.75)'
+    p === parsed.peakPeriod ? '#3ecf8e' : 'rgba(77, 184, 216, 0.6)'
   );
 
   const traces = [
@@ -101,25 +83,25 @@ export default function RankProfilePlot({ artifactData, imageUrl, stageValues })
       showarrow: true,
       arrowhead: 2,
       arrowsize: 1,
-      arrowcolor: '#10b981',
-      font: { color: '#10b981', size: 11, weight: 600 },
-      bgcolor: 'rgba(15, 23, 42, 0.85)',
-      bordercolor: '#10b981',
+      arrowcolor: '#3ecf8e',
+      font: { color: '#3ecf8e', size: 11 },
+      bgcolor: 'rgba(9, 12, 18, 0.85)',
+      bordercolor: '#3ecf8e',
       borderwidth: 1,
     });
   }
 
   const layout = {
     title: {
-      text: 'S4 • GF(2) Matrix Rank Collapse Profile',
-      font: { color: '#fff', size: 13, weight: 700 },
+      text: 'S4 · GF(2) Matrix Rank Collapse Profile',
+      font: { color: '#e8edf4', size: 12, weight: 600 },
       x: 0.02,
     },
     xaxis: {
-      title: { text: 'Hypothesis Period L (Columns)', font: { color: '#94a3b8', size: 11 } },
+      title: { text: 'Hypothesis Period L (Columns)', font: { color: '#97a3b6', size: 11 } },
     },
     yaxis: {
-      title: { text: 'Rank Deficiency (L - rank)', font: { color: '#94a3b8', size: 11 } },
+      title: { text: 'Rank Deficiency (L − rank)', font: { color: '#97a3b6', size: 11 } },
     },
     annotations,
   };
@@ -131,44 +113,23 @@ export default function RankProfilePlot({ artifactData, imageUrl, stageValues })
 
   return (
     <div>
-      {/* Metric badges */}
-      <div style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: '12px',
-        marginBottom: '12px',
-        fontSize: '11px',
-      }}>
+      {/* Metric readouts */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
         {period && (
-          <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px' }}>
-            <span style={{ color: 'var(--text-dim)' }}>Recovered Period L: </span>
-            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--emerald)', fontWeight: 700 }}>
-              {period}
-            </span>
-          </div>
+          <MetricPill label="Recovered Period L" value={period} tone="ok" />
         )}
         {family && (
-          <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px' }}>
-            <span style={{ color: 'var(--text-dim)' }}>Interleaver Family: </span>
-            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--cyan)', fontWeight: 700, textTransform: 'capitalize' }}>
-              {family}
-            </span>
-          </div>
+          <MetricPill label="Interleaver Family" value={String(family)} tone="accent" />
         )}
         {depth && width && (
-          <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px' }}>
-            <span style={{ color: 'var(--text-dim)' }}>Matrix Geometry: </span>
-            <span style={{ fontFamily: 'var(--font-mono)', color: '#fff', fontWeight: 700 }}>
-              {depth} × {width}
-            </span>
-          </div>
+          <MetricPill label="Matrix Geometry" value={`${depth} × ${width}`} />
         )}
-        <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px', marginLeft: 'auto' }}>
-          <span style={{ color: 'var(--text-dim)' }}>Periods Swept: </span>
-          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
-            {parsed.totalEvaluated}
-          </span>
-        </div>
+        <MetricPill
+          label="Periods Swept"
+          value={parsed.totalEvaluated}
+          tone="muted"
+          style={{ marginLeft: 'auto' }}
+        />
       </div>
 
       <PlotlyChart data={traces} layout={layout} />

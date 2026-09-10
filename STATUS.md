@@ -3388,6 +3388,205 @@ merges rather than guess at it now.
 
 ---
 
+## 10 Sep, independent pre-demo audit - the gate was scoring less than it
+## printed, the UI plotted two invented curves, and every 4FSK capture was
+## 0.42 dB from being refused
+
+An end-to-end audit against the tagged tree, every claim executed rather than
+read. Six defects, all fixed and re-verified. The core science came out of it
+stronger than the repo's own evidence said, and is now pinned by a test that
+did not exist.
+
+### 0. THE HEADLINE, MEASURED FOR THE FIRST TIME: the decoded bits ARE the transmitted bits
+
+Nothing in this repo had ever compared S5's output against the payload the
+transmitter actually sent. `run_demo.py` scored the modulation name;
+`test_e2e_real_signal` scored S4's recovered parameters; `reencode_ber` scores
+self-consistency. A chain can pass all three and still hand back wrong bits.
+
+The corpus generator is fully seeded, so the sent payload is reproducible.
+Regenerated it and compared, all eight demo captures:
+
+| capture | S4 params vs truth | source-bit errors | where |
+|---|---|---|---|
+| bpsk_20dB_2005 | MATCH | 1 of 7994 | bit 1 |
+| qpsk_15dB_2010 | MATCH | 2 | bits 0, 2 |
+| qpsk_20dB_2011 | MATCH | 2 | bits 1, 3 |
+| 8psk_20dB_2017 | MATCH | **0** | - |
+| 16qam_15dB_2022 | MATCH | 3 | bits 1, 5, 6 |
+| 16qam_20dB_2023 | MATCH | 2 | bits 0, 2 |
+| 2fsk_20dB_2029 | MATCH | **0** | - |
+| 4fsk_20dB_2035 | MATCH | **0** | - |
+
+**Every residual error in the whole set sits at bit index 6 or lower**, which
+is a Viterbi entering a trellis mid-codeword with no state history. Three
+captures are exact from bit 0. Past bit 6 there is not one wrong bit in any
+capture. Worst-case source-bit BER 3.75e-04, all of it warm-up.
+
+That is the strongest claim this project can make, and it is now the strictest
+test in the repo: `tests/e2e/test_decoded_bits_match_transmitter.py` allows a
+transient inside 16 bits and demands EXACTNESS past it, so an error at bit 400
+fails while one at bit 3 does not.
+
+### 1. The demo gate printed ALL EIGHT CORRECT while checking the modulation name and nothing else
+
+`run_demo.py` scored `got == want` on modulation, all seven stages self-
+reporting `ok`, and elapsed under 90 s. The truth JSON beside every capture
+carries the interleaver family, depth, width, period and the code's rate, K and
+generator polynomials. **None of it was ever compared.** A run that named the
+modulation, reported ok everywhere and recovered the WRONG interleaver would
+have printed ALL EIGHT CORRECT.
+
+`check_recovery()` now scores all of it. Verified against deliberately
+corrupted inputs: wrong depth/width, wrong generators, wrong K, wrong period,
+wrong family, and nothing-recovered-at-all are each caught and named. The gate
+still passes 8/8, so the claim was true. It just was not being checked.
+
+### 2. The UI plotted two FABRICATED curves under a comment saying measured
+
+`web/src/utils/visualizerData.js` carried `EMPIRICAL_ENVELOPE_DATA` headed
+"measured across test zoo in reports/s3_envelope.csv". For BPSK, QPSK, 8PSK and
+16QAM every value matches that CSV exactly. For 2FSK and 4FSK **none of it is
+in the CSV**: the SNR points differ (CSV 2fsk 5/8/12/16, UI 10/12/15/20) and the
+EVM values are invented outright. The CSV's `evm_percent` is EMPTY on all eight
+FSK rows, correctly, because EVM is a distance to a constellation point and the
+FSK receiver is a non-coherent frequency discriminator with no constellation.
+The "Empirical EVM vs SNR" chart drew those numbers as measurements.
+
+`ZERO_ERROR_SNR_THRESHOLDS` was wrong on three of six against the same CSV.
+
+Fixed: FSK rows carry the measured carrier-lock at the measured SNRs with
+`evm: null`; the EVM chart omits any scheme with no EVM and says why; the
+thresholds are re-derived from the CSV; and a scheme whose lowest TESTED SNR
+was already error-free is drawn as `<= x dB` rather than as an observed
+crossing, which is four of the six.
+
+**The test beside it is why this survived.** It asserted the constants equalled
+themselves. It now reads `reports/s3_envelope.csv` and cross-checks every
+point. Re-injecting the old 2FSK row fails it with "2fsk @ 10 dB is plotted but
+is not a row in s3_envelope.csv".
+
+Also stated there now: `measured_ber == 0` in that CSV means no errors in
+40,000 demodulated bits, so it is a detection limit near 2.5e-05, not a zero.
+
+### 3. EVERY 4FSK capture measured a negative SNR, 0.42 dB from total refusal
+
+`estimate_snr`'s docstring recorded this as a known gap, "off by 8-23 dB".
+Measured across all 504 corpus files it is worse than that reads: every 4FSK
+file, true SNR 4 to 20 dB, estimated between **-3.16 and -4.58 dB**. The
+estimate carried no information about the true SNR at all.
+
+It is not just a wrong number on a card. `adapt_s1` refuses below -5.0 dB and
+marks every downstream stage `out_of_envelope`. The worst cell (4fsk at 4 dB,
+-4.58 dB) sat **0.42 dB from refusing a capture this pipeline decodes to the
+exact transmitted bits**.
+
+The docstring already named the fix, "a constant-modulus / moment-based
+estimator", so it is now there. M2M4: with M2 = E|r|^2 and M4 = E|r|^4,
+S = sqrt(2*M2^2 - M4) is exact for a constant-modulus signal, which unshaped
+CPFSK is. `estimate_snr` takes the LARGER of the spectral and moment estimates,
+and that is sound rather than convenient: S_hat = S*sqrt(2 - ka) with ka >= 1
+for every signal by Jensen, so the moment estimator can only UNDERSTATE, and a
+percentile floor contaminated by signal also only understates. Neither can push
+the answer above truth.
+
+| | before | after |
+|---|---|---|
+| bpsk/qpsk/8psk/16qam | +0.23 to +0.74 dB | **unchanged**, spectral still wins |
+| 2fsk | -0.07 to -2.05 dB | within **0.01 dB** |
+| 4fsk | -8.47 to -23.16 dB | within **0.02 dB** |
+
+The strict xfail `test_snr_known_gap_4fsk` is now a passing test, plus four
+more: no capture near the refusal gate; the moment estimator never overstating,
+checked against truth on all 504 files because that property is what makes the
+max safe; exactness on a synthetic unit-modulus signal; and declining on pure
+noise. The stage card now reports `snr_method` and both estimates, so the
+number is readable next to what produced it.
+
+Live through the API on 4fsk_20dB_2035: **-3.19 dB becomes 20.00 dB** against a
+truth of 20.
+
+### 4. reports/s3_envelope.csv no longer reproduced, and regenerating it showed S3 is BETTER than its own committed evidence
+
+The study is deterministic (seed 17, payload from `default_rng(3141)`),
+confirmed by running it twice for zero differences outside `elapsed_ms`. So the
+committed CSV was stale and S3 had moved under it. Regenerated:
+
+- `8psk_8dB_sps4`: **low_confidence becomes ok**, measured BER 0.04785 to
+  0.00243, and its estimate went from 16x optimistic to well calibrated.
+- PSK lock rate 19/20 becomes **20/20**.
+- `carrier_lock` and `evm_percent` did NOT move, which is why the UI values
+  above are still right.
+- 16QAM's measured BER moved the other way: 4.75e-04 at 13 dB, 2.5e-04 at 15,
+  2.75e-04 at 18, zero only at 22.
+
+### 5. A caveat section that could not contradict itself
+
+`s3_envelope_study.py` builds "cases where the estimate was more than 4x
+optimistic" with the filter `status != "ok" and measured > 4*estimated`. The
+claim under test is that the estimate is only untrustworthy when status is not
+ok, and the filter looked at nothing else. It could only ever confirm itself.
+
+On the regenerated data it hid the two worst rows in the sweep, both reporting
+`ok`: **16qam at 18 dB, estimated 3e-06 against 2.75e-04 measured, 92x** and at
+15 dB, 23x. The filter now covers every row and splits flagged from `ok`, and
+the report says plainly that gating on status is not sufficient.
+
+Worth holding next to HANDOFF's rule that `estimated_output_ber` predicts
+whether S4 can succeed. That correlation was measured on a 36-file PSK corpus.
+On a dense constellation the estimate can be two orders optimistic while the
+lock is genuine.
+
+### 6. make test ran 184 of 997 tests
+
+The target listed `tests/contract tests/service tests/eval tests/e2e` and
+omitted `tests/unit`, which is **813 tests**: every S4/S5/S6 blind-recovery
+test, the adversarial false-positive battery, and the S1/S2/S3 units. Anyone
+following the documented workflow got a green result having never run the tests
+that guard the science. Now `pytest tests/`.
+
+`make docker-build` also tagged `wavsih26:phase8`, a third name for the image
+that nothing else in the repo mentions. It now matches `docker-compose.yml` and
+the release, `raaya:v1.0`.
+
+### 7. Executed and clean - the UNVERIFIED list is shorter
+
+The 10 Sep entry below lists "Web UI build, upload-path security (traversal,
+size limits), load, the LDPC decode path" as never verified. Three are now
+executed:
+
+- **UI build:** builds clean (56 modules), 19/19 JS tests, and the built bundle
+  is served by the API with every asset resolving. `/health`, `/envelope` and
+  `/registry` all answer.
+- **Upload-path security: 20 of 20 checks pass.** Four filename-traversal forms
+  are contained to the upload directory; the extension allowlist rejects .exe,
+  .py and .sh; the size cap returns 413 AND leaves no partial file; empty
+  uploads are refused; six artifact-endpoint traversal forms (raw, URL-encoded,
+  double-encoded, backslash) fail closed with nothing leaked.
+- **Full path through the service:** upload, 202, poll, completed in 18.9 s,
+  all seven stages ok, every recovered parameter equal to truth.
+
+Still genuinely unverified: load beyond 10 concurrent uploads, and the LDPC
+decode path.
+
+### 8. One correction to the entry below
+
+It states that `zoo/corpus` IS in the image because `.dockerignore` does not
+exclude it, and calls the skip-condition docstring in
+`test_e2e_real_signal.py` stale. On `main` today `.dockerignore` line 20 is
+`zoo/corpus/`. The corpus is NOT in the image and that docstring is correct.
+The demo is unaffected: `demo/signals/` is not excluded, which is why the
+container gate runs.
+
+### Not mine, flagged not touched
+
+The working tree carries substantial uncommitted UI work (`web/src/App.jsx`,
+`index.css`, every component, and a new `web/src/components/ui/`) that predates
+this audit. It builds and its tests pass. It is not committed, and it is not
+mine to commit.
+
+---
+
 ## 10 Sep - v1.0 TAGGED. The 9 Sep gate run and passed, one day late.
 
 The gate reads: "the exported image runs on a machine that has never seen the

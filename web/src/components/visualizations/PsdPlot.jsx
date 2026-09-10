@@ -1,28 +1,17 @@
 import React from 'react';
 import PlotlyChart from './PlotlyChart';
 import { parsePsdData } from '../../utils/visualizerData';
+import EmptyState from '../ui/EmptyState';
+import MetricPill from '../ui/MetricPill';
 
 export default function PsdPlot({ artifactData, stageValues }) {
   const parsed = parsePsdData(artifactData);
 
   if (!parsed) {
     return (
-      <div style={{
-        background: 'var(--bg-input)',
-        padding: '36px 20px',
-        textAlign: 'center',
-        borderRadius: '8px',
-        color: 'var(--text-dim)',
-        fontSize: '13px',
-      }}>
-        <div style={{ fontSize: '24px', marginBottom: '8px' }}>📡</div>
-        <div style={{ fontWeight: 600, color: '#fff', marginBottom: '4px' }}>
-          PSD Artifact Unavailable
-        </div>
-        <div>
-          Spectral power data has not been generated for this run or stage S1 has not completed.
-        </div>
-      </div>
+      <EmptyState icon="spectrum" title="PSD Artifact Unavailable">
+        Spectral power data has not been generated for this run or stage S1 has not completed.
+      </EmptyState>
     );
   }
 
@@ -37,7 +26,7 @@ export default function PsdPlot({ artifactData, stageValues }) {
       type: 'scatter',
       mode: 'lines',
       name: 'Power Spectral Density',
-      line: { color: '#06b6d4', width: 1.5 },
+      line: { color: '#4db8d8', width: 1.5 },
       hovertemplate: 'Freq: %{x:.2f} kHz<br>Power: %{y:.1f} dB<extra></extra>',
     },
   ];
@@ -54,7 +43,7 @@ export default function PsdPlot({ artifactData, stageValues }) {
       x1: freqsKhz[freqsKhz.length - 1],
       y0: noiseFloor,
       y1: noiseFloor,
-      line: { color: '#f43f5e', width: 1.5, dash: 'dash' },
+      line: { color: '#e0564d', width: 1.5, dash: 'dash' },
     });
     annotations.push({
       x: freqsKhz[freqsKhz.length - 1],
@@ -65,8 +54,8 @@ export default function PsdPlot({ artifactData, stageValues }) {
       showarrow: false,
       xanchor: 'right',
       yanchor: 'bottom',
-      font: { color: '#f43f5e', size: 10 },
-      bgcolor: 'rgba(15, 23, 42, 0.8)',
+      font: { color: '#e0564d', size: 10 },
+      bgcolor: 'rgba(9, 12, 18, 0.8)',
     });
   }
 
@@ -82,23 +71,23 @@ export default function PsdPlot({ artifactData, stageValues }) {
       arrowhead: 2,
       arrowsize: 1,
       arrowwidth: 1,
-      arrowcolor: '#10b981',
-      font: { color: '#10b981', size: 10 },
-      bgcolor: 'rgba(15, 23, 42, 0.8)',
+      arrowcolor: '#3ecf8e',
+      font: { color: '#3ecf8e', size: 10 },
+      bgcolor: 'rgba(9, 12, 18, 0.8)',
     });
   }
 
   const layout = {
     title: {
-      text: 'S1 • Power Spectral Density (PSD)',
-      font: { color: '#fff', size: 13, weight: 700 },
+      text: 'S1 · Power Spectral Density (PSD)',
+      font: { color: '#e8edf4', size: 12, weight: 600 },
       x: 0.02,
     },
     xaxis: {
-      title: { text: 'Baseband Frequency (kHz)', font: { color: '#94a3b8', size: 11 } },
+      title: { text: 'Baseband Frequency (kHz)', font: { color: '#97a3b6', size: 11 } },
     },
     yaxis: {
-      title: { text: 'Power (dB/Hz)', font: { color: '#94a3b8', size: 11 } },
+      title: { text: 'Power (dB/Hz)', font: { color: '#97a3b6', size: 11 } },
     },
     shapes,
     annotations,
@@ -109,48 +98,22 @@ export default function PsdPlot({ artifactData, stageValues }) {
 
   return (
     <div>
-      {/* Metric badges */}
-      <div style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: '12px',
-        marginBottom: '12px',
-        fontSize: '11px',
-      }}>
-        <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px' }}>
-          <span style={{ color: 'var(--text-dim)' }}>Peak Power: </span>
-          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--emerald)', fontWeight: 700 }}>
-            {parsed.peakPsd?.toFixed(1)} dB
-          </span>
-        </div>
-        <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px' }}>
-          <span style={{ color: 'var(--text-dim)' }}>Peak Freq: </span>
-          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--cyan)', fontWeight: 700 }}>
-            {peakFreqKhz.toFixed(2)} kHz
-          </span>
-        </div>
+      {/* Metric readouts */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+        <MetricPill label="Peak Power" value={`${parsed.peakPsd?.toFixed(1)} dB`} tone="ok" />
+        <MetricPill label="Peak Freq" value={`${peakFreqKhz.toFixed(2)} kHz`} tone="accent" />
         {snr !== undefined && snr !== null && (
-          <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px' }}>
-            <span style={{ color: 'var(--text-dim)' }}>Estimated SNR: </span>
-            <span style={{ fontFamily: 'var(--font-mono)', color: '#fff', fontWeight: 700 }}>
-              {Number(snr).toFixed(1)} dB
-            </span>
-          </div>
+          <MetricPill label="Est. SNR" value={`${Number(snr).toFixed(1)} dB`} />
         )}
         {occBw !== undefined && occBw !== null && (
-          <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px' }}>
-            <span style={{ color: 'var(--text-dim)' }}>Occupied BW: </span>
-            <span style={{ fontFamily: 'var(--font-mono)', color: '#fff', fontWeight: 700 }}>
-              {(Number(occBw) / 1000).toFixed(1)} kHz
-            </span>
-          </div>
+          <MetricPill label="Occupied BW" value={`${(Number(occBw) / 1000).toFixed(1)} kHz`} />
         )}
-        <div style={{ background: 'var(--bg-input)', padding: '6px 10px', borderRadius: '4px', marginLeft: 'auto' }}>
-          <span style={{ color: 'var(--text-dim)' }}>Points Rendered: </span>
-          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
-            {parsed.renderedPoints} / {parsed.totalPoints}
-          </span>
-        </div>
+        <MetricPill
+          label="Points"
+          value={`${parsed.renderedPoints} / ${parsed.totalPoints}`}
+          tone="muted"
+          style={{ marginLeft: 'auto' }}
+        />
       </div>
 
       <PlotlyChart data={traces} layout={layout} />

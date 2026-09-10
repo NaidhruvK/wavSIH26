@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import {
   downsampleUniform,
   parsePsdData,
@@ -104,23 +107,100 @@ test('parseHypothesesData sorts ascending by score for horizontal Plotly chart',
   assert.equal(parsed.scores[2], 92);
 });
 
-test('EMPIRICAL_ENVELOPE_DATA contains standard modulation schemes', () => {
-  assert.ok(EMPIRICAL_ENVELOPE_DATA.qpsk);
-  assert.ok(EMPIRICAL_ENVELOPE_DATA.bpsk);
-  assert.ok(EMPIRICAL_ENVELOPE_DATA['16qam']);
-  // Monotonic check: higher SNR has lower or equal EVM
-  const qpsk = EMPIRICAL_ENVELOPE_DATA.qpsk;
-  assert.ok(qpsk[qpsk.length - 1].evm < qpsk[0].evm);
+// ---------------------------------------------------------------------------
+// The two blocks below used to assert that the constants equalled themselves,
+// which is why fabricated 2FSK/4FSK EVM curves sat in EMPIRICAL_ENVELOPE_DATA
+// under a "measured" comment for days with a green test beside them. These
+// read reports/s3_envelope.csv instead: the constants are now checked against
+// the file they claim to come from, so inventing a point fails the suite.
+// ---------------------------------------------------------------------------
+
+const CSV_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)), '../../../reports/s3_envelope.csv');
+
+function readEnvelopeCsv() {
+  // split on newlines without regex escapes, so the line survives any
+  // future mechanical edit of this file
+  const lines = readFileSync(CSV_PATH, 'utf8').trim()
+    .split(String.fromCharCode(10)).map(l => l.trim()).filter(Boolean);
+  const header = lines[0].split(',');
+  return lines.slice(1).map(line => {
+    const cells = line.split(',');
+    return Object.fromEntries(header.map((h, i) => [h, cells[i]]));
+  });
+}
+
+test('EMPIRICAL_ENVELOPE_DATA matches reports/s3_envelope.csv point for point', () => {
+  const rows = readEnvelopeCsv();
+  assert.ok(rows.length > 0, 'envelope CSV is empty');
+
+  for (const [scheme, points] of Object.entries(EMPIRICAL_ENVELOPE_DATA)) {
+    for (const point of points) {
+      const match = rows.find(
+        r => r.modulation === scheme && Number(r.snr_db) === point.snr);
+      assert.ok(match,
+        `${scheme} @ ${point.snr} dB is plotted but is not a row in s3_envelope.csv`);
+
+      const csvEvm = match.evm_percent === '' ? null : Number(match.evm_percent);
+      if (csvEvm === null) {
+        assert.equal(point.evm, null,
+          `${scheme} @ ${point.snr} dB carries an EVM value but the CSV measured none`);
+      } else {
+        assert.ok(Math.abs(point.evm - csvEvm) < 0.01,
+          `${scheme} @ ${point.snr} dB EVM ${point.evm} != measured ${csvEvm}`);
+      }
+      assert.ok(Math.abs(point.lock - Number(match.carrier_lock)) < 0.001,
+        `${scheme} @ ${point.snr} dB lock ${point.lock} != measured ${match.carrier_lock}`);
+    }
+  }
 });
 
-test('ZERO_ERROR_SNR_THRESHOLDS defines exact gate values for all 6 schemes', async () => {
-  const { ZERO_ERROR_SNR_THRESHOLDS } = await import('./visualizerData.js');
-  assert.equal(ZERO_ERROR_SNR_THRESHOLDS.bpsk, 8.0);
-  assert.equal(ZERO_ERROR_SNR_THRESHOLDS.qpsk, 8.0);
-  assert.equal(ZERO_ERROR_SNR_THRESHOLDS['2fsk'], 10.0);
-  assert.equal(ZERO_ERROR_SNR_THRESHOLDS['4fsk'], 10.0);
-  assert.equal(ZERO_ERROR_SNR_THRESHOLDS['8psk'], 13.0);
-  assert.equal(ZERO_ERROR_SNR_THRESHOLDS['16qam'], 20.0);
+test('FSK carries no EVM, because none is measured for a non-coherent receiver', () => {
+  for (const scheme of ['2fsk', '4fsk']) {
+    for (const point of EMPIRICAL_ENVELOPE_DATA[scheme]) {
+      assert.equal(point.evm, null, `${scheme} @ ${point.snr} dB has an invented EVM`);
+    }
+  }
+});
+
+test('ZERO_ERROR_SNR_THRESHOLDS is the lowest zero-BER SNR in the CSV', async () => {
+  const { ZERO_ERROR_SNR_THRESHOLDS, ZERO_ERROR_THRESHOLD_IS_EXACT } =
+    await import('./visualizerData.js');
+  const rows = readEnvelopeCsv();
+
+  for (const scheme of ['bpsk', 'qpsk', '2fsk', '4fsk', '8psk', '16qam']) {
+    const forScheme = rows.filter(r => r.modulation === scheme);
+    assert.ok(forScheme.length > 0, `no ${scheme} rows in the CSV`);
+
+    const zeroSnrs = forScheme
+      .filter(r => r.measured_ber !== '' && Number(r.measured_ber) === 0)
+      .map(r => Number(r.snr_db));
+    assert.ok(zeroSnrs.length > 0, `${scheme} never reaches zero measured BER`);
+    assert.equal(ZERO_ERROR_SNR_THRESHOLDS[scheme], Math.min(...zeroSnrs),
+      `${scheme} threshold does not match the lowest zero-BER SNR measured`);
+
+    // If the lowest SNR ever tested is already error-free, no crossing was
+    // observed and the number is only an upper bound.
+    const lowestTested = Math.min(...forScheme.map(r => Number(r.snr_db)));
+    const crossingObserved = Math.min(...zeroSnrs) > lowestTested;
+    assert.equal(ZERO_ERROR_THRESHOLD_IS_EXACT[scheme], crossingObserved,
+      `${scheme} is labelled ${ZERO_ERROR_THRESHOLD_IS_EXACT[scheme] ? 'exact' : 'a bound'} but the sweep says otherwise`);
+  }
+});
+
+test('threshold bar chart marks upper bounds with a <= sign', async () => {
+  const { buildThresholdBarChartData, ZERO_ERROR_THRESHOLD_IS_EXACT } =
+    await import('./visualizerData.js');
+  const { traces } = buildThresholdBarChartData();
+  const schemes = ['bpsk', 'qpsk', '2fsk', '4fsk', '8psk', '16qam'];
+  schemes.forEach((scheme, i) => {
+    const label = traces[0].text[i];
+    if (ZERO_ERROR_THRESHOLD_IS_EXACT[scheme] === false) {
+      assert.ok(label.startsWith('≤'), `${scheme} bound is not marked: ${label}`);
+    } else {
+      assert.ok(!label.startsWith('≤'), `${scheme} is exact but marked as a bound: ${label}`);
+    }
+  });
 });
 
 test('formatFrequency correctly formats Hz, kHz, MHz and invalid values', async () => {
@@ -187,7 +267,12 @@ test('buildThresholdBarChartData constructs Plotly traces with reference line', 
   assert.ok(chart.traces && chart.traces.length === 1);
   const trace = chart.traces[0];
   assert.deepEqual(trace.x, ['BPSK', 'QPSK', '2FSK', '4FSK', '8PSK', '16QAM']);
-  assert.deepEqual(trace.y, [8, 8, 10, 10, 13, 20]);
+  // Values come from ZERO_ERROR_SNR_THRESHOLDS, which the test above pins to
+  // reports/s3_envelope.csv. Restating them literally here is what let three
+  // wrong thresholds sit behind a green suite, so read them from the source.
+  const { ZERO_ERROR_SNR_THRESHOLDS } = await import('./visualizerData.js');
+  assert.deepEqual(trace.y, ['bpsk', 'qpsk', '2fsk', '4fsk', '8psk', '16qam']
+    .map(s => ZERO_ERROR_SNR_THRESHOLDS[s]));
   assert.equal(trace.type, 'bar');
 
   // Verify reference line shape and annotation for current SNR
