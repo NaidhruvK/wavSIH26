@@ -16,6 +16,10 @@ reports/*.png
 reports/artifacts/
 docs/stack_*.log
 
+# test corpus and offline training datasets (keeps zoo code and models/classifier.txt intact)
+zoo/corpus/
+models/dataset_*.csv
+
 # uploads and runtime databases
 uploads/
 *.db

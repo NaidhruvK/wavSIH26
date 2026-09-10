@@ -50,11 +50,11 @@ import pipeline.s5_decode.conv_code      # noqa: F401  (registers conv)
 import pipeline.s5_decode.rs_code        # noqa: F401  (registers RS)
 from pipeline.s4_recover.interleavers import (
     CCSDS_DEPTHS, symbol_deinterleave, symbol_interleave)
-from pipeline.s6_frame.ccsds import recover_ccsds
+from pipeline.s6_frame.ccsds import peel_ccsds_outer, recover_ccsds
 from pipeline.s6_frame.descramble import (
     CCSDS_RANDOMISER, LEGACY_ZOO_RANDOMISER, STANDARD_RANDOMISERS,
     additive_keystream, descramble_known)
-from registry import INTERLEAVERS
+from registry import CODES, INTERLEAVERS
 from zoo.bits_only import CCSDS_SCRAMBLER, lfsr_scramble
 from zoo.ccsds import ccsds_interleave, make_ccsds_stream
 
@@ -330,3 +330,91 @@ def test_uncoded_noise_is_not_claimed_as_a_real_order_profile():
     res = recover_ccsds(noise)
     assert res.status != "ok"
     assert res.payload == b""
+
+
+def test_peel_ccsds_outer_recovers_source_bits_from_post_viterbi():
+    """Unit test for peel_ccsds_outer on genuine post-Viterbi bits."""
+    from registry import CODES
+    bits, payload, meta = make_ccsds_stream(n_blocks=8, depth=4,
+                                            payload_text=MSG, seed=11)
+    # Decode convolutional inner layer via Viterbi
+    viterbi_bits = CODES["conv"].decode(bits, {
+        "n": 2, "memory": 6, "generators_octal": (0o171, 0o133),
+        "span": 14, "parity_taps": []})
+
+    outer = peel_ccsds_outer(viterbi_bits)
+    assert outer is not None
+    payload_bits, params = outer
+    recovered = np.packbits(payload_bits).tobytes()
+    assert recovered[:len(payload)] == payload
+    assert params["n"] == 255
+    assert params["k"] == 223
+    assert params["randomiser"] == "ccsds-131.0-B"
+    assert params["interleaver"] == {"family": "ccsds-symbol", "depth": 4, "n_bytes": 255}
+    assert params["errata_rate"] == 0.0
+
+
+def test_peel_ccsds_outer_returns_none_on_pure_conv_stream():
+    """Verify peel_ccsds_outer returns None quickly on pure convolutional stream."""
+    rng = np.random.default_rng(42)
+    pure_conv_viterbi = rng.integers(0, 2, 8000, dtype=np.uint8)
+    outer = peel_ccsds_outer(pure_conv_viterbi)
+    assert outer is None
+
+
+def test_ccsds_sub_byte_offset_recovery():
+    """CCSDS bitstream beginning at a 4-bit sub-byte offset recovers exact payload."""
+    bits, payload, _meta = make_ccsds_stream(n_blocks=8, depth=1, payload_text=MSG, seed=42)
+    viterbi_bits = CODES["conv"].decode(bits, {
+        "n": 2, "memory": 6, "generators_octal": (0o171, 0o133),
+        "span": 14, "parity_taps": []})
+
+    # Shift by 4 bits (sub-byte phase)
+    shifted = viterbi_bits[4:]
+    outer = peel_ccsds_outer(shifted)
+    assert outer is not None
+    payload_bits, params = outer
+    recovered = np.packbits(payload_bits).tobytes()
+    assert params["randomiser"] == "ccsds-131.0-B"
+    assert params["errata_rate"] == 0.0
+    assert params["sub_byte_shift"] == 4
+    assert MSG.encode("utf-8")[:100] in recovered
+
+
+def test_ccsds_nonzero_lfsr_phase_and_arbitrary_offset_depth1():
+    """Depth-1 RS recovery after arbitrary non-zero codeword offset and LFSR phase."""
+    bits, payload, _meta = make_ccsds_stream(n_blocks=12, depth=1, payload_text=MSG, seed=42)
+    viterbi_bits = CODES["conv"].decode(bits, {
+        "n": 2, "memory": 6, "generators_octal": (0o171, 0o133),
+        "span": 14, "parity_taps": []})
+
+    # Slice at 1108 source bits: 138 bytes + 4 bits (mid-codeword, non-zero LFSR phase)
+    arbitrary_slice = viterbi_bits[1108:]
+    outer = peel_ccsds_outer(arbitrary_slice)
+    assert outer is not None
+    payload_bits, params = outer
+    recovered = np.packbits(payload_bits).tobytes()
+    assert params["randomiser"] == "ccsds-131.0-B"
+    assert params["errata_rate"] == 0.0
+    assert params["blocks_checked"] >= 4
+    assert MSG.encode("utf-8")[:100] in recovered
+
+
+def test_ccsds_arbitrary_start_depth4():
+    """Depth-4 symbol interleave recovery after arbitrary mid-group starting offset."""
+    bits, payload, _meta = make_ccsds_stream(n_blocks=16, depth=4, payload_text=MSG, seed=42)
+    viterbi_bits = CODES["conv"].decode(bits, {
+        "n": 2, "memory": 6, "generators_octal": (0o171, 0o133),
+        "span": 14, "parity_taps": []})
+
+    # Slice at 1108 bits (138.5 bytes: mid-interleave-group + 4 sub-byte bits)
+    arbitrary_slice = viterbi_bits[1108:]
+    outer = peel_ccsds_outer(arbitrary_slice)
+    assert outer is not None
+    payload_bits, params = outer
+    recovered = np.packbits(payload_bits).tobytes()
+    assert params["interleaver"] == {"family": "ccsds-symbol", "depth": 4, "n_bytes": 255}
+    assert params["randomiser"] == "ccsds-131.0-B"
+    assert params["errata_rate"] == 0.0
+    assert params["blocks_checked"] >= 4
+    assert MSG.encode("utf-8")[:100] in recovered

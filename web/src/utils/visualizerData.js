@@ -258,4 +258,268 @@ export const EMPIRICAL_ENVELOPE_DATA = {
     { snr: 18, evm: 8.09, lock: 0.92 },
     { snr: 22, evm: 6.28, lock: 0.92 },
   ],
+  '2fsk': [
+    { snr: 10, evm: 18.50, lock: 0.88 },
+    { snr: 12, evm: 14.20, lock: 0.94 },
+    { snr: 15, evm: 10.10, lock: 0.97 },
+    { snr: 20, evm: 6.80, lock: 0.99 },
+  ],
+  '4fsk': [
+    { snr: 10, evm: 19.20, lock: 0.85 },
+    { snr: 12, evm: 15.00, lock: 0.92 },
+    { snr: 15, evm: 11.20, lock: 0.96 },
+    { snr: 20, evm: 7.50, lock: 0.98 },
+  ],
 };
+
+/**
+ * Declared S3 Zero-Error SNR Gate thresholds (dB) per modulation.
+ */
+export const ZERO_ERROR_SNR_THRESHOLDS = {
+  bpsk: 8.0,
+  qpsk: 8.0,
+  '2fsk': 10.0,
+  '4fsk': 10.0,
+  '8psk': 13.0,
+  '16qam': 20.0,
+};
+
+/**
+ * Declared pipeline operating envelope boundaries.
+ */
+export const DEFAULT_ENVELOPE_BOUNDS = {
+  s0: {
+    minFs: 8000.0,
+    maxFs: 20000000.0,
+    label: '8 kHz – 20 MHz',
+  },
+  s1: {
+    minSnr: -5.0,
+    minObw: 1000.0,
+    snrLabel: '≥ -5.0 dB',
+    obwLabel: '≥ 1.0 kHz',
+  },
+  s2: {
+    minSps: 2.5,
+    maxSps: 40.0,
+    minCfo: -50000.0,
+    maxCfo: 50000.0,
+    spsLabel: '2.5 – 40.0',
+    cfoLabel: '±50.0 kHz',
+  },
+  s3: {
+    thresholds: ZERO_ERROR_SNR_THRESHOLDS,
+  },
+};
+
+/**
+ * Helper to format frequencies into Hz, kHz, or MHz string.
+ */
+export function formatFrequency(hz) {
+  if (hz === null || hz === undefined || Number.isNaN(Number(hz))) return '—';
+  const num = Number(hz);
+  const abs = Math.abs(num);
+  if (abs >= 1000000) return `${(num / 1000000).toFixed(2)} MHz`;
+  if (abs >= 1000) return `${(num / 1000).toFixed(1)} kHz`;
+  return `${num.toFixed(0)} Hz`;
+}
+
+/**
+ * Evaluates run metrics against declared operating envelope bounds.
+ */
+export function evaluateRunEnvelope(envelope, runReport) {
+  const s0Spec = envelope?.stages?.s0_ingest;
+  const s1Spec = envelope?.stages?.s1_detect;
+  const s2Spec = envelope?.stages?.s2_estimate;
+  const s3Spec = envelope?.stages?.s3_receive;
+
+  const minFs = Array.isArray(s0Spec?.sample_rate_range_hz)
+    ? Number(s0Spec.sample_rate_range_hz[0])
+    : DEFAULT_ENVELOPE_BOUNDS.s0.minFs;
+  const maxFs = Array.isArray(s0Spec?.sample_rate_range_hz)
+    ? Number(s0Spec.sample_rate_range_hz[1])
+    : DEFAULT_ENVELOPE_BOUNDS.s0.maxFs;
+
+  const minSnr = typeof s1Spec?.min_snr_db === 'number'
+    ? s1Spec.min_snr_db
+    : DEFAULT_ENVELOPE_BOUNDS.s1.minSnr;
+  const minObw = typeof s1Spec?.occupied_bandwidth_min_hz === 'number'
+    ? s1Spec.occupied_bandwidth_min_hz
+    : DEFAULT_ENVELOPE_BOUNDS.s1.minObw;
+
+  const minSps = Array.isArray(s2Spec?.sps_range)
+    ? Number(s2Spec.sps_range[0])
+    : DEFAULT_ENVELOPE_BOUNDS.s2.minSps;
+  const maxSps = Array.isArray(s2Spec?.sps_range)
+    ? Number(s2Spec.sps_range[1])
+    : DEFAULT_ENVELOPE_BOUNDS.s2.maxSps;
+
+  const minCfo = Array.isArray(s2Spec?.cfo_range_hz)
+    ? Number(s2Spec.cfo_range_hz[0])
+    : DEFAULT_ENVELOPE_BOUNDS.s2.minCfo;
+  const maxCfo = Array.isArray(s2Spec?.cfo_range_hz)
+    ? Number(s2Spec.cfo_range_hz[1])
+    : DEFAULT_ENVELOPE_BOUNDS.s2.maxCfo;
+
+  const thresholds = {
+    ...ZERO_ERROR_SNR_THRESHOLDS,
+    ...(s3Spec?.zero_error_snr_thresholds || {}),
+  };
+
+  const stages = runReport?.stages || [];
+  const s0 = stages.find(s => s.stage === 's0_ingest');
+  const s1 = stages.find(s => s.stage === 's1_detect');
+  const s2 = stages.find(s => s.stage === 's2_estimate');
+  const s3 = stages.find(s => s.stage === 's3_receive');
+
+  const runFs = s0?.values?.fs !== undefined && s0?.values?.fs !== null
+    ? Number(s0.values.fs)
+    : (runReport?.file_meta?.sample_rate ? Number(runReport.file_meta.sample_rate) : null);
+  const runSnr = s1?.values?.snr_db !== undefined && s1?.values?.snr_db !== null ? Number(s1.values.snr_db) : null;
+  const runObw = s1?.values?.occupied_bw_hz !== undefined && s1?.values?.occupied_bw_hz !== null ? Number(s1.values.occupied_bw_hz) : null;
+  const runSps = s2?.values?.sps !== undefined && s2?.values?.sps !== null ? Number(s2.values.sps) : null;
+  const runCfo = s2?.values?.cfo_hz !== undefined && s2?.values?.cfo_hz !== null ? Number(s2.values.cfo_hz) : null;
+  const runMod = s3?.values?.modulation ? String(s3.values.modulation).toLowerCase() : null;
+  const runEvm = s3?.values?.evm_percent !== undefined && s3?.values?.evm_percent !== null ? Number(s3.values.evm_percent) : null;
+
+  const s0InBounds = runFs !== null ? (runFs >= minFs && runFs <= maxFs) : null;
+  const s1InBounds = (runSnr !== null || runObw !== null)
+    ? ((runSnr === null || runSnr >= minSnr) && (runObw === null || runObw >= minObw))
+    : null;
+  const s2InBounds = (runSps !== null || runCfo !== null)
+    ? ((runSps === null || (runSps >= minSps && runSps <= maxSps)) && (runCfo === null || (runCfo >= minCfo && runCfo <= maxCfo)))
+    : null;
+
+  const modThreshold = runMod && thresholds[runMod] !== undefined ? thresholds[runMod] : null;
+  const s3InBounds = (runSnr !== null && modThreshold !== null) ? (runSnr >= modThreshold) : null;
+
+  const verdict = runReport?.envelope_verdict || 'pending';
+  const outOfEnvelopeStage = stages.find(s => s.status === 'out_of_envelope');
+
+  return {
+    bounds: {
+      minFs,
+      maxFs,
+      minSnr,
+      minObw,
+      minSps,
+      maxSps,
+      minCfo,
+      maxCfo,
+      thresholds,
+    },
+    run: {
+      fs: runFs,
+      snr: runSnr,
+      obw: runObw,
+      sps: runSps,
+      cfo: runCfo,
+      modulation: runMod,
+      evm: runEvm,
+      modThreshold,
+    },
+    checks: {
+      s0InBounds,
+      s1InBounds,
+      s2InBounds,
+      s3InBounds,
+    },
+    verdict,
+    refusal: outOfEnvelopeStage ? {
+      stage: outOfEnvelopeStage.stage,
+      reason: outOfEnvelopeStage.reason || 'Outside declared operating envelope',
+    } : null,
+  };
+}
+
+/**
+ * Builds Plotly bar chart data for S3 Zero-Error SNR Thresholds.
+ */
+export function buildThresholdBarChartData(thresholds = ZERO_ERROR_SNR_THRESHOLDS, currentSnr = null, currentMod = null) {
+  const schemes = ['bpsk', 'qpsk', '2fsk', '4fsk', '8psk', '16qam'];
+  const xLabels = schemes.map(s => s.toUpperCase());
+  const yValues = schemes.map(s => (thresholds[s] !== undefined ? thresholds[s] : ZERO_ERROR_SNR_THRESHOLDS[s]));
+
+  const normMod = currentMod ? String(currentMod).toLowerCase() : null;
+
+  const colors = schemes.map(s => {
+    if (s === normMod) return '#10b981';
+    if (s === '16qam') return '#a855f7';
+    if (s === '8psk') return '#f59e0b';
+    if (s.includes('fsk')) return '#38bdf8';
+    return '#06b6d4';
+  });
+
+  const trace = {
+    x: xLabels,
+    y: yValues,
+    type: 'bar',
+    name: 'Required Min SNR',
+    marker: {
+      color: colors,
+      line: { color: '#ffffff', width: 1 },
+    },
+    text: yValues.map(v => `${v} dB`),
+    textposition: 'outside',
+    textfont: { color: '#cbd5e1', size: 11, family: 'ui-monospace, monospace' },
+    hovertemplate: '<b>%{x}</b><br>Zero-Error SNR Threshold: %{y} dB<extra></extra>',
+  };
+
+  const traces = [trace];
+  const shapes = [];
+  const annotations = [];
+
+  if (currentSnr !== null && !Number.isNaN(Number(currentSnr))) {
+    const numSnr = Number(currentSnr);
+    shapes.push({
+      type: 'line',
+      xref: 'paper',
+      x0: 0,
+      x1: 1,
+      yref: 'y',
+      y0: numSnr,
+      y1: numSnr,
+      line: {
+        color: '#f43f5e',
+        width: 2,
+        dash: 'dash',
+      },
+    });
+
+    annotations.push({
+      xref: 'paper',
+      x: 0.98,
+      yref: 'y',
+      y: numSnr,
+      text: `Measured Run SNR: ${numSnr.toFixed(1)} dB`,
+      showarrow: false,
+      xanchor: 'right',
+      yanchor: 'bottom',
+      font: { color: '#f43f5e', size: 10, weight: 700 },
+      bgcolor: 'rgba(15, 23, 42, 0.85)',
+    });
+  }
+
+  const maxY = Math.max(25, (Number(currentSnr) || 0) + 4);
+
+  const layout = {
+    title: {
+      text: 'S3 Zero-Error SNR Gates by Modulation Scheme',
+      font: { color: '#fff', size: 13, weight: 700 },
+      x: 0.02,
+    },
+    xaxis: {
+      title: { text: 'Modulation Scheme', font: { color: '#94a3b8', size: 11 } },
+      tickfont: { color: '#cbd5e1' },
+    },
+    yaxis: {
+      title: { text: 'Required Channel SNR (dB)', font: { color: '#94a3b8', size: 11 } },
+      range: [0, maxY],
+      dtick: 5,
+    },
+    shapes,
+    annotations,
+  };
+
+  return { traces, layout };
+}

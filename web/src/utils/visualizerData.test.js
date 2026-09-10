@@ -112,3 +112,87 @@ test('EMPIRICAL_ENVELOPE_DATA contains standard modulation schemes', () => {
   const qpsk = EMPIRICAL_ENVELOPE_DATA.qpsk;
   assert.ok(qpsk[qpsk.length - 1].evm < qpsk[0].evm);
 });
+
+test('ZERO_ERROR_SNR_THRESHOLDS defines exact gate values for all 6 schemes', async () => {
+  const { ZERO_ERROR_SNR_THRESHOLDS } = await import('./visualizerData.js');
+  assert.equal(ZERO_ERROR_SNR_THRESHOLDS.bpsk, 8.0);
+  assert.equal(ZERO_ERROR_SNR_THRESHOLDS.qpsk, 8.0);
+  assert.equal(ZERO_ERROR_SNR_THRESHOLDS['2fsk'], 10.0);
+  assert.equal(ZERO_ERROR_SNR_THRESHOLDS['4fsk'], 10.0);
+  assert.equal(ZERO_ERROR_SNR_THRESHOLDS['8psk'], 13.0);
+  assert.equal(ZERO_ERROR_SNR_THRESHOLDS['16qam'], 20.0);
+});
+
+test('formatFrequency correctly formats Hz, kHz, MHz and invalid values', async () => {
+  const { formatFrequency } = await import('./visualizerData.js');
+  assert.equal(formatFrequency(null), '—');
+  assert.equal(formatFrequency(undefined), '—');
+  assert.equal(formatFrequency('abc'), '—');
+  assert.equal(formatFrequency(500), '500 Hz');
+  assert.equal(formatFrequency(12500), '12.5 kHz');
+  assert.equal(formatFrequency(-45000), '-45.0 kHz');
+  assert.equal(formatFrequency(20000000), '20.00 MHz');
+});
+
+test('evaluateRunEnvelope accurately verifies in-spec signal', async () => {
+  const { evaluateRunEnvelope } = await import('./visualizerData.js');
+  const mockReport = {
+    envelope_verdict: 'in_envelope',
+    stages: [
+      { stage: 's0_ingest', status: 'completed', values: { fs: 2000000 } },
+      { stage: 's1_detect', status: 'completed', values: { snr_db: 14.5, occupied_bw_hz: 50000 } },
+      { stage: 's2_estimate', status: 'completed', values: { sps: 4.0, cfo_hz: 1200 } },
+      { stage: 's3_receive', status: 'completed', values: { modulation: 'qpsk', evm_percent: 6.2 } },
+    ],
+  };
+
+  const evalResult = evaluateRunEnvelope(null, mockReport);
+  assert.equal(evalResult.verdict, 'in_envelope');
+  assert.equal(evalResult.checks.s0InBounds, true);
+  assert.equal(evalResult.checks.s1InBounds, true);
+  assert.equal(evalResult.checks.s2InBounds, true);
+  assert.equal(evalResult.checks.s3InBounds, true);
+  assert.equal(evalResult.refusal, null);
+  assert.equal(evalResult.run.snr, 14.5);
+  assert.equal(evalResult.run.modulation, 'qpsk');
+  assert.equal(evalResult.run.modThreshold, 8.0);
+});
+
+test('evaluateRunEnvelope detects out_of_envelope refusal and stage violations', async () => {
+  const { evaluateRunEnvelope } = await import('./visualizerData.js');
+  const mockReport = {
+    envelope_verdict: 'out_of_envelope',
+    stages: [
+      { stage: 's0_ingest', status: 'completed', values: { fs: 2000000 } },
+      {
+        stage: 's1_detect',
+        status: 'out_of_envelope',
+        reason: 'SNR -8.0 dB is below minimum envelope (-5.0 dB)',
+        values: { snr_db: -8.0, occupied_bw_hz: 500 },
+      },
+    ],
+  };
+
+  const evalResult = evaluateRunEnvelope(null, mockReport);
+  assert.equal(evalResult.verdict, 'out_of_envelope');
+  assert.equal(evalResult.checks.s1InBounds, false);
+  assert.ok(evalResult.refusal);
+  assert.equal(evalResult.refusal.stage, 's1_detect');
+  assert.equal(evalResult.refusal.reason, 'SNR -8.0 dB is below minimum envelope (-5.0 dB)');
+});
+
+test('buildThresholdBarChartData constructs Plotly traces with reference line', async () => {
+  const { buildThresholdBarChartData } = await import('./visualizerData.js');
+  const chart = buildThresholdBarChartData(undefined, 12.0, 'qpsk');
+  assert.ok(chart.traces && chart.traces.length === 1);
+  const trace = chart.traces[0];
+  assert.deepEqual(trace.x, ['BPSK', 'QPSK', '2FSK', '4FSK', '8PSK', '16QAM']);
+  assert.deepEqual(trace.y, [8, 8, 10, 10, 13, 20]);
+  assert.equal(trace.type, 'bar');
+
+  // Verify reference line shape and annotation for current SNR
+  assert.equal(chart.layout.shapes.length, 1);
+  assert.equal(chart.layout.shapes[0].y0, 12.0);
+  assert.equal(chart.layout.annotations.length, 1);
+  assert.ok(chart.layout.annotations[0].text.includes('12.0 dB'));
+});

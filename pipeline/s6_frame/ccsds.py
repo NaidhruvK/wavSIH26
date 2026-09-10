@@ -67,7 +67,7 @@ from pipeline.s5_decode.rs_code import _bits_to_bytes, _try_profile
 from registry import CODES
 
 __all__ = ["CCSDSResult", "find_scrambler_period_blind", "recover_ccsds",
-           "RS_CODEWORD_BYTES"]
+           "RS_CODEWORD_BYTES", "peel_ccsds_outer"]
 
 # Bounds. Every one of these exists so the chain cannot run away on a file
 # whose content it does not understand (risk #5).
@@ -320,6 +320,59 @@ def _peel_symbol_layers(decoded, rs):
                 hits.append(({"family": "ccsds-symbol", "depth": depth,
                               "n_bytes": RS_CODEWORD_BYTES}, prm, de, name))
                 break                         # one depth per randomiser
+
+    if hits:
+        return hits
+
+    # Mid-stream interleave group synchronization for depth > 1
+    data_bytes = _bits_to_bytes(decoded)
+    if len(data_bytes) < RS_CODEWORD_BYTES * 2:
+        return hits
+
+    import reedsolo
+    rsc = reedsolo.RSCodec(32)
+    from pipeline.s6_frame.descramble import additive_keystream, CCSDS_RANDOMISER
+    ks_bytes = _bits_to_bytes(additive_keystream(CCSDS_RANDOMISER, 0xFF, len(data_bytes) * 8))
+
+    for depth in CCSDS_DEPTHS:
+        if depth == 1:
+            continue
+        group_len = depth * RS_CODEWORD_BYTES
+        if len(data_bytes) < group_len:
+            continue
+        max_g = min(group_len, len(data_bytes) - group_len)
+        for g in range(1, max_g):
+            sub_bytes = data_bytes[g : g + group_len]
+            descrambled_sub = sub_bytes ^ ks_bytes[:group_len]
+            cw0 = descrambled_sub[0::depth]
+            try:
+                rsc.decode(cw0)
+            except reedsolo.ReedSolomonError:
+                continue
+            all_ok = True
+            for c in range(1, depth):
+                try:
+                    rsc.decode(descrambled_sub[c::depth])
+                except reedsolo.ReedSolomonError:
+                    all_ok = False
+                    break
+            if all_ok:
+                grp_payload = bytearray()
+                for c in range(depth):
+                    grp_payload.extend(rsc.decode(descrambled_sub[c::depth])[0])
+                ent = _byte_entropy(bytes(grp_payload))
+                if ent < 6.5:
+                    tail_bits = decoded[g * 8:]
+                    descrambled_tail = descramble_known(tail_bits, CCSDS_RANDOMISER, 0xFF)
+                    de = symbol_deinterleave(descrambled_tail, depth, RS_CODEWORD_BYTES)
+                    prm = rs.blind_recover(de)
+                    if prm is not None:
+                        hits.append(({"family": "ccsds-symbol", "depth": depth,
+                                      "n_bytes": RS_CODEWORD_BYTES}, prm, de, "ccsds-131.0-B"))
+                    break
+        if hits:
+            break
+
     return hits
 
 
@@ -423,6 +476,103 @@ def _resolve_randomiser(hits, rs):
         "randomiser settled at the payload layer, not by RS: %s" % names)
 
 
+def peel_ccsds_outer(decoded_bits, detail: dict | None = None,
+                     allow_bit_layers: bool = False) -> tuple[np.ndarray, dict] | None:
+    """Peel candidate randomiser and symbol deinterleaving, with RS as sole judge.
+
+    Takes post-Viterbi decoded bits (0/1 or uint8).
+    Searches sub-byte bit phases (0..7) and recovers outer CCSDS structure.
+    Returns (payload_bits, outer_params) if an outer Reed-Solomon code is verified,
+    or None if no outer CCSDS structure is present.
+    """
+    decoded = np.asarray(decoded_bits).ravel()
+    if decoded.dtype.kind == "f":
+        decoded = (decoded < 0).astype(np.uint8)
+    else:
+        decoded = decoded.astype(np.uint8)
+
+    rs = CODES.get("reed-solomon")
+    if rs is None or not hasattr(rs, "blind_recover") or not hasattr(rs, "decode"):
+        return None
+
+    last_detail = {}
+    for shift in range(8):
+        cand = decoded[shift:] if shift > 0 else decoded
+        if len(cand) < RS_CODEWORD_BYTES * 8 * MIN_RS_BLOCKS:
+            break
+
+        hits = []
+        prm_none = rs.blind_recover(cand)
+        if prm_none is not None:
+            cw_start = prm_none.offset * 8
+            tail = cand[cw_start:]
+            prm_aligned = rs.blind_recover(tail) if prm_none.offset > 0 else prm_none
+            if prm_aligned is not None:
+                hits.append((None, prm_aligned, tail, None))
+            for name, poly, seed in STANDARD_RANDOMISERS:
+                descrambled = descramble_known(tail, poly, seed)
+                prm_rand = rs.blind_recover(descrambled)
+                if prm_rand is not None:
+                    hits.append((None, prm_rand, descrambled, name))
+
+        if not hits:
+            hits = _peel_symbol_layers(cand, rs)
+        if not hits and allow_bit_layers:
+            hits = _peel_bit_layers(cand, rs)
+
+        if not hits:
+            continue
+
+        best, ambiguous, note = _resolve_randomiser(hits, rs)
+        if ambiguous or best is None:
+            last_detail["ambiguous"] = ambiguous
+            last_detail["note"] = note
+            last_detail["reason"] = note
+            break
+
+        interleaver, rs_params, de, randomiser = best
+        payload_bits = np.asarray(rs.decode(de, rs_params), dtype=np.uint8)
+        if len(payload_bits) == 0:
+            continue
+
+        scrambler_poly = None
+        if randomiser is not None:
+            scrambler_poly = dict(
+                (n, poly) for n, poly, _seed in STANDARD_RANDOMISERS).get(randomiser)
+
+        outer_params = {
+            "interleaver": interleaver,
+            "rs_params": rs_params,
+            "randomiser": randomiser,
+            "randomiser_ambiguous": ambiguous,
+            "randomiser_note": note,
+            "scrambler_poly": scrambler_poly,
+            "n": getattr(rs_params, "n", 255),
+            "k": getattr(rs_params, "k", 223),
+            "errata_rate": getattr(rs_params, "errata_rate", 0.0),
+            "blocks_checked": getattr(rs_params, "blocks_checked", 0),
+            "sub_byte_shift": shift,
+        }
+        if detail is not None:
+            detail_dict = dict(outer_params)
+            detail_dict.pop("rs_params", None)
+            detail.update(detail_dict)
+        return payload_bits, outer_params
+
+    if detail is not None:
+        if "reason" not in detail:
+            detail["reason"] = last_detail.get(
+                "reason",
+                "convolutional layer recovered and decoded, but no "
+                "combination of the known randomisers and the block or "
+                "CCSDS-symbol interleavers produced a Reed-Solomon codeword")
+        if "ambiguous" in last_detail:
+            detail["ambiguous"] = last_detail["ambiguous"]
+        if "note" in last_detail:
+            detail["note"] = last_detail["note"]
+    return None
+
+
 def recover_ccsds(bits, decode_cap: int = DECODE_CAP_BITS) -> CCSDSResult:
     """Peel RS <- interleaver <- convolutional <- scrambler, blind.
 
@@ -504,66 +654,28 @@ def recover_ccsds(bits, decode_cap: int = DECODE_CAP_BITS) -> CCSDSResult:
     res.stages["viterbi"] = True
 
     # --- layers 2 and 1: randomiser and interleaver, RS as sole judge ---
-    #
-    # TWO LAYER ORDERS ARE SEARCHED HERE, not one, and that is the 6 September
-    # change. Until today this chain assumed the Command Center's stated order
-    # (RS -> bit-interleave -> convolutional -> scrambler), which puts the
-    # scrambler on the channel and the interleaver on BITS. The real
-    # CCSDS 131.0-B transmit order is
-    #
-    #     RS -> byte-interleave -> randomise -> convolutional
-    #
-    # so the randomiser is INSIDE the code and survives Viterbi, and the
-    # interleaver permutes SYMBOLS rather than bits. Measured against a corpus
-    # file built to the real standard, the old chain peeled the convolutional
-    # layer correctly and then stopped at "no de-interleaving produced a
-    # Reed-Solomon codeword" - a true statement about a search that could not
-    # have succeeded, which is the failure mode worth removing.
-    #
-    # Cheapest hypothesis first: the symbol phase is ten screened
-    # de-interleavings at about 0.04 s each plus one full confirmation; the
-    # bit-level grid below it is 465 pairs.
-    rs = CODES["reed-solomon"]
-
-    # EVERY surviving randomiser at the cheapest layer configuration that has
-    # any, not the first one to be accepted. RS cannot judge the randomiser
-    # (see `_resolve_randomiser`), so first-accept silently returned garbage.
-    hits = [(None, prm, stream, name)
-            for name, _poly, stream in _randomiser_candidates(decoded)
-            for prm in (rs.blind_recover(stream),) if prm is not None]
-    if not hits:
-        hits = _peel_symbol_layers(decoded, rs)
-    if not hits:
-        hits = _peel_bit_layers(decoded, rs)
-
-    if not hits:
+    detail: dict[str, Any] = {}
+    outer = peel_ccsds_outer(decoded, detail=detail, allow_bit_layers=True)
+    if outer is None:
         res.status = "partial"
-        res.reason = ("convolutional layer recovered and decoded, but no "
-                      "combination of the known randomisers and the block or "
-                      "CCSDS-symbol interleavers produced a Reed-Solomon "
-                      "codeword")
+        res.randomiser_ambiguous = detail.get("ambiguous", False)
+        res.randomiser_note = detail.get("note", "")
+        res.reason = detail.get("reason", "outer RS peeling failed")
         return res
 
-    best, ambiguous, note = _resolve_randomiser(hits, rs)
-    res.randomiser_ambiguous, res.randomiser_note = ambiguous, note
-    if best is None:
-        res.status = "partial"
-        res.reason = note
-        return res
+    payload_bits, outer_params = outer
+    res.interleaver = outer_params["interleaver"]
+    res.rs_params = outer_params["rs_params"]
+    res.randomiser = outer_params["randomiser"]
+    res.randomiser_ambiguous = outer_params["randomiser_ambiguous"]
+    res.randomiser_note = outer_params["randomiser_note"]
+    res.scrambler_poly = outer_params["scrambler_poly"]
 
-    res.interleaver, res.rs_params, de, randomiser = best
     if res.interleaver:
         res.stages["deinterleave"] = True
-    if randomiser is not None:
+    if res.randomiser is not None:
         res.stages["derandomise"] = True
-        res.randomiser = randomiser
-        if res.scrambler_poly is None:
-            res.scrambler_poly = dict(
-                (n, poly) for n, poly, _seed in STANDARD_RANDOMISERS)[randomiser]
 
-    # --- the payload ----------------------------------------------------
-    # ReedSolomonCode.decode returns the DATA bits, 0/1 uint8 - not bytes.
-    payload_bits = np.asarray(rs.decode(de, res.rs_params), dtype=np.uint8)
     res.payload = np.packbits(payload_bits).tobytes()
     res.stages["reed-solomon"] = True
 

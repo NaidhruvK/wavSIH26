@@ -10,12 +10,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
-
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore[assignment]
 
 from contracts import AnalysisReport, Hypothesis, StageResult, StageStatus
 from registry import CODES, INTERLEAVERS, MODULATIONS
@@ -117,7 +120,26 @@ _PLUGINS_LOADED: bool = False
 # stage happens to get. Half the budget still recovers 749 characters, which
 # proves the chain no less than 1499. The full stream stays in
 # values["coded_bits_available"] for anyone who wants to decode all of it.
-S5_DECODE_MAX_BITS = 12_000
+# MERGE 10 Sep: this arrived as 32_000 from the CCSDS-outer-RS work, which needs
+# more data than a bare Viterbi does. Measured on qpsk_15dB_2010.wav (37,536
+# coded bits available), Viterbi ALONE, against the 15 s stage cap:
+#
+#     12 000 ->  9.2 s   1.6x margin
+#     16 000 ->  9.4 s   1.6x margin   <- chosen
+#     20 000 -> 11.1 s   1.3x
+#     24 000 -> 14.4 s   1.0x - no margin at all
+#     32 000 -> 20.4 s   OVER THE CAP
+#
+# 32_000 is 1.4x longer than the stage it runs in, so S5 died on the clock on
+# every real capture. Worse, a timed-out stage is NOT cancellable - Python
+# cannot kill the thread - so the orphaned Viterbi kept burning CPU and starved
+# the stages after it. That is why one S5 overrun made S3 time out in the NEXT
+# test: run alone the same test passes 3/3 in 22.8 s.
+#
+# 16_000 keeps more data for the RS outer layer than the 12_000 this file
+# carried before, and still leaves 1.6x. The CCSDS peel runs on top of the
+# figures above, so the margin is the point, not the bit count.
+S5_DECODE_MAX_BITS = 16_000
 
 # Wall clock for S3's blind modulation search. Its own default is
 # SEARCH_BUDGET_S = 20.0, which is right for a caller with no per-stage
@@ -189,7 +211,7 @@ def get_s1_detect() -> Optional[Callable[..., Any]]:
 
 
 def get_s2_estimate() -> Optional[Callable[..., Any]]:
-    # Primary: check pipeline/s2_estimate.py
+    """Return pipeline.s2_estimate estimation callable if available."""
     try:
         from pipeline import s2_estimate
         if hasattr(s2_estimate, "estimate_blind"):
@@ -207,6 +229,14 @@ def get_s2_estimate() -> Optional[Callable[..., Any]]:
     # silently run a throwaway fixture. Naidhruv reached the same conclusion
     # independently in 87776dc on naidhruv/integration.
     return None
+
+
+def get_s3_receive() -> Optional[Callable[..., Any]]:
+    try:
+        from pipeline.s3_receive import receive_best
+        return receive_best
+    except (ImportError, AttributeError):
+        return None
 
 
 def get_s4_recover() -> Optional[Callable[..., Any]]:
@@ -231,11 +261,18 @@ def get_s3_search() -> tuple[Optional[Callable[..., Any]], Optional[Callable[...
     24 of 40 disagreed, and every disagreement chose "qpsk" against a true
     scheme of 2fsk / 4fsk / 8psk / 16qam.
     """
+    # Resolves receive_best THROUGH get_s3_receive rather than importing it
+    # directly, so a test patching either seam sees the same callable. The two
+    # getters arrived from opposite sides of the 10 Sep merge; keeping one as
+    # the single source of the callable stops them drifting apart.
+    receive_best = get_s3_receive()
+    if receive_best is None:
+        return None, None
     try:
-        from pipeline.s3_receive.search import params_from_s2, receive_best
+        from pipeline.s3_receive.search import params_from_s2
         return receive_best, params_from_s2
     except (ImportError, AttributeError):
-        return None, None
+        return receive_best, None
 
 
 def get_s6_payload() -> Optional[Callable[..., Any]]:
@@ -289,19 +326,50 @@ def adapt_s1(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
         raw.elapsed_ms = elapsed_ms
         return raw
 
-    status = StageStatus.OK if getattr(raw, "status", None) == "ok" else StageStatus.FAILED
     bursts = getattr(raw, "bursts", [])
+    if isinstance(raw, dict):
+        snr_db = raw.get("snr_db")
+        noise_floor_db = raw.get("noise_floor_db")
+        occupied_bw_hz = raw.get("occupied_bw_hz")
+        bursts = raw.get("bursts", bursts)
+        fs = raw.get("fs")
+        raw_status = raw.get("status")
+        raw_reason = raw.get("reason")
+        psd_db = raw.get("psd_db")
+        psd_freqs = raw.get("psd_freqs")
+    else:
+        snr_db = getattr(raw, "snr_db", None)
+        noise_floor_db = getattr(raw, "noise_floor_db", None)
+        occupied_bw_hz = getattr(raw, "occupied_bw_hz", None)
+        fs = getattr(raw, "fs", None)
+        raw_status = getattr(raw, "status", None)
+        raw_reason = getattr(raw, "reason", None)
+        psd_db = getattr(raw, "psd_db", None)
+        psd_freqs = getattr(raw, "psd_freqs", None)
+
     values = {
-        "snr_db": getattr(raw, "snr_db", None),
-        "noise_floor_db": getattr(raw, "noise_floor_db", None),
-        "occupied_bw_hz": getattr(raw, "occupied_bw_hz", None),
+        "snr_db": snr_db,
+        "noise_floor_db": noise_floor_db,
+        "occupied_bw_hz": occupied_bw_hz,
         "burst_count": len(bursts) if bursts is not None else 0,
-        "fs": getattr(raw, "fs", None),
+        "fs": fs,
     }
 
+    # Envelope check: SNR below declared operating envelope (-5.0 dB)
+    if snr_db is not None and isinstance(snr_db, (int, float)) and not math.isnan(snr_db) and snr_db < -5.0:
+        status = StageStatus.OUT_OF_ENVELOPE
+        confidence = 0.0
+        reason = f"Signal SNR ({snr_db:.1f} dB) below declared operating envelope (-5.0 dB)"
+    elif raw_status == "ok":
+        status = StageStatus.OK
+        confidence = 0.98
+        reason = None
+    else:
+        status = StageStatus.FAILED
+        confidence = 0.0
+        reason = raw_reason
+
     artifacts = {}
-    psd_db = getattr(raw, "psd_db", None)
-    psd_freqs = getattr(raw, "psd_freqs", None)
     if psd_db is not None and psd_freqs is not None:
         try:
             freq_list = [float(f) for f in psd_freqs]
@@ -323,18 +391,18 @@ def adapt_s1(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
     return StageResult(
         stage="s1_detect",
         status=status,
-        confidence=0.98 if status == StageStatus.OK else 0.0,
+        confidence=confidence,
         values=values,
         hypotheses=[
             Hypothesis(
                 value="bursty" if values["burst_count"] > 0 else "continuous",
-                score=0.95,
+                score=0.95 if status == StageStatus.OK else 0.0,
                 evidence=f"{values['burst_count']} bursts detected",
             )
         ],
         artifacts=artifacts,
         elapsed_ms=elapsed_ms,
-        reason=getattr(raw, "reason", None),
+        reason=reason,
     )
 
 
@@ -390,18 +458,38 @@ def adapt_s2(raw: Any, elapsed_ms: float) -> StageResult:
     except (TypeError, IndexError, ValueError):
         symbol_rate_peak_score = None
 
+    raw_reason = getattr(raw, "reason", None) if not isinstance(raw, dict) else raw.get("reason")
+    raw_status = getattr(raw, "status", None) if not isinstance(raw, dict) else raw.get("status")
+
+    is_valid_rate = rate is not None and isinstance(rate, (int, float)) and not math.isnan(rate) and rate > 0
+    sps = (fs / rate) if is_valid_rate else 0.0
+
     values = {
         "symbol_rate": rate,
         "symbol_rate_hz": rate,
-        "sps": (fs / rate) if rate > 0 else 0.0,
+        "sps": sps,
         "cfo_hz": cfo_hz,
         "order_hint": order_hint,
         "symbol_rate_score": symbol_rate_score,
         "symbol_rate_peak_score": symbol_rate_peak_score,
     }
 
-    status = StageStatus.OK if rate > 0 else StageStatus.LOW_CONFIDENCE
-    confidence = min(1.0, max(0.1, values["symbol_rate_score"] / 10.0)) if values["symbol_rate_score"] else 0.9
+    if raw_status == "failed":
+        status = StageStatus.FAILED
+        confidence = 0.0
+        reason = raw_reason or "S2 parameter estimation failed"
+    elif not is_valid_rate:
+        status = StageStatus.OUT_OF_ENVELOPE
+        confidence = 0.0
+        reason = raw_reason or "Estimated symbol rate is invalid or non-positive"
+    elif sps < 2.5 or sps > 40.0:
+        status = StageStatus.OUT_OF_ENVELOPE
+        confidence = 0.0
+        reason = f"Estimated SPS ({sps:.2f}) outside declared operating envelope [2.5, 40.0]"
+    else:
+        status = StageStatus.OK
+        confidence = min(1.0, max(0.1, values["symbol_rate_score"] / 10.0)) if values["symbol_rate_score"] else 0.9
+        reason = None
 
     # Dheeraj's classifier ranks the modulation DIRECTLY, is populated on 28 of
     # 30 corpus files and scored 0.9987 on the worked example. adapt_s2 never
@@ -444,7 +532,7 @@ def adapt_s2(raw: Any, elapsed_ms: float) -> StageResult:
         hypotheses=hyps,
         artifacts={},
         elapsed_ms=elapsed_ms,
-        reason=None,
+        reason=reason,
     )
 
 
@@ -479,11 +567,20 @@ def adapt_s3(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
             except Exception:
                 pass
 
+        values = base_dict.get("values", {})
+        # Map values["envelope"] == "outside" to StageStatus.OUT_OF_ENVELOPE
+        if values.get("envelope") == "outside":
+            status = StageStatus.OUT_OF_ENVELOPE
+            confidence = 0.0
+        else:
+            status = StageStatus(base_dict.get("status", "ok"))
+            confidence = float(base_dict.get("confidence", 0.95))
+
         return StageResult(
             stage="s3_receive",
-            status=StageStatus(base_dict.get("status", "ok")),
-            confidence=float(base_dict.get("confidence", 0.95)),
-            values=base_dict.get("values", {}),
+            status=status,
+            confidence=confidence,
+            values=values,
             hypotheses=[
                 Hypothesis(value=h["value"], score=h["score"], evidence=h.get("evidence", ""))
                 for h in base_dict.get("hypotheses", [])
@@ -491,6 +588,39 @@ def adapt_s3(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
             artifacts=artifacts,
             elapsed_ms=elapsed_ms,
             reason=base_dict.get("reason"),
+        )
+
+    if isinstance(raw, dict):
+        values = raw.get("values", {})
+        envelope_val = values.get("envelope") if isinstance(values, dict) else None
+        if envelope_val == "outside" or raw.get("envelope") == "outside":
+            status = StageStatus.OUT_OF_ENVELOPE
+            confidence = 0.0
+        else:
+            status = StageStatus(raw.get("status", "ok"))
+            confidence = float(raw.get("confidence", 0.9))
+        return StageResult(
+            stage="s3_receive",
+            status=status,
+            confidence=confidence,
+            values=values if values else raw,
+            hypotheses=[],
+            artifacts={},
+            elapsed_ms=elapsed_ms,
+            reason=raw.get("reason"),
+        )
+
+    raw_vals = getattr(raw, "values", None)
+    if isinstance(raw_vals, dict) and raw_vals.get("envelope") == "outside":
+        return StageResult(
+            stage="s3_receive",
+            status=StageStatus.OUT_OF_ENVELOPE,
+            confidence=0.0,
+            values=raw_vals,
+            hypotheses=[],
+            artifacts={},
+            elapsed_ms=elapsed_ms,
+            reason=getattr(raw, "reason", None) or "Input out of operating envelope",
         )
 
     return StageResult(
@@ -628,12 +758,17 @@ def adapt_s5(raw: Any, elapsed_ms: float,
             confidence = 0.0
             reason = val.get("reason") or "decode is not consistent with the input"
 
+    hyp_value = "concatenated_ccsds_decoded" if (detail or {}).get("concatenated") else "viterbi_decoded"
+    if (detail or {}).get("concatenated"):
+        evidence += " + RS(%s,%s) outer decode verified" % (
+            (detail or {}).get("rs_n", 255), (detail or {}).get("rs_k", 223))
+
     return StageResult(
         stage="s5_decode",
         status=status,
         confidence=confidence,
         values=values,
-        hypotheses=[Hypothesis(value="viterbi_decoded", score=confidence, evidence=evidence)],
+        hypotheses=[Hypothesis(value=hyp_value, score=confidence, evidence=evidence)],
         artifacts={},
         elapsed_ms=elapsed_ms,
         reason=reason,
@@ -661,17 +796,43 @@ def adapt_s6(raw: Any, elapsed_ms: float) -> StageResult:
             reason="No payload to frame: no decoded bits from S5",
         )
 
-    printable = float(getattr(raw, "printable_fraction", 0.0))
-    looks_like_text = bool(getattr(raw, "looks_like_text", False))
+    def _val(attr: str, default: Any) -> Any:
+        if isinstance(raw, dict):
+            return raw.get(attr, default)
+        return getattr(raw, attr, default)
+
+    printable = float(_val("printable_fraction", 0.0))
+    looks_like_text = bool(_val("looks_like_text", False))
+    n_bytes = int(_val("n_bytes", 0))
+    entropy = float(_val("entropy", 0.0))
+    has_header = bool(_val("has_header", False))
+    header_hex = str(_val("header_hex", ""))
+    header_entropy = float(_val("header_entropy", 0.0))
+    payload_entropy = float(_val("payload_entropy", 0.0))
+
+    payload_text_val = _val("payload_text", None)
+    if payload_text_val is None:
+        payload_text_val = _val("text", "")
+    payload_text = str(payload_text_val)
+    text = str(_val("text", payload_text))
+
+    values = {
+        "n_bytes": n_bytes,
+        "printable_fraction": printable,
+        "looks_like_text": looks_like_text,
+        "text": text,
+        "entropy": entropy,
+        "has_header": has_header,
+        "header_hex": header_hex,
+        "header_entropy": header_entropy,
+        "payload_entropy": payload_entropy,
+        "payload_text": payload_text,
+    }
     return StageResult(
         stage="s6_frame",
         status=StageStatus.OK,
         confidence=printable,
-        values={
-            "n_bytes": getattr(raw, "n_bytes", 0),
-            "printable_fraction": printable,
-            "looks_like_text": looks_like_text,
-        },
+        values=values,
         hypotheses=[
             Hypothesis(
                 value="ascii_text" if looks_like_text else "binary_data",
@@ -823,6 +984,53 @@ def orchestrate(
         _persist(res)
         return res, raw_result
 
+    def _refuse_downstream(
+        trigger_stage: str,
+        trigger_res: StageResult,
+        remaining_stage_names: list[str],
+    ) -> AnalysisReport:
+        refusal_reason = "Refused: input out of operating envelope"
+        for stg in remaining_stage_names:
+            refused_res = StageResult(
+                stage=stg,
+                status=StageStatus.OUT_OF_ENVELOPE,
+                confidence=0.0,
+                reason=refusal_reason,
+            )
+            stages.append(refused_res)
+            _persist(refused_res)
+
+        final_payload = {
+            "payload_text": "",
+            "printable_fraction": 0.0,
+            "looks_like_text": False,
+            "bits_count": 0,
+        }
+
+        report = AnalysisReport(
+            run_id=run_id,
+            file_meta=file_meta,
+            envelope_verdict="out_of_envelope",
+            stages=stages,
+            final=final_payload,
+        )
+
+        update_run(
+            run_id=run_id,
+            status="completed",
+            envelope_verdict="out_of_envelope",
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            db_path=db_path,
+        )
+
+        log_event(
+            logging.INFO,
+            run_id,
+            "pipeline",
+            f"Analysis pipeline refused with verdict=out_of_envelope (triggered by {trigger_stage}: {trigger_res.reason}), duration={(time.time() - start_time):.2f}s",
+        )
+        return report
+
     # -------------------------------------------------------------------------
     # S0: Ingest
     # -------------------------------------------------------------------------
@@ -894,8 +1102,15 @@ def orchestrate(
             lambda raw, ms: adapt_s1(raw, ms, run_id),
         )
 
+    if s1_res.status == StageStatus.OUT_OF_ENVELOPE:
+        return _refuse_downstream(
+            "s1_detect",
+            s1_res,
+            ["s2_estimate", "s3_receive", "s4_recover", "s5_decode", "s6_frame"],
+        )
+
     # -------------------------------------------------------------------------
-    # S2: Estimate (Supports local_s2 fixture fallback)
+    # S2: Estimate (Blind symbol rate and CFO estimation)
     # -------------------------------------------------------------------------
     s2_fn = overrides.get("s2_estimate") or get_s2_estimate()
     if s2_fn is None:
@@ -917,6 +1132,13 @@ def orchestrate(
             adapt_s2,
         )
 
+    if s2_res.status == StageStatus.OUT_OF_ENVELOPE:
+        return _refuse_downstream(
+            "s2_estimate",
+            s2_res,
+            ["s3_receive", "s4_recover", "s5_decode", "s6_frame"],
+        )
+
     # Resolve S2 parameters for receiver
     symbol_rate = (
         getattr(s2_raw, "symbol_rate_hz", None)
@@ -924,17 +1146,12 @@ def orchestrate(
         or s2_res.values.get("symbol_rate", 25000.0)
     )
     cfo_hz = getattr(s2_raw, "cfo_hz", 0.0) or s2_res.values.get("cfo_hz", 0.0)
-    s2_params = {"fs": sample_rate, "symbol_rate": symbol_rate, "cfo_hz": cfo_hz}
-
-    # Thread hypotheses: determine modulation scheme
-    chosen_scheme = mod_scheme_hint
-    if not chosen_scheme and s2_res.hypotheses:
-        chosen_scheme = str(s2_res.hypotheses[0].value).lower()
-    if not chosen_scheme:
-        chosen_scheme = "qpsk"
+    s2_params: dict[str, Any] = {"fs": sample_rate, "symbol_rate": symbol_rate, "cfo_hz": cfo_hz}
+    if mod_scheme_hint:
+        s2_params["modulation_hypotheses"] = [(mod_scheme_hint.lower(), 1.0)]
 
     # -------------------------------------------------------------------------
-    # S3: Receive (Modulation demodulator)
+    # S3: Receive (Demodulation receiver via receive_best)
     # -------------------------------------------------------------------------
     s3_fn = overrides.get("s3_receive")
     s3_receive_best, s3_params_from_s2 = get_s3_search()
@@ -943,16 +1160,47 @@ def orchestrate(
         if s3_fn:
             return s3_fn(iq_samples, s2_params)
 
-        # An explicit `mod_scheme_hint` is a RESTRICTION - the caller named the
-        # scheme, so run that one and nothing else. Everything else searches.
-        # `params_from_s2` is what carries S2's ranked lists (symbol rate, CFO
-        # and the modulation classifier) into the search; `s2_params` is the
-        # three-key mapping and would throw all of that away.
-        if not mod_scheme_hint and s3_receive_best and s3_params_from_s2:
-            return s3_receive_best(iq_samples,
-                                   s3_params_from_s2(s2_raw, sample_rate),
+        # MERGE 10 Sep, and the two sides differed in ways that both mattered.
+        #
+        # Naidhruv treats `mod_scheme_hint` as a PRIOR - rank 1 in
+        # modulation_hypotheses - rather than as a restriction. That is the
+        # better semantics and it is kept: a wrong hint then costs ordering
+        # instead of costing the file, which is the whole reason receive_best
+        # takes a ranking rather than a whitelist.
+        #
+        # Two things from this side are kept because dropping them re-opens
+        # bugs that were measured:
+        #
+        # 1. `params_from_s2(s2_raw, ...)`, NOT `s2_params`. s2_params carries
+        #    fs/symbol_rate/cfo_hz only; params_from_s2 also carries
+        #    symbol_rate_hypotheses, cfo_hypotheses and modulation_hypotheses -
+        #    Dheeraj's classifier ranking, populated on 28 of 30 corpus files.
+        #    Without it the search falls back to registration order, which
+        #    Anvith's own docstring warns means nothing: a 2-FSK plug-in locks
+        #    on a 4-FSK signal to half the tones, and 4fsk_20dB_2035 was
+        #    measured chosen as 2-FSK at BER 0.089 when 4-FSK scored 0.000000.
+        #
+        # 2. `budget_s=S3_SEARCH_BUDGET_S` (10 s). S3's own default is
+        #    SEARCH_BUDGET_S = 20.0, and the service caps a stage at 15 s, so
+        #    the default hands the search a budget LONGER than the stage it
+        #    runs in and the stage dies on the clock instead of returning its
+        #    best answer.
+        if s3_receive_best and s3_params_from_s2:
+            # params_from_s2 contributes the RANKED LISTS; s2_params contributes
+            # the scalars. The overlay is not belt-and-braces: params_from_s2
+            # reads `symbol_rate_hz`, and an S2 that publishes only
+            # `symbol_rate` (older shapes, and the test doubles) yields None
+            # there, which would hand the search no rate at all. adapt_s2 has
+            # already resolved those scalars through both spellings, so the
+            # orchestrator's values are the authoritative ones.
+            params = dict(s3_params_from_s2(s2_raw, sample_rate))
+            params.update({k: v for k, v in s2_params.items() if v is not None})
+            if mod_scheme_hint:
+                params["modulation_hypotheses"] = [(mod_scheme_hint.lower(), 1.0)]
+            return s3_receive_best(iq_samples, params,
                                    budget_s=S3_SEARCH_BUDGET_S)
 
+        # Only when S3's search module is unavailable at all.
         plugin = MODULATIONS.get(chosen_scheme)
         if plugin:
             if hasattr(plugin, "receive"):
@@ -966,6 +1214,13 @@ def orchestrate(
         _run_s3,
         lambda raw, ms: adapt_s3(raw, ms, run_id),
     )
+
+    if s3_res.status == StageStatus.OUT_OF_ENVELOPE:
+        return _refuse_downstream(
+            "s3_receive",
+            s3_res,
+            ["s4_recover", "s5_decode", "s6_frame"],
+        )
 
     llrs = getattr(s3_raw, "llrs", None)
     if llrs is None and isinstance(s3_raw, (list, tuple)):
@@ -1043,7 +1298,11 @@ def orchestrate(
         # Apply what S4 recovered. The permutation is a reshape/transpose, so it
         # runs on the soft LLRs directly and the Viterbi keeps its metric -
         # de-interleaving hard bits here would throw that away.
-        stream = np.asarray(llrs).ravel()[int(getattr(s4_raw, "offset", 0) or 0):]
+        offset = int(getattr(s4_raw, "offset", 0) or 0)
+        if np is not None:
+            stream = np.asarray(llrs).ravel()[offset:]
+        else:
+            stream = list(llrs)[offset:]
         intl = getattr(s4_raw, "interleaver", None)
         if intl is not None:
             intl_plugin = INTERLEAVERS.get(getattr(intl, "family", ""))
@@ -1052,7 +1311,7 @@ def orchestrate(
                     "no '%s' interleaver plug-in registered to undo what S4 found"
                     % getattr(intl, "family", ""))
                 return None
-            soft_in = np.asarray(stream).dtype.kind == "f"
+            soft_in = (getattr(stream, "dtype", None) is not None and getattr(stream.dtype, "kind", None) == "f") if np is not None else any(isinstance(x, float) for x in stream[:10])
             stream = intl_plugin.deinterleave(stream, **getattr(intl, "params", {}))
             # A permutation must hand back what it was given. The CCSDS symbol
             # family is the one exception, and legitimately so: it works in the
@@ -1074,21 +1333,23 @@ def orchestrate(
             # The 4 Sep rule was "a permutation must not cast its input". The
             # cast is legal in that plug-in, so the guard belongs at THIS seam
             # instead - which is where the conventions say guards go anyway.
-            if soft_in and np.asarray(stream).dtype.kind != "f":
+            stream_dtype = getattr(stream, "dtype", None)
+            if soft_in and stream_dtype is not None and getattr(stream_dtype, "kind", None) != "f":
                 s5_detail["declined"] = (
                     "the '%s' de-interleaver returned %s and destroyed the soft "
                     "information S3 recovered: it works in the symbol domain and "
                     "cannot be applied to LLRs"
-                    % (getattr(intl, "family", "?"), np.asarray(stream).dtype))
+                    % (getattr(intl, "family", "?"), stream_dtype))
                 return None
         if len(stream) == 0:
             # Decoding the un-deinterleaved stream instead would "work" and
             # return noise: measured 0.2948 re-encode BER against 0.0005 for the
             # same file decoded correctly. Declining is the only honest answer.
+            llrs_len = len(np.asarray(llrs).ravel()) if np is not None else len(llrs)
             s5_detail["declined"] = (
                 "stream too short to de-interleave: %d LLRs is under one period "
                 "of the %s interleaver S4 recovered"
-                % (len(np.asarray(llrs).ravel()), getattr(intl, "family", "?")))
+                % (llrs_len, getattr(intl, "family", "?")))
             return None
 
         # commpy's Viterbi is pure Python and linear in stream length. The whole
@@ -1122,6 +1383,28 @@ def orchestrate(
                     decoded, stream[:budget], params)
             except Exception as exc:  # never let a check sink the stage
                 logger.warning("S5 re-encode validation failed: %s", exc)
+
+        # Check for optional outer CCSDS layer (randomiser -> symbol deinterleave -> RS)
+        # S5 owns FEC, so if an outer RS code is verified, S5 produces the true source bits.
+        try:
+            from pipeline.s6_frame.ccsds import peel_ccsds_outer
+            outer = peel_ccsds_outer(decoded, detail=s5_detail)
+            if outer is not None:
+                outer_bits, outer_params = outer
+                decoded = outer_bits
+                s5_detail["outer_fec"] = "reed-solomon"
+                s5_detail["concatenated"] = True
+                s5_detail["rs_n"] = outer_params.get("n")
+                s5_detail["rs_k"] = outer_params.get("k")
+                s5_detail["rs_errata_rate"] = outer_params.get("errata_rate")
+                s5_detail["rs_blocks_checked"] = outer_params.get("blocks_checked")
+                if outer_params.get("randomiser"):
+                    s5_detail["randomiser"] = outer_params["randomiser"]
+                if outer_params.get("interleaver"):
+                    s5_detail["outer_interleaver"] = outer_params["interleaver"]
+        except Exception as exc:
+            logger.warning("Optional S5 CCSDS outer FEC check failed: %s", exc)
+
         return decoded
 
     s5_res, s5_raw = _execute_stage(
@@ -1161,11 +1444,25 @@ def orchestrate(
     else:
         verdict = "in_envelope"
 
+    def _s6_val(attr: str, default: Any) -> Any:
+        if isinstance(s6_raw, dict):
+            return s6_raw.get(attr, default)
+        return getattr(s6_raw, attr, default)
+
+    s6_payload_text = _s6_val("payload_text", None)
+    if s6_payload_text is None:
+        s6_payload_text = _s6_val("text", "")
+
     final_payload = {
-        "payload_text": getattr(s6_raw, "text", ""),
-        "printable_fraction": getattr(s6_raw, "printable_fraction", 0.0),
-        "looks_like_text": getattr(s6_raw, "looks_like_text", False),
+        "payload_text": str(s6_payload_text),
+        "printable_fraction": float(_s6_val("printable_fraction", 0.0)),
+        "looks_like_text": bool(_s6_val("looks_like_text", False)),
         "bits_count": len(decoded_bits) if decoded_bits is not None else 0,
+        "entropy": float(_s6_val("entropy", 0.0)),
+        "has_header": bool(_s6_val("has_header", False)),
+        "header_hex": str(_s6_val("header_hex", "")),
+        "header_entropy": float(_s6_val("header_entropy", 0.0)),
+        "payload_entropy": float(_s6_val("payload_entropy", 0.0)),
     }
 
     report = AnalysisReport(

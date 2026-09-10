@@ -117,8 +117,9 @@ def main() -> int:
             rep = make_mock_report()
             result = evaluate_report(rep, truth=truth_sample, target_file=sample_json.stem)
         else:
-            parser.print_help()
-            return 0
+            from service.mocks import make_mock_report
+            rep = make_mock_report()
+            result = evaluate_report(rep, truth=truth, target_file="demo")
 
     if args.json:
         print(result.to_json(indent=2))

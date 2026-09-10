@@ -29,6 +29,7 @@ from service.orchestrator import (
     adapt_s6,
     get_plugin_load_errors,
     get_s2_estimate,
+    get_s3_receive,
     load_plugins,
     orchestrate,
     submit_analysis_job,
@@ -47,7 +48,7 @@ class DummyS0Result:
 
 
 class DummyS1Result:
-    def __init__(self, status="ok", snr_db=15.0, noise_floor_db=-60.0, occupied_bw_hz=50000.0, bursts=None):
+    def __init__(self, status="ok", snr_db=15.0, noise_floor_db=-60.0, occupied_bw_hz=50000.0, bursts=None, reason=None):
         self.status = status
         self.fs = 200000.0
         self.snr_db = snr_db
@@ -56,7 +57,7 @@ class DummyS1Result:
         self.bursts = bursts or [(0, 100)]
         self.psd_freqs = [-50000.0, 0.0, 50000.0]
         self.psd_db = [-60.0, -20.0, -60.0]
-        self.reason = None
+        self.reason = reason
 
 
 class DummyS2Estimate:
@@ -81,12 +82,12 @@ class RealS2EstimateResult:
 
 
 class DummyS3Result:
-    def __init__(self, status="ok", llrs=None):
+    def __init__(self, status="ok", llrs=None, values=None, reason=None, confidence=0.95):
         self.status = status
-        self.confidence = 0.95
-        self.values = {"modulation": "qpsk", "evm_percent": 5.2}
+        self.confidence = confidence
+        self.values = values if values is not None else {"modulation": "qpsk", "evm_percent": 5.2}
         self.hypotheses = [{"value": "qpsk", "score": 0.95, "evidence": "tight clusters"}]
-        self.reason = None
+        self.reason = reason
         self.llrs = llrs if llrs is not None else [1.5, -2.0, 3.1, -1.8] * 100
         self.symbols = [1.0 + 1.0j, -1.0 + 1.0j, -1.0 - 1.0j, 1.0 - 1.0j] * 20
 
@@ -217,7 +218,7 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(s1.stage, "s1_detect")
         self.assertEqual(s1.values["snr_db"], 15.0)
 
-        # S2 (local_s2 fallback with symbol_rate)
+        # S2 (symbol_rate fallback compatibility)
         s2 = adapt_s2(DummyS2Estimate(), 20.0)
         self.assertEqual(s2.stage, "s2_estimate")
         self.assertEqual(s2.values["symbol_rate"], 25000.0)
@@ -251,6 +252,91 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(s6.stage, "s6_frame")
         self.assertEqual(s6.values["n_bytes"], 40)
         self.assertTrue(s6.values["looks_like_text"])
+        self.assertEqual(s6.values["payload_text"], "RAAYA TELEMETRY LOCK CONFIRMED")
+        self.assertEqual(s6.values["entropy"], 0.0)
+        self.assertFalse(s6.values["has_header"])
+        self.assertEqual(s6.values["header_hex"], "")
+        self.assertEqual(s6.values["header_entropy"], 0.0)
+        self.assertEqual(s6.values["payload_entropy"], 0.0)
+
+    def test_adapt_s6_with_framing_and_entropy(self):
+        """adapt_s6 forwards all six S6 framing and entropy fields to StageResult.values."""
+        class FramedReport:
+            n_bytes = 48
+            printable_fraction = 0.98
+            text = "\x1a\xcf\xfc\x1dTELEMETRY_PAYLOAD_VALID_2026"
+            looks_like_text = True
+            inverted = False
+            entropy = 3.82
+            has_header = True
+            header_hex = "1ACFFC1D"
+            header_entropy = 2.0
+            payload_entropy = 3.65
+            payload_text = "TELEMETRY_PAYLOAD_VALID_2026"
+
+        s6 = adapt_s6(FramedReport(), 42.0)
+        self.assertEqual(s6.stage, "s6_frame")
+        self.assertEqual(s6.status, StageStatus.OK)
+        self.assertEqual(s6.values["n_bytes"], 48)
+        self.assertAlmostEqual(s6.values["printable_fraction"], 0.98)
+        self.assertTrue(s6.values["looks_like_text"])
+        self.assertEqual(s6.values["text"], "\x1a\xcf\xfc\x1dTELEMETRY_PAYLOAD_VALID_2026")
+        self.assertAlmostEqual(s6.values["entropy"], 3.82)
+        self.assertTrue(s6.values["has_header"])
+        self.assertEqual(s6.values["header_hex"], "1ACFFC1D")
+        self.assertAlmostEqual(s6.values["header_entropy"], 2.0)
+        self.assertAlmostEqual(s6.values["payload_entropy"], 3.65)
+        self.assertEqual(s6.values["payload_text"], "TELEMETRY_PAYLOAD_VALID_2026")
+
+        # Verify no raw byte arrays are present
+        for k, v in s6.values.items():
+            self.assertNotIsInstance(v, (bytes, bytearray), f"Raw byte array found in values[{k}]")
+
+    def test_orchestration_final_exposes_s6_framing_and_entropy(self):
+        """AnalysisReport.final and S6 StageResult expose framing and entropy information."""
+        class FramedPayloadReport:
+            n_bytes = 36
+            printable_fraction = 1.0
+            text = "\x1a\xcf\xfc\x1dVALID_FRAMED_STREAM"
+            looks_like_text = True
+            inverted = False
+            entropy = 3.4
+            has_header = True
+            header_hex = "1ACFFC1D"
+            header_entropy = 2.0
+            payload_entropy = 3.1
+            payload_text = "VALID_FRAMED_STREAM"
+
+        overrides = make_clean_overrides()
+        overrides["s6_frame"] = lambda bits: FramedPayloadReport()
+
+        report = orchestrate(
+            run_id="run-s6-framing-01",
+            file_path=self.test_file,
+            runner=self.runner,
+            stage_overrides=overrides,
+            db_path=self.db_path,
+        )
+
+        self.assertIsInstance(report, AnalysisReport)
+        self.assertEqual(report.envelope_verdict, "in_envelope")
+
+        # Check final payload
+        self.assertEqual(report.final["payload_text"], "VALID_FRAMED_STREAM")
+        self.assertEqual(report.final["printable_fraction"], 1.0)
+        self.assertTrue(report.final["looks_like_text"])
+        self.assertAlmostEqual(report.final["entropy"], 3.4)
+        self.assertTrue(report.final["has_header"])
+        self.assertEqual(report.final["header_hex"], "1ACFFC1D")
+        self.assertAlmostEqual(report.final["header_entropy"], 2.0)
+        self.assertAlmostEqual(report.final["payload_entropy"], 3.1)
+
+        # Check S6 stage values
+        s6_stage = next(s for s in report.stages if s.stage == "s6_frame")
+        self.assertEqual(s6_stage.values["header_hex"], "1ACFFC1D")
+        self.assertTrue(s6_stage.values["has_header"])
+        self.assertEqual(s6_stage.values["payload_text"], "VALID_FRAMED_STREAM")
+        self.assertAlmostEqual(s6_stage.values["payload_entropy"], 3.1)
 
     def test_stage_failure_isolation(self):
         overrides = make_clean_overrides()
@@ -317,6 +403,39 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(stage_map["s1_detect"].status, StageStatus.FAILED)
         self.assertIn("exceeded timeout", stage_map["s1_detect"].reason)
 
+    def test_get_s2_estimate_does_not_import_local_s2(self):
+        """Verify get_s2_estimate does not import tests.fixtures.local_s2 and resolves pipeline.s2_estimate."""
+        mock_local_s2 = unittest.mock.MagicMock()
+        # ORDER-DEPENDENT UNTIL 10 Sep, and the test was at fault, not the code.
+        # get_s2_estimate does `from pipeline import s2_estimate`, which resolves
+        # the ATTRIBUTE on the already-imported `pipeline` package. Patching
+        # sys.modules alone does not hide it once any earlier test has imported
+        # the submodule - so this passed alone and failed in the full file.
+        # Patch the package attribute too, so "unavailable" is actually true.
+        import pipeline as _pipeline_pkg
+        with unittest.mock.patch.dict("sys.modules", {"pipeline.s2_estimate": None, "tests.fixtures.local_s2": mock_local_s2}),                 unittest.mock.patch.object(_pipeline_pkg, "s2_estimate", None, create=True):
+            estimator = get_s2_estimate()
+            self.assertIsNone(estimator)
+            mock_local_s2.assert_not_called()
+
+        # When pipeline.s2_estimate is available
+        class MockPipelineS2:
+            @staticmethod
+            def estimate(iq, fs):
+                return DummyS2Estimate()
+
+        # Same reason as above: the sys.modules entry is not what
+        # `from pipeline import s2_estimate` reads once the submodule has been
+        # imported by any earlier test. Without patching the package attribute
+        # the REAL estimate ran here and returned a real S2Result, which
+        # publishes symbol_rate_hz and not symbol_rate - so this asserted
+        # against a field the real object does not have and only passed because
+        # the mock was silently in place when the file ran alone.
+        with unittest.mock.patch.dict("sys.modules", {"pipeline.s2_estimate": MockPipelineS2}),                 unittest.mock.patch.object(_pipeline_pkg, "s2_estimate", MockPipelineS2, create=True):
+            estimator = get_s2_estimate()
+            self.assertIsNotNone(estimator)
+            self.assertEqual(estimator(None, 200000.0).symbol_rate, 25000.0)
+
     def test_s2_resolves_to_the_real_pipeline_stage(self):
         """S2 must resolve to pipeline/s2_estimate.py and nothing else.
 
@@ -328,6 +447,12 @@ class TestOrchestrator(unittest.TestCase):
         because a service silently running a test fixture is worse than one
         that fails.
         """
+        try:
+            import numpy
+            import scipy
+        except ImportError:
+            self.skipTest("numpy/scipy not installed in host environment")
+
         estimator = get_s2_estimate()
         self.assertIsNotNone(estimator)
         self.assertTrue(callable(estimator))
@@ -487,26 +612,96 @@ class TestOrchestrator(unittest.TestCase):
             self.assertIn("plugin load failures", s5_res.reason)
             self.assertIn("pipeline.s3_receive", s5_res.reason)
 
-    def test_orchestrator_dispatches_to_registered_plugins(self):
-        """Verify orchestrator dynamically routes to plugins registered in MODULATIONS and CODES."""
-        from registry import CODES, MODULATIONS, register_code, register_modulation
+    def test_orchestrator_dispatches_to_s3_receive_best(self):
+        """Verify S3 dispatch invokes receive_best when no override is supplied, and respects overrides."""
+        mock_receive_best = unittest.mock.MagicMock(return_value=DummyS3Result())
 
-        class CustomMod:
-            name = "custom_test_scheme"
-            called = False
-            def demodulate(self, samples, params):
-                CustomMod.called = True
-                # 4 LLRs used to be enough here only because S5 decoded the
-                # stream exactly as it arrived. It now applies the offset and
-                # de-interleaver S4 recovered, and DummyRecoveryResult declares
-                # block depth 8 x width 12, so anything under one 96-bit period
-                # de-interleaves to nothing and S5 correctly declines to decode.
-                # Four whole periods, so this exercises the real path.
-                return [1.0, -1.0] * 192
-            def classify_features(self, iq):
-                return {}
-            def theoretical_cumulants(self):
-                return {}
+        with unittest.mock.patch("service.orchestrator.get_s3_receive", return_value=mock_receive_best):
+            overrides = make_clean_overrides()
+            overrides.pop("s3_receive", None)
+            overrides["s2_estimate"] = lambda iq, fs: DummyS2Estimate(symbol_rate=25000.0, cfo_hz=42.0)
+
+            report = orchestrate(
+                run_id="run-s3-receive-best",
+                file_path=self.test_file,
+                runner=self.runner,
+                stage_overrides=overrides,
+                db_path=self.db_path,
+            )
+
+            mock_receive_best.assert_called_once()
+            call_args, call_kwargs = mock_receive_best.call_args
+            self.assertEqual(len(call_args), 2)
+            self.assertIsNotNone(call_args[0])
+            self.assertEqual(call_args[1]["symbol_rate"], 25000.0)
+            self.assertEqual(call_args[1]["cfo_hz"], 42.0)
+            # CHANGED 10 Sep, with measurements, and deliberately not the other
+            # way round. This asserted assertNotIn - that S3 is handed the
+            # three-key mapping and NOT S2's ranked lists. The ranked lists are
+            # what make the search both correct and fast:
+            #
+            #   params_from_s2 (ranked)   0.2-1.9 s, 6/6 modulations correct
+            #   fs/rate/cfo only          0.2-7.1 s, 6/6 correct but 2-4x slower
+            #
+            # and Anvith's own docstring warns that without a ranking the order
+            # is registration order, which means nothing: a 2-FSK plug-in locks
+            # on a 4-FSK signal to half its tones, measured as 4fsk_20dB_2035
+            # chosen as 2-FSK at BER 0.089 where 4-FSK scored 0.000000.
+            # So the key must be PRESENT. It is empty here only because this
+            # test's S2 double carries no classifier.
+            self.assertIn("modulation_hypotheses", call_args[1])
+            self.assertNotIn("modulations", call_kwargs)
+            # The search must never be handed a budget longer than the stage it
+            # runs in. S3's own default is 20 s against a 15 s stage cap.
+            self.assertLess(call_kwargs["budget_s"], config.stage_timeout_seconds)
+
+            s3_stage = next(s for s in report.stages if s.stage == "s3_receive")
+            self.assertEqual(s3_stage.status, StageStatus.OK)
+
+        # Verify mod_scheme_hint is forwarded as modulation_hypotheses prior without restricting modulations
+        with unittest.mock.patch("service.orchestrator.get_s3_receive", return_value=mock_receive_best):
+            mock_receive_best.reset_mock()
+            overrides = make_clean_overrides()
+            overrides.pop("s3_receive", None)
+            report = orchestrate(
+                run_id="run-s3-mod-hint",
+                file_path=self.test_file,
+                mod_scheme_hint="QPSK",
+                runner=self.runner,
+                stage_overrides=overrides,
+                db_path=self.db_path,
+            )
+            mock_receive_best.assert_called_once()
+            call_args, call_kwargs = mock_receive_best.call_args
+            self.assertEqual(len(call_args), 2)
+            self.assertEqual(call_args[1]["modulation_hypotheses"], [("qpsk", 1.0)])
+            self.assertNotIn("modulations", call_kwargs)
+
+        # Verify stage_overrides['s3_receive'] takes precedence over get_s3_receive
+        custom_s3_called = False
+        def custom_s3(iq, params):
+            nonlocal custom_s3_called
+            custom_s3_called = True
+            return DummyS3Result()
+
+        with unittest.mock.patch("service.orchestrator.get_s3_receive", return_value=mock_receive_best):
+            mock_receive_best.reset_mock()
+            overrides = make_clean_overrides()
+            overrides["s3_receive"] = custom_s3
+            report = orchestrate(
+                run_id="run-s3-override",
+                file_path=self.test_file,
+                runner=self.runner,
+                stage_overrides=overrides,
+                db_path=self.db_path,
+            )
+            self.assertTrue(custom_s3_called)
+            mock_receive_best.assert_not_called()
+
+    def test_orchestrator_dispatches_to_registered_codes(self):
+        """Verify orchestrator dynamically routes to code plugins registered in CODES."""
+        from registry import CODES, register_code
+
 
         class CustomConvCode:
             name = "conv"
@@ -520,41 +715,221 @@ class TestOrchestrator(unittest.TestCase):
                 return {"valid": True}
 
         orig_conv = CODES.get("conv")
-        register_modulation(CustomMod(), replace=True)
         register_code(CustomConvCode(), replace=True)
 
         try:
             overrides = make_clean_overrides()
-            # Remove s3_receive and s5_decode from overrides so orchestrator falls back to registry
-            overrides.pop("s3_receive", None)
             overrides.pop("s5_decode", None)
-            # S2 suggests custom_test_scheme
-            overrides["s2_estimate"] = lambda iq, fs: DummyS2Estimate()
-            s2_orig = overrides["s2_estimate"]
-            def s2_with_hyp(iq, fs):
-                res = s2_orig(iq, fs)
-                return res
-            # S0/S1/S2/S4/S6 present
+            s4_mock = DummyRecoveryResult()
+            s4_mock.interleaver = None
+            overrides["s4_recover"] = lambda bits: s4_mock
             report = orchestrate(
-                run_id="run-plugin-dispatch",
+                run_id="run-code-dispatch",
                 file_path=self.test_file,
-                mod_scheme_hint="custom_test_scheme",
                 runner=self.runner,
                 stage_overrides=overrides,
                 db_path=self.db_path,
             )
-            self.assertTrue(CustomMod.called, "S3 did not dispatch to registered modulation plugin")
             self.assertTrue(CustomConvCode.called, "S5 did not dispatch to registered code plugin")
-            s3_stage = next(s for s in report.stages if s.stage == "s3_receive")
             s5_stage = next(s for s in report.stages if s.stage == "s5_decode")
-            self.assertEqual(s3_stage.status, StageStatus.OK)
             self.assertEqual(s5_stage.status, StageStatus.OK)
         finally:
-            MODULATIONS.pop("custom_test_scheme", None)
             if orig_conv is not None:
                 CODES["conv"] = orig_conv
             else:
                 CODES.pop("conv", None)
+
+    def test_get_s3_receive(self):
+        """Verify get_s3_receive resolves receive_best or returns None if unavailable."""
+        mock_receive_best = unittest.mock.MagicMock()
+        mock_module = unittest.mock.MagicMock(receive_best=mock_receive_best)
+        with unittest.mock.patch.dict("sys.modules", {"pipeline.s3_receive": mock_module}):
+            fn = get_s3_receive()
+            self.assertEqual(fn, mock_receive_best)
+
+        with unittest.mock.patch.dict("sys.modules", {"pipeline.s3_receive": None}):
+            fn = get_s3_receive()
+            self.assertIsNone(fn)
+
+    def test_adapt_s3_envelope_outside_becomes_out_of_envelope(self):
+        """Verify adapt_s3 maps values['envelope'] == 'outside' to StageStatus.OUT_OF_ENVELOPE."""
+        s3_outside = DummyS3Result(
+            status="failed",
+            values={"envelope": "outside", "modulation": "qpsk"},
+            reason="S2 reports 1.25 samples/symbol; S3 needs at least 2",
+        )
+        res = adapt_s3(s3_outside, 10.0, "run-s3-outside")
+        self.assertEqual(res.status, StageStatus.OUT_OF_ENVELOPE)
+        self.assertEqual(res.confidence, 0.0)
+        self.assertEqual(res.values["envelope"], "outside")
+        self.assertIn("at least 2", res.reason)
+
+        # Inside envelope with failed status remains StageStatus.FAILED
+        s3_inside_failed = DummyS3Result(
+            status="failed",
+            values={"envelope": "inside", "modulation": "qpsk"},
+            reason="Demodulation lock failed",
+        )
+        res_failed = adapt_s3(s3_inside_failed, 10.0, "run-s3-inside-fail")
+        self.assertEqual(res_failed.status, StageStatus.FAILED)
+
+    def test_adapt_s1_low_snr_out_of_envelope(self):
+        """Verify adapt_s1 marks SNR below -5.0 dB as OUT_OF_ENVELOPE."""
+        s1_low = DummyS1Result(status="ok", snr_db=-8.5)
+        res = adapt_s1(s1_low, 10.0, "run-s1-low")
+        self.assertEqual(res.status, StageStatus.OUT_OF_ENVELOPE)
+        self.assertEqual(res.confidence, 0.0)
+        self.assertIn("-8.5 dB", res.reason)
+        self.assertIn("-5.0 dB", res.reason)
+
+        # Normal SNR >= -5.0 dB remains StageStatus.OK
+        s1_ok = DummyS1Result(status="ok", snr_db=12.0)
+        res_ok = adapt_s1(s1_ok, 10.0, "run-s1-ok")
+        self.assertEqual(res_ok.status, StageStatus.OK)
+        self.assertGreater(res_ok.confidence, 0.0)
+
+        # S1 failure without SNR remains StageStatus.FAILED
+        s1_fail = DummyS1Result(status="failed", snr_db=None, reason="empty IQ array")
+        res_fail = adapt_s1(s1_fail, 10.0, "run-s1-fail")
+        self.assertEqual(res_fail.status, StageStatus.FAILED)
+        self.assertEqual(res_fail.reason, "empty IQ array")
+
+    def test_adapt_s2_invalid_or_out_of_envelope_sps(self):
+        """Verify adapt_s2 marks invalid rate or SPS outside [2.5, 40.0] as OUT_OF_ENVELOPE."""
+        # Non-positive rate
+        s2_zero = DummyS2Estimate(symbol_rate=0.0)
+        res_zero = adapt_s2(s2_zero, 10.0)
+        self.assertEqual(res_zero.status, StageStatus.OUT_OF_ENVELOPE)
+        self.assertEqual(res_zero.confidence, 0.0)
+
+        # SPS below 2.5 (e.g. symbol_rate = 100000.0, fs = 200000.0 -> sps = 2.0 < 2.5)
+        s2_low_sps = DummyS2Estimate(symbol_rate=100000.0, fs=200000.0)
+        res_low_sps = adapt_s2(s2_low_sps, 10.0)
+        self.assertEqual(res_low_sps.status, StageStatus.OUT_OF_ENVELOPE)
+        self.assertEqual(res_low_sps.confidence, 0.0)
+        self.assertIn("outside declared operating envelope", res_low_sps.reason)
+
+        # SPS above 40.0 (e.g. symbol_rate = 4000.0, fs = 200000.0 -> sps = 50.0 > 40.0)
+        s2_high_sps = DummyS2Estimate(symbol_rate=4000.0, fs=200000.0)
+        res_high_sps = adapt_s2(s2_high_sps, 10.0)
+        self.assertEqual(res_high_sps.status, StageStatus.OUT_OF_ENVELOPE)
+        self.assertEqual(res_high_sps.confidence, 0.0)
+        self.assertIn("outside declared operating envelope", res_high_sps.reason)
+
+        # Valid SPS
+        s2_valid = DummyS2Estimate(symbol_rate=25000.0, fs=200000.0)
+        res_valid = adapt_s2(s2_valid, 10.0)
+        self.assertEqual(res_valid.status, StageStatus.OK)
+        self.assertGreater(res_valid.confidence, 0.0)
+
+    def test_orchestrator_refuses_downstream_on_s1_out_of_envelope(self):
+        """Verify S1 OUT_OF_ENVELOPE stops downstream stages and sets report.envelope_verdict."""
+        overrides = make_clean_overrides()
+        overrides["s1_detect"] = lambda iq, fs: DummyS1Result(status="ok", snr_db=-10.0)
+
+        s2_called = False
+        def mock_s2(iq, fs):
+            nonlocal s2_called
+            s2_called = True
+            return DummyS2Estimate()
+
+        overrides["s2_estimate"] = mock_s2
+
+        report = orchestrate(
+            run_id="run-refuse-s1",
+            file_path=self.test_file,
+            runner=self.runner,
+            stage_overrides=overrides,
+            db_path=self.db_path,
+        )
+
+        self.assertFalse(s2_called, "S2 was executed despite S1 being out of envelope")
+        self.assertEqual(report.envelope_verdict, "out_of_envelope")
+        self.assertEqual(len(report.stages), 7)
+        self.assertEqual(report.stages[0].status, StageStatus.OK)
+        self.assertEqual(report.stages[1].status, StageStatus.OUT_OF_ENVELOPE)
+        for downstream in report.stages[2:]:
+            self.assertEqual(downstream.status, StageStatus.OUT_OF_ENVELOPE)
+            self.assertIn("Refused: input out of operating envelope", downstream.reason)
+
+        run_rec = get_run("run-refuse-s1", db_path=self.db_path)
+        self.assertEqual(run_rec["envelope_verdict"], "out_of_envelope")
+        self.assertEqual(run_rec["status"], "completed")
+
+    def test_orchestrator_refuses_downstream_on_s2_out_of_envelope(self):
+        """Verify S2 OUT_OF_ENVELOPE stops downstream stages and sets report.envelope_verdict."""
+        overrides = make_clean_overrides()
+        overrides["s2_estimate"] = lambda iq, fs: DummyS2Estimate(symbol_rate=2000.0, fs=200000.0)  # sps = 100.0
+
+        s3_called = False
+        def mock_s3(iq, params):
+            nonlocal s3_called
+            s3_called = True
+            return DummyS3Result()
+
+        overrides["s3_receive"] = mock_s3
+
+        report = orchestrate(
+            run_id="run-refuse-s2",
+            file_path=self.test_file,
+            runner=self.runner,
+            stage_overrides=overrides,
+            db_path=self.db_path,
+        )
+
+        self.assertFalse(s3_called, "S3 was executed despite S2 being out of envelope")
+        self.assertEqual(report.envelope_verdict, "out_of_envelope")
+        self.assertEqual(len(report.stages), 7)
+        self.assertEqual(report.stages[0].status, StageStatus.OK)
+        self.assertEqual(report.stages[1].status, StageStatus.OK)
+        self.assertEqual(report.stages[2].status, StageStatus.OUT_OF_ENVELOPE)
+        for downstream in report.stages[3:]:
+            self.assertEqual(downstream.status, StageStatus.OUT_OF_ENVELOPE)
+            self.assertIn("Refused: input out of operating envelope", downstream.reason)
+
+        run_rec = get_run("run-refuse-s2", db_path=self.db_path)
+        self.assertEqual(run_rec["envelope_verdict"], "out_of_envelope")
+        self.assertEqual(run_rec["status"], "completed")
+
+    def test_orchestrator_refuses_downstream_on_s3_out_of_envelope(self):
+        """Verify S3 OUT_OF_ENVELOPE stops downstream stages and sets report.envelope_verdict."""
+        overrides = make_clean_overrides()
+        overrides["s3_receive"] = lambda iq, params: DummyS3Result(
+            status="failed",
+            values={"envelope": "outside", "modulation": "qpsk"},
+            reason="record too short to settle the timing loop",
+        )
+
+        s4_called = False
+        def mock_s4(bits):
+            nonlocal s4_called
+            s4_called = True
+            return DummyRecoveryResult()
+
+        overrides["s4_recover"] = mock_s4
+
+        report = orchestrate(
+            run_id="run-refuse-s3",
+            file_path=self.test_file,
+            runner=self.runner,
+            stage_overrides=overrides,
+            db_path=self.db_path,
+        )
+
+        self.assertFalse(s4_called, "S4 was executed despite S3 being out of envelope")
+        self.assertEqual(report.envelope_verdict, "out_of_envelope")
+        self.assertEqual(len(report.stages), 7)
+        self.assertEqual(report.stages[0].status, StageStatus.OK)
+        self.assertEqual(report.stages[1].status, StageStatus.OK)
+        self.assertEqual(report.stages[2].status, StageStatus.OK)
+        self.assertEqual(report.stages[3].status, StageStatus.OUT_OF_ENVELOPE)
+        for downstream in report.stages[4:]:
+            self.assertEqual(downstream.status, StageStatus.OUT_OF_ENVELOPE)
+            self.assertIn("Refused: input out of operating envelope", downstream.reason)
+
+        run_rec = get_run("run-refuse-s3", db_path=self.db_path)
+        self.assertEqual(run_rec["envelope_verdict"], "out_of_envelope")
+        self.assertEqual(run_rec["status"], "completed")
 
 
     def test_s5_declines_a_deinterleaver_that_destroys_soft_values(self):
@@ -573,7 +948,10 @@ class TestOrchestrator(unittest.TestCase):
         clears, and rank_collapse's shortest-span tie-break excludes it only
         while `direct` is non-None.
         """
-        import numpy as np
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy not installed in host environment")
 
         from pipeline.s4_recover.interleavers import symbol_deinterleave
 
@@ -611,6 +989,72 @@ class TestOrchestrator(unittest.TestCase):
             "S5 reported ok after de-interleaving with a family that destroyed "
             "the soft information - that is a confident decode of noise")
         self.assertIn("soft", (s5.reason or "").lower())
+
+    def test_orchestrator_s5_decodes_concatenated_ccsds_and_feeds_s6(self):
+        """End-to-end test verifying orchestrator S5 decodes outer RS and feeds S6."""
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy not installed in host environment")
+
+        from zoo.ccsds import make_ccsds_stream
+
+        test_msg = "RAAYA CCSDS E2E ORCHESTRATION PAYLOAD TEST DATA 12345"
+        bits, payload, meta = make_ccsds_stream(
+            n_blocks=8, depth=4, payload_text=test_msg, seed=11
+        )
+
+        s4 = DummyRecoveryResult()
+        s4.status = "ok"
+        s4.code = type("Code", (), {"n": 2, "memory": 6, "span": 14})()
+        s4.generators_octal = (0o171, 0o133)
+        s4.offset = 0
+        s4.interleaver = None
+
+        # Convert bits to LLR-like convention (+ve for 0, -ve for 1)
+        llrs = np.where(bits == 0, 2.0, -2.0)
+
+        overrides = make_clean_overrides()
+        overrides.pop("s5_decode", None)  # exercise real S5 path
+        overrides.pop("s6_frame", None)   # exercise real S6 path
+        overrides["s3_receive"] = lambda iq, params: DummyS3Result(llrs=llrs)
+        overrides["s4_recover"] = lambda bits: s4
+
+        # stage_timeout raised for THIS test, and the reason is a measured
+        # envelope limit rather than a slow machine. Viterbi is ~0.57 ms per
+        # coded bit, so on qpsk_15dB_2010.wav:
+        #
+        #     16 000 bits ->  9.4 s      24 000 -> 14.4 s      32 000 -> 20.4 s
+        #
+        # against a 15 s default stage cap. The concatenated CCSDS path needs
+        # 24 000 to reach a whole depth-4 RS group (4 x 255 bytes = 1020, and
+        # 16 000 coded bits is only ~1000 bytes), and the outer RS peel runs on
+        # top of the 14.4 s. So this chain does not fit the DEFAULT per-stage
+        # envelope with a pure-Python Viterbi - that is a real limit and it is
+        # recorded here rather than hidden by a smaller assertion.
+        with unittest.mock.patch("service.orchestrator.S5_DECODE_MAX_BITS", 24_000):
+            report = orchestrate(
+                run_id="run-ccsds-e2e",
+                file_path=self.test_file,
+                runner=self.runner,
+                stage_overrides=overrides,
+                db_path=self.db_path,
+                stage_timeout=45.0,
+            )
+
+        s5 = next(s for s in report.stages if s.stage == "s5_decode")
+        self.assertEqual(s5.status, StageStatus.OK)
+        self.assertEqual(s5.hypotheses[0].value, "concatenated_ccsds_decoded")
+        self.assertEqual(s5.values.get("outer_fec"), "reed-solomon")
+        self.assertEqual(s5.values.get("rs_n"), 255)
+        self.assertEqual(s5.values.get("rs_k"), 223)
+        self.assertEqual(s5.values.get("randomiser"), "ccsds-131.0-B")
+        self.assertIn("rs(255,223)", s5.hypotheses[0].evidence.lower())
+
+        s6 = next(s for s in report.stages if s.stage == "s6_frame")
+        self.assertEqual(s6.status, StageStatus.OK)
+        self.assertIn("RAAYA CCSDS E2E", s6.values.get("text", ""))
+        self.assertGreater(s6.values.get("printable_fraction", 0.0), 0.9)
 
 
     def test_adapt_s2_reads_the_order_field_s2result_actually_has(self):
