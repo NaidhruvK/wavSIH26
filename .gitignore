@@ -14,3 +14,7 @@ docs/stack_*.log
 reports/artifacts/
 dist/
 .DS_Store
+
+# transient local server logs (uvicorn / vite dev)
+.backend.log
+web/.dev-server.log
