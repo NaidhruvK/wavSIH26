@@ -3388,6 +3388,161 @@ merges rather than guess at it now.
 
 ---
 
+## 10 Sep, pre-demo hardening - a FALSE POSITIVE that was shipping, a fifth
+## silent-getattr, and the operating envelope measured rather than claimed
+
+Adversarial pass the night before judging. Everything below was executed, not
+read. Full suite with all three changes: 954 passed, 4 skipped, 2 xfailed,
+0 failed, 0 errors.
+
+### 1. CRITICAL, and it was already shipping: a false code recovery
+
+    blind_recover(np.tile([1,0,1,1,0,0,1,0], 20_000))
+      ->  status ok,  block(depth=5, width=2),  a recovered code
+
+`10110010` repeated twenty thousand times, reported as a confident blind
+recovery. Verified this is NOT something introduced tonight: it reproduces on
+the shipping path with every flag at its default.
+
+Every downstream guard passed it, and each was correct by its own terms - the
+deficiency is real, the de-interleaved stream is consistent, the signature
+holds, and `_residual_syndrome` is **exactly 0.0**, because a period-8 stream
+annihilates almost any parity check handed to it. **Nothing that inspects the
+RECOVERED PARAMETERS can catch this**, which is why the new guard reads the
+INPUT and is the only test in that file independent of the recovery.
+
+The 8 Sep gate asks that "uncoded random data does not trigger a false code
+detection". Random data was tested and passes. PERIODIC data was never tested,
+and it did not.
+
+`exact_repetition_period()` separates the two completely - measured:
+
+| stream | exact period | before | after |
+|---|---|---|---|
+| repeating 8-bit | 8 | **ok, block(5,2)** | failed |
+| repeating 3-bit / 12-bit | 3 / 12 | recovered | failed |
+| alternating 0101 | 2 | low_confidence | failed |
+| all zeros / all ones | 1 | low_confidence | failed |
+| uniform random | none | failed | failed |
+| **real coded, random payload** | **none** | ok | **ok** |
+| **real coded, TEXT payload** | **none** | ok | **ok** |
+
+7 of 7 adversarial inputs decline; no true positive lost. A coded stream driven
+by a real source is aperiodic, so an exact period is not weak evidence - it is
+proof the stream carries no information. Three regression tests in
+`tests/unit/test_adversarial_s4.py`; confirmed the first FAILS on the pre-guard
+code, reporting ok with depth 5 width 2.
+
+### 2. Fifth instance of the silent-getattr class, in the CCSDS chain
+
+A reflective audit - every `getattr(x, "literal", default)` in shipping code
+checked against every dataclass field in the project - returned one real hit:
+
+    ccsds.py:461  getattr(hyp, "poly", None) or getattr(hyp, "poly_octal", None)
+
+`ScramblerHypothesis` carries `degree, period, taps, state, syndrome_violations,
+reason`. **Neither name has ever existed**, so `scrambler_poly` was None on every
+blind recovery that succeeded - set immediately after `descramble(bits, hyp)`
+used that same hypothesis correctly. The only other writer fills the field from
+the `STANDARD_RANDOMISERS` dictionary, so a dictionary match reported a
+polynomial and a BLIND recovery did not. Exactly backwards from what this stage
+exists to demonstrate.
+
+Fixed to pack the recovered Berlekamp-Massey connection polynomial, with the
+representation stated in the code. **Deliberately NOT claimed to equal the CCSDS
+0o651**: `taps` is a connection polynomial, not the Fibonacci tap-mask
+`zoo.lfsr_scramble` takes, and the conversion is unverified. Reporting a
+recovered value in a stated representation beats reporting None; claiming an
+equality nobody checked would be the same error one layer up.
+
+### 3. THE OPERATING ENVELOPE, measured - use this to pick demo files
+
+All six modulations, all six corpus SNRs, through the real `orchestrate()`.
+Stages reporting ok, out of seven:
+
+| | 4 dB | 8 dB | 10 dB | 13 dB | 15 dB | 20 dB |
+|---|---|---|---|---|---|---|
+| bpsk | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 |
+| qpsk | 4/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 |
+| 8psk | 3/7 | 4/7 | 4/7 | 7/7 | 7/7 | 7/7 |
+| 16qam | 3/7 | 4/7 | 4/7 | **4/7** | 7/7 | 7/7 |
+| 2fsk | 4/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 |
+| 4fsk | 4/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 |
+
+**Every modulation completes at >= 15 dB. 16-QAM needs >= 15 dB; 8-PSK needs
+>= 13 dB.** Pick the demo set accordingly - a 16-QAM file at 13 dB does not
+complete, twice out of two.
+
+The important half: **every failure is at S4 and every one is honest.** Either
+"FAILED - no rank collapse at any period from 8 to 152; the search stopped there
+because ..." or "LOW_CONFIDENCE - period found but no factorisation restored a
+code". Not one of the 10 sub-envelope cases produced a confident wrong answer.
+That is the claim worth making to a panel, and it is now measured.
+
+### 4. The demo is pinned to its one working configuration
+
+`--demo --text` hardcodes `start_offset=0`. Reproduced the documented 1/10:
+repeating-text payload recovers at offset 0 only; random payload recovers 10/10
+at every offset. **Do not re-run the demo with different parameters in front of
+a judge.**
+
+Tried to fix it by making the text non-repeating so it carries no periodicity of
+its own. **That is worse: 0/10, failing even at offset 0**, because ASCII is
+rank-deficient by construction - bit 7 clear in every byte is a linear
+constraint every 8 bits. Recording the refuted hypothesis so nobody spends the
+same hour.
+
+### 5. The structured-source gap is closable, and the stated reason is wrong
+
+HANDOFF defers it because "a dozen statistical searches per file does not fit
+the time budget". Measured: **a full 96-alignment functional sweep is 3.83 s
+worst case, 0.040 s per alignment**, against a 90 s envelope and a 15 s stage
+cap. Cost is not the obstacle.
+
+Standalone, sweep + shortest-span recovers **10/10 offsets** with correct
+generators and readable text in under 1 s per case, against 1/10 shipping.
+
+**It ships behind `sweep_alignments=False` and the reason is a false positive,
+not the cost.** On the demo stream three alignments clear the full functional
+gate - 51 (rate 1/6 K=3, span 18), 59 (rate 1/2 K=7, span 14, TRUE), 67 (span
+18) - all with residual exactly 0.0. Shortest span separates them here. But
+"residual is zero" is NOT decisive on a structured source, which the rest of
+`rank_collapse.py` assumes it is, so on a stream where only artifacts clear the
+gate this would turn an honest low_confidence into a confident wrong answer.
+Integrated it reaches 6/10, not 10/10. Enable only after someone characterises
+the artifact rate on a corpus, not on one file.
+
+### 6. Container: the 9 Sep gate, actually run
+
+Image builds (1.52 GB). `zoo/corpus` IS in it - 252 RF WAVs, 146 bits-only -
+because `.dockerignore` does not exclude it. The skip-condition docstring in
+`test_e2e_real_signal.py` claiming the corpus is excluded is stale.
+
+With `--network none`:
+- `--demo --text` recovers period=96, block(8,12), rate 1/2 K=7,
+  G=(0o171, 0o133), 100% printable, ~21 s. **Offline, in-image.**
+- Eight files, twice: 7 of 8 pass both runs at 7/7 stages inside 15 s each.
+  The eighth is 16qam@13dB, which fails honestly at S4 both times - see the
+  envelope above. Choose 15 dB or higher and this is 8/8.
+
+### 7. Checked and clean (executed, not assumed)
+
+- No shipping code imports from `tests/` - a defect that bit twice here.
+- Every RNG in shipping code is seeded; no unseeded randomness reaches a result.
+- All ten third-party imports are pinned in `requirements.txt`; none missing.
+- No truth leakage: `report(bits, ...)` takes only bits, and there is no `truth`
+  reference anywhere in s4_recover / s5_decode / s6_frame.
+
+### 8. Still open - NOT fixed, and both are release-owned
+
+- **There are ZERO git tags.** The plan expects v0.1 through v1.0, and the
+  10 Sep emergency protocol is literally "git checkout v1.0 && docker compose
+  up". **That fallback does not exist.**
+- **There is no demo/ directory.** The 9 Sep gate names eight demo files; they
+  have never been curated. The envelope table above says which to pick.
+
+---
+
 ## 8 Sep, part 3 - the service demodulated EVERYTHING as QPSK, and the one
 ## real end-to-end test could not see it because its capture is QPSK
 

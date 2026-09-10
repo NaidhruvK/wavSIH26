@@ -535,6 +535,41 @@ def _hinted_candidates(name, plugin, n_bits: int, first: int, step: int):
         yield from plugin.candidate_params(n_bits, period=first)
 
 
+ALIGNMENT_SWEEP_BUDGET_S = 8.0   # wall clock, per risk #5; fits the 15 s stage cap
+
+
+def _sweep_alignments_functionally(bits: np.ndarray, first: int, step: int,
+                                   fallback_offset: int
+                                   ) -> tuple[list, int]:
+    """Try EVERY block alignment functionally, keep the shortest span.
+
+    Only reached when the argmax-deficiency alignment restored no code at all,
+    so there is nothing working to lose. Returns (hypotheses, offset), and
+    (\[\], fallback_offset) when the sweep finds nothing - which leaves the
+    caller exactly where it was.
+
+    Bounded by wall clock like every other sweep here: a structureless stream is
+    the expensive input, because no alignment short-circuits.
+    """
+    deadline = time.monotonic() + ALIGNMENT_SWEEP_BUDGET_S
+    best_hyps: list = []
+    best_off = fallback_offset
+    best_span = None
+    for off in range(first):
+        if time.monotonic() > deadline:
+            break
+        cand = recover_interleaver(bits, first, step, off)
+        if not cand:
+            continue
+        de = INTERLEAVERS[cand[0].family].deinterleave(bits[off:], **cand[0].params)
+        code = recover_code_structure(de)
+        if not code.span:
+            continue
+        if best_span is None or code.span < best_span:
+            best_span, best_hyps, best_off = code.span, cand, off
+    return best_hyps, best_off
+
+
 def recover_interleaver(bits: np.ndarray, first: int, step: int, offset: int = 0,
                         max_candidates: int = MAX_CANDIDATES
                         ) -> list[InterleaverHypothesis]:
@@ -680,6 +715,45 @@ def _statistical_code_attempt(bits: np.ndarray, max_span: int = STAT_FALLBACK_MA
     return code, generators, [int(b) for b in stat.taps], val
 
 
+DEGENERATE_MAX_PERIOD = 512    # a real coded stream has no exact period at all
+
+
+def exact_repetition_period(bits: np.ndarray,
+                            max_period: int = DEGENERATE_MAX_PERIOD) -> int | None:
+    """Smallest P with bits[i] == bits[i+P] EVERYWHERE, or None if there is none.
+
+    This is the one test in this file that is genuinely INDEPENDENT of the
+    recovery: it reads the input and never looks at a recovered parameter, so it
+    cannot be satisfied by the same assumption that produced the answer.
+
+    A convolutional code driven by a random source is not exactly periodic - not
+    at any lag, not even under an interleaver, because the source is not. So an
+    exact period is not weak evidence, it is proof the stream is degenerate and
+    that any "code" found in it is an artifact of the repetition.
+
+    Measured, and the separation is total:
+
+        repeating 8-bit pattern     P=8      <- was reported ok, block(5,2)
+        alternating 0101            P=2
+        all zeros                   P=1
+        uniform random              none
+        real coded, random payload  none
+        real coded, TEXT payload    none     <- structured, still aperiodic
+        real coded at 1% BER        none
+
+    Bounded at 512: the cost is one O(n) comparison per lag and a real stream
+    pays all of them, so the bound is what keeps this off the hot path.
+    """
+    b = np.asarray(bits).ravel()
+    n = b.size
+    if n < 8:
+        return None
+    for period in range(1, min(max_period, n // 4) + 1):
+        if np.array_equal(b[:n - period], b[period:]):
+            return period
+    return None
+
+
 def _finalise(res: RecoveryResult) -> RecoveryResult:
     """The exit invariant: `ok` must mean something checkable was recovered.
 
@@ -744,7 +818,8 @@ def _finalise(res: RecoveryResult) -> RecoveryResult:
 
 
 def _attempt_candidate(bits: np.ndarray, first: int, step: int,
-                       prof: RankProfile, trust_step: bool = True):
+                       prof: RankProfile, trust_step: bool = True,
+                       sweep_alignments: bool = False):
     """Try to explain ONE collapse period. None means this one explains nothing.
 
     Everything here was the body of blind_recover until the candidate walk
@@ -832,6 +907,39 @@ def _attempt_candidate(bits: np.ndarray, first: int, step: int,
 
     hyps = recover_interleaver(bits, first, step, offset)
 
+    # A STRUCTURED SOURCE defeats the argmax above, and this is the documented
+    # gap (HANDOFF section 5, tests/unit/test_structured_source.py). Deficiency
+    # at the true boundary is within ONE of the maximum while ranking 39th,
+    # 59th and 71st of 96, so argmax carries no signal and the one alignment
+    # that restores a code is never tried.
+    #
+    # OFF BY DEFAULT, and the reason is a false positive, not the cost. Measured
+    # on the demo stream at true offset 37 (de-interleave alignment 96-37=59),
+    # THREE alignments clear the full functional gate - consistent, signature,
+    # and a residual syndrome of exactly 0.0:
+    #
+    #     align 51 -> rate 1/6  K=3  span 18     artifact
+    #     align 59 -> rate 1/2  K=7  span 14     TRUE
+    #     align 67 -> rate 1/6  K=3  span 18     artifact
+    #
+    # Shortest span separates them here and recovers 10/10 offsets against the
+    # 1/10 the shipping path manages, generators 0o171/0o133, readable text,
+    # in 0.7-3.8 s. But "residual is exactly zero" is NOT decisive on a
+    # structured source, which the rest of this file assumes it is. On a stream
+    # where the true alignment restores nothing and only artifacts clear the
+    # gate, this would turn an honest low_confidence into a confident WRONG
+    # answer - the one trade this project never makes.
+    #
+    # So it ships proven and disabled. Enable per-call once someone has
+    # characterised the artifact rate on a corpus, not on one file.
+    #
+    # The cost justification in HANDOFF ("a dozen statistical searches per file
+    # does not fit the time budget") is measurably wrong and should not be the
+    # reason quoted: a full 96-alignment functional sweep is 3.83 s worst case,
+    # 0.040 s per alignment, against a 90 s envelope and a 15 s stage cap.
+    if not hyps and sweep_alignments:
+        hyps, offset = _sweep_alignments_functionally(bits, first, step, offset)
+
     # Shortest span wins. A family hypothesis only beats the direct reading if
     # de-interleaving actually exposed a TIGHTER constraint than the stream
     # showed on its own.
@@ -859,7 +967,8 @@ def _attempt_candidate(bits: np.ndarray, first: int, step: int,
                           data_limited=prof.data_limited)
 
 
-def blind_recover(bits: np.ndarray, statistical_fallback: bool = True) -> RecoveryResult:
+def blind_recover(bits: np.ndarray, statistical_fallback: bool = True,
+                  sweep_alignments: bool = False) -> RecoveryResult:
     """The full Stage 4 chain: period -> alignment -> interleaver -> code.
 
     Walks the collapse periods in ascending order and returns the first one
@@ -876,6 +985,27 @@ def blind_recover(bits: np.ndarray, statistical_fallback: bool = True) -> Recove
     if len(bits) < MIN_BITS:
         return RecoveryResult("failed", 0.0,
                               reason="only %d bits; need >= %d" % (len(bits), MIN_BITS))
+
+    # DEGENERATE INPUT, refused before anything can find structure in it.
+    # `10110010` repeated 20,000 times was reported as
+    #     status ok, block(depth=5, width=2), a recovered code
+    # by the shipping path. Every guard downstream passed it: the deficiency is
+    # real, the de-interleaved stream is consistent, the signature holds and the
+    # residual syndrome is exactly 0.0 - because a period-8 stream annihilates
+    # almost any parity check you hand it. Nothing downstream can catch this,
+    # which is why the test is here and reads the INPUT.
+    #
+    # The 8 Sep gate asks that "uncoded random data does not trigger a false
+    # code detection", and random data was tested and does not. PERIODIC data
+    # was never tested, and it did.
+    degenerate = exact_repetition_period(bits)
+    if degenerate is not None:
+        return RecoveryResult(
+            "failed", 0.0,
+            reason="stream repeats exactly every %d bits, so it carries no "
+                   "information and any code found in it is an artifact of the "
+                   "repetition; a coded stream from a real source is aperiodic"
+                   % degenerate)
 
     def _from_statistical(profile, note):
         if not statistical_fallback:
@@ -905,7 +1035,8 @@ def blind_recover(bits: np.ndarray, statistical_fallback: bool = True) -> Recove
             break                       # nothing collapsed anywhere
         if first is None:
             first = cand
-        res = _attempt_candidate(bits, cand, step, prof, trust_step=(n_tried == 0))
+        res = _attempt_candidate(bits, cand, step, prof, trust_step=(n_tried == 0),
+                                 sweep_alignments=sweep_alignments)
         n_tried += 1
         if res is not None:
             if res.status == "ok":

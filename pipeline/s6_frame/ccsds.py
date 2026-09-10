@@ -458,7 +458,32 @@ def recover_ccsds(bits, decode_cap: int = DECODE_CAP_BITS) -> CCSDSResult:
             return res
         from pipeline.s6_frame.descramble import descramble
         stream = descramble(bits, hyp)
-        res.scrambler_poly = getattr(hyp, "poly", None) or getattr(hyp, "poly_octal", None)
+        # ScramblerHypothesis carries degree/period/taps/state - it has NEVER had
+        # `poly` or `poly_octal`, so this line read two names that do not exist
+        # and `or`-ed their defaults: scrambler_poly was None on every blind
+        # recovery that ever succeeded, immediately after descramble(bits, hyp)
+        # used the same hypothesis successfully.
+        #
+        # It went unnoticed because the ONLY other writer (the randomiser branch
+        # below) fills the field from the STANDARD_RANDOMISERS dictionary, so a
+        # dictionary match reported a polynomial and a blind recovery did not -
+        # exactly backwards from what this stage claims to be for.
+        #
+        # Fifth instance in this codebase of a getattr against a name that is not
+        # a field, silently taking its default (order_hint, symbol_rate_score,
+        # symbol_rate, est.symbol_rate were the others).
+        #
+        # REPRESENTATION, stated because it is not the same one as the generator
+        # polynomials elsewhere in this project: `taps` is the Berlekamp-Massey
+        # CONNECTION polynomial, taps[0] == 1, recurrence s[k] = sum taps[j]
+        # s[k-j]. Packed here with taps[j] at bit j. That is NOT the Fibonacci
+        # tap-mask `zoo.bits_only.lfsr_scramble` takes (poly & ((1<<deg)-1)), so
+        # this integer must not be compared against 0o651 without converting
+        # first. Reporting the recovered value in a stated representation beats
+        # reporting None; claiming it equals the CCSDS octal has not been
+        # verified and is therefore not claimed.
+        res.scrambler_poly = sum(int(b) << j for j, b in enumerate(hyp.taps) if b)
+        res.stages["scrambler-degree-%d" % hyp.degree] = True
         res.stages["descramble"] = True
         inner = blind_recover(stream)
 

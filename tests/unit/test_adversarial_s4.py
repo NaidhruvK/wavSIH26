@@ -190,3 +190,78 @@ def test_summary_survives_a_convolutional_interleaver():
                                           {"branches": 4, "delay": 1}, 1.0))
     text = res.summary()
     assert "convolutional" in text and "branches=4" in text
+
+
+# ---------------------------------------------------------------------------
+# Degenerate (exactly periodic) input - the false positive the 8 Sep gate missed
+# ---------------------------------------------------------------------------
+
+def test_a_repeating_pattern_is_refused_not_recovered():
+    """`10110010` x 20,000 was reported as ok, block(depth=5, width=2).
+
+    Every downstream guard passed it, and correctly by their own terms: the
+    deficiency is real, the de-interleaved stream is consistent, the signature
+    holds, and the residual syndrome is exactly 0.0 - a period-8 stream
+    annihilates almost any parity check handed to it. Nothing that inspects the
+    RECOVERED PARAMETERS can catch this, which is why the test reads the input.
+
+    The 8 Sep gate asks that uncoded RANDOM data raises no false code detection,
+    and it does not. Periodic data was never tested, and it did.
+    """
+    import numpy as np
+    from pipeline.s4_recover.rank_collapse import blind_recover
+
+    bits = np.tile(np.array([1, 0, 1, 1, 0, 0, 1, 0], dtype=np.uint8), 20_000)
+    res = blind_recover(bits)
+    assert res.status != "ok", (
+        "a stream repeating every 8 bits was reported as %s with %s - that is a "
+        "confident recovery from an input carrying no information"
+        % (res.status, getattr(res.interleaver, "params", None)))
+    assert "repeat" in (res.reason or "").lower()
+
+
+def test_exact_repetition_separates_degenerate_from_real_streams():
+    """The discriminator must be decisive in BOTH directions.
+
+    A guard that refuses degenerate input is worthless if it also refuses real
+    input. Measured: every degenerate stream has an exact period, and no real
+    coded stream has one - including a stream carrying repeating ASCII text,
+    which is structured but still aperiodic once encoded and interleaved.
+    """
+    import numpy as np
+    from pipeline.s4_recover.rank_collapse import exact_repetition_period
+    from zoo.bits_only import make_stream
+
+    rng = np.random.default_rng(11)
+    assert exact_repetition_period(
+        np.tile(np.array([1, 0, 1, 1, 0, 0, 1, 0], dtype=np.uint8), 20_000)) == 8
+    assert exact_repetition_period(np.zeros(160_000, dtype=np.uint8)) == 1
+    assert exact_repetition_period(
+        np.tile(np.array([0, 1], dtype=np.uint8), 80_000)) == 2
+    assert exact_repetition_period(
+        rng.integers(0, 2, 160_000).astype(np.uint8)) is None
+
+    msg = ("RAAYA SIH26147 -- blind recovery of modulation, interleaver and "
+           "code. Nothing about this file was supplied in advance. ")
+    for payload in (None, msg):
+        bits, _ = make_stream(80_000, 8, 12, ber=0.0, seed=0, mean_burst=1,
+                              scramble=False, start_offset=0,
+                              payload_text=payload)
+        assert exact_repetition_period(bits) is None, (
+            "a real coded stream was called degenerate - the guard would "
+            "refuse valid input")
+
+
+def test_the_guard_does_not_cost_a_real_recovery():
+    """No false negative: the streams that recovered before still recover."""
+    from pipeline.s4_recover.rank_collapse import blind_recover
+    from zoo.bits_only import make_stream
+
+    for offset in (0, 7):
+        bits, _ = make_stream(80_000, 8, 12, ber=0.0, seed=0, mean_burst=1,
+                              scramble=False, start_offset=offset,
+                              payload_text=None)
+        res = blind_recover(bits)
+        assert res.status == "ok", "offset %d regressed to %s" % (offset, res.status)
+        assert res.interleaver.params["depth"] == 8
+        assert res.interleaver.params["width"] == 12
