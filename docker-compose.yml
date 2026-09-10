@@ -1,0 +1,35 @@
+# The emergency protocol for demo day is `git checkout v1.0 && docker compose up`.
+# That command had nothing to run: there was no compose file in the repo, only a
+# `make docker-run`. Found on 10 Sep by executing the documented recovery path
+# instead of reading it.
+#
+#   docker compose up            build if needed, serve UI + API on :8000
+#   docker compose up -d         same, detached
+#   docker compose down          stop
+#
+# Then open http://localhost:8000
+services:
+  raaya:
+    build: .
+    image: raaya:v1.0
+    container_name: raaya
+    ports:
+      - "8000:8000"
+    environment:
+      # The service caps each stage at 15 s and the whole analysis at 90 s.
+      # Both are measured budgets, not guesses - see STATUS.md 10 Sep - so they
+      # are pinned here rather than left to whatever the image defaults to.
+      RAAYA_STAGE_TIMEOUT: "15.0"
+      RAAYA_TOTAL_TIMEOUT: "90.0"
+    # The target deployment is air-gapped and the demo must prove it needs
+    # nothing from a network. Uncomment to enforce that during a demo; leave it
+    # commented for normal use so the UI can be reached from the host.
+    # network_mode: none
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
