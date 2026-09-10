@@ -3388,6 +3388,72 @@ merges rather than guess at it now.
 
 ---
 
+## 10 Sep - v1.0 TAGGED. The 9 Sep gate run and passed, one day late.
+
+The gate reads: "the exported image runs on a machine that has never seen the
+repo, with no network, and processes all eight demo files correctly, twice."
+Every clause of that was verified, not assumed.
+
+| what | result |
+|---|---|
+| `main` | `3980735`, tagged **v1.0**, pushed |
+| Full suite at the tag | **983 passed, 4 skipped, 2 xfailed, 0 failed, 0 errors** (989 collected) |
+| Image | `raaya:v1.0`, 1.28 GB |
+| Portable export | `C:\dev\raaya-release\raaya-v1.0.tar`, 291 MB |
+| sha256 of the tar | `ec9341003c8dd1e155468c5ee8fe17b99979383cf2eff7d55606f5038d385bbd` |
+
+**The export was verified the only way that means anything: the local image was
+DELETED, restored from the tar alone, and the gate re-run offline.**
+
+    docker load -i raaya-v1.0.tar
+    docker run --rm --network none raaya:v1.0 python demo/run_demo.py --twice
+    -> PASS 1: ALL EIGHT CORRECT
+       PASS 2: ALL EIGHT CORRECT
+       GATE PASS - 2 of 2 passes, every capture correct in all seven stages
+       exit 0
+
+8/8 both passes, 9.3-17.5 s per capture against a 90 s envelope, no network.
+
+**Copy that tar to two USB sticks and one cloud drive** - that is the rest of the
+9 Sep instruction and it is a manual step nobody has done yet. Verify each copy
+with the sha256 above.
+
+### What landed to get here
+
+- Merged `naidhruv/integration` (11 commits: CCSDS outer RS into S5, S6 ASM
+  framing, envelope refusal, UI). Three conflicts in `service/orchestrator.py`.
+- **S5 was handed a budget longer than its own stage.** The branch set
+  `S5_DECODE_MAX_BITS = 32_000` = 20.4 s of Viterbi inside a 15 s stage cap.
+  Set to 16_000 (9.4 s, 1.6x margin). Third time this pattern has bitten.
+  Its amplifier is worth remembering: **a timed-out stage is not cancellable** -
+  Python cannot kill the thread - so the orphaned Viterbi starved the stages
+  after it, and one overrun caused eight failures across two test classes.
+- Created `demo/` - it had never existed, so the gate could not be run at all
+  and `git checkout v1.0` had nothing to check out.
+
+### Standing instructions for the panel
+
+`demo/README.md` carries the envelope table and the rules. Two to hold:
+
+1. **Do not change the parameters of `--demo --text`.** It pins
+   `start_offset=0`; a repeating-text payload at a non-zero offset recovers
+   1 of 10 against 10 of 10 for an unstructured payload.
+2. **Do not add a sub-envelope capture to the demo set.** 16-QAM below 15 dB
+   does not complete. It fails honestly, but it fails.
+
+The strongest claim to make is not "six modulations". It is that **all ten
+sub-envelope cases decline with a stated reason and none produces a confident
+wrong answer** - and that is measured, in the README.
+
+### Still UNVERIFIED - say so if asked
+
+Web UI build, upload-path security (traversal, size limits, model
+deserialisation), load beyond 10 concurrent uploads, the LDPC decode path. The
+adversarial audit that would have covered these failed twice on session limits
+and never ran. Nobody should claim these are fine.
+
+---
+
 ## 10 Sep, pre-demo hardening - a FALSE POSITIVE that was shipping, a fifth
 ## silent-getattr, and the operating envelope measured rather than claimed
 
