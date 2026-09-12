@@ -38,6 +38,7 @@ from .job_runner import (
     StageTimeoutError,
     job_runner,
 )
+from .report_writer import save_report
 
 logger = logging.getLogger("raaya.orchestrator")
 
@@ -81,6 +82,24 @@ def save_stage_artifact(run_id: str, artifact_name: str, data: Any) -> str:
         return str(file_path.relative_to(config.repo_root))
     except ValueError:
         return str(file_path)
+
+
+def _write_report_files(run_id: str, report: AnalysisReport) -> dict[str, str]:
+    """Drop report.json and report.md beside the stage artifacts for this run.
+
+    Called on every exit path, including the two early returns - a capture that
+    was refused as out of envelope, or one whose S0 ingest failed, is exactly
+    the case where someone wants the written reason in a file rather than having
+    to re-run the analysis to see it again.
+    """
+    written = save_report(run_id, report)
+    if written:
+        log_event(logging.INFO, run_id, "pipeline",
+                  "Report written: %s" % ", ".join(sorted(written.values())))
+    else:
+        log_event(logging.WARNING, run_id, "pipeline",
+                  "Report files could not be written; run is unaffected")
+    return written
 
 
 # -----------------------------------------------------------------------------
@@ -1060,6 +1079,7 @@ def orchestrate(
             "pipeline",
             f"Analysis pipeline refused with verdict=out_of_envelope (triggered by {trigger_stage}: {trigger_res.reason}), duration={(time.time() - start_time):.2f}s",
         )
+        _write_report_files(run_id, report)
         return report
 
     # -------------------------------------------------------------------------
@@ -1108,6 +1128,7 @@ def orchestrate(
             final={},
         )
         update_run(run_id=run_id, status="failed", envelope_verdict="failed", error=s0_res.reason, db_path=db_path)
+        _write_report_files(run_id, report)
         return report
 
     # -------------------------------------------------------------------------
@@ -1518,6 +1539,7 @@ def orchestrate(
         "pipeline",
         f"Analysis pipeline completed with verdict={verdict}, duration={(time.time() - start_time):.2f}s",
     )
+    _write_report_files(run_id, report)
     return report
 
 
