@@ -52,9 +52,29 @@ python -m pipeline.s4_recover.cli --demo --text
 | `4fsk_20dB_2035` | 4-FSK | 20 dB |
 | `qpsk_15dB_2010` | QPSK | 15 dB |
 | `16qam_15dB_2022` | 16-QAM | 15 dB |
+| `qpsk_20dB_textpayload` | QPSK | 20 dB |
 
 All six modulations, plus two lower-SNR captures to show the envelope is not a
-cliff at 20 dB.
+cliff at 20 dB, plus one capture carrying a readable message.
+
+**The ninth is the one to put on screen.** The other eight carry RANDOM payload
+bits, so the UI's payload panel reads ~39 % printable - which is the correct
+answer for random data, and unmoving to watch. `qpsk_20dB_textpayload` carries
+text, and the panel ends with the sentence on screen:
+
+> RAAYA SIH26147 -- BLIND SIGNAL RECOVERY. This capture was demodulated,
+> de-interleaved and decoded with no prior knowledge...
+
+99.87 % printable. The single non-printing byte is the leading partial byte,
+where the decode starts mid-message because nothing in this chain does frame
+synchronisation.
+
+**Say what it proves, and what it does not.** It is a genuine blind recovery -
+the recovery never sees the truth JSON or the message. It is NOT evidence that
+text payloads work in general: the generator offset was swept through the real
+pipeline and 11 of 12 offsets decline at S4. That is the known structured-source
+gap. Do not generate a fresh text capture in front of a panel; see
+`demo/make_text_capture.py` and `demo/experimental/README.md`.
 
 ## The operating envelope — measured, not claimed
 
@@ -101,7 +121,7 @@ head of the stream.
 
 **Safe:** any capture in `zoo/corpus/rf/` at ≥ 15 dB; any modulation; re-running
 any number of times; running with the network off; running the CLI with the API
-stopped.
+stopped; re-running the text capture as often as you like - it is deterministic.
 
 **Will decline, by design:** captures below the envelope above; uncoded or
 random data; a stream that repeats exactly (it is refused as carrying no

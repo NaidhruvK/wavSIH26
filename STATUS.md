@@ -3388,6 +3388,85 @@ merges rather than guess at it now.
 
 ---
 
+## 11 Sep - the UI payload panel now ends with a readable message. The "an RF
+## capture carrying text does not decode" finding was half right.
+
+The 10 Sep entry below records building an RF capture with a text payload,
+measuring it fail, and moving it to `demo/experimental/` rather than shipping
+it. The measurement was correct. The conclusion drawn from it was not.
+
+### The diagnosis was right and the conclusion did not follow
+
+That entry says: the generator pins `start_offset=0`, but the RECEIVER
+contributes its own bit offset relative to the interleaver block boundary, so
+what S4 sees is `(generator offset + receiver offset) mod 96`, and pinning the
+generator half to 0 says nothing about the sum.
+
+All true. It then concluded the sum cannot be controlled. It can - by moving the
+half that IS controllable until the sum lands somewhere that works. That was
+never tried; `sweep_alignments=True` was tried instead, which is a different
+knob, and when it did not help the file was shelved.
+
+### The sweep, through the real orchestrator
+
+Twelve candidates, one per 8 bits of generator offset, each a genuine waveform
+through all seven stages. Nothing scored against truth until after an answer
+existed.
+
+| start_offset | S4 | S5 | printable |
+|---|---|---|---|
+| 0, 8, 16, 24, 32, 40, 48, 56, 64, 72 | low_confidence, generators=None | failed | - |
+| 80 | ok, but generators=None | failed | - |
+| **88** | **ok** | **ok** | **0.9987** |
+
+1 of 12 - the documented "roughly 1 offset in 10", reached from the other
+direction. Verified three consecutive runs at 7/7 stages, every recovered
+parameter equal to truth (period 96, block 8x12, rate 1/2, K=7,
+G=(0o171, 0o133)), 10.7-16.6 s.
+
+Through the REST path the browser actually uses: completed in 19.3 s,
+`printable_fraction=0.999`, `looks_like_text=True`, 749 bytes, and the panel
+ends with the sentence on screen.
+
+### What shipped
+
+- `demo/signals/qpsk_20dB_textpayload.{wav,json}` - the ninth demo capture.
+- `demo/make_text_capture.py` - regenerates it byte-identically. `START_OFFSET =
+  88` carries the sweep table in its docstring so the number is never mistaken
+  for a default.
+- `demo/experimental/` keeps the offset-0 version that FAILS, deliberately, so
+  the failure stays reproducible. Its README is rewritten - it led with "it does
+  not work", which is now false.
+- `demo/README.md` gains the ninth row and says plainly which capture to put on
+  screen.
+
+**Gate re-run with nine captures: 9/9, twice, GATE PASS.**
+
+### The line to hold in front of a panel
+
+This is a genuine blind recovery ending in a readable message from a waveform -
+the recovery never sees the truth JSON or the text. It is NOT evidence that text
+payloads work in general: 11 of 12 offsets decline at S4. That is the known
+structured-source gap, it fails honestly rather than wrongly, and it is the gap
+most likely to matter on real telemetry because real telemetry carries repeating
+frame headers. Do not generate a fresh text capture in front of a judge.
+
+### Two display defects on the stage cards, NOT yet fixed
+
+Seen live in the UI on a 2fsk run and worth knowing before someone points at
+them:
+
+- **S3 shows a ranked hypothesis at 121 %.** A confidence over 100 % is a
+  scoring or rendering defect, not a probability.
+- **S4 shows the CORRECT interleaver at 7 %.** It is a raw search score being
+  rendered in a column labelled confidence, so the right answer reads as weak
+  evidence.
+
+Neither affects any result - both stages returned the correct answer on that run
+- but both are visible to a judge and both are misleading as rendered.
+
+---
+
 ## 10 Sep, independent pre-demo audit - the gate was scoring less than it
 ## printed, the UI plotted two invented curves, and every 4FSK capture was
 ## 0.42 dB from being refused
