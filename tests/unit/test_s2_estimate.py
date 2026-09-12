@@ -337,3 +337,85 @@ def test_a_classifier_exception_degrades_instead_of_failing_s2(monkeypatch):
     assert result.cfo_hz is not None
     assert result.modulation_hypotheses == []
     assert result.modulation_low_confidence is None
+
+
+# --- symbol-rate estimator routing (dominance, not envelope_cv) -------------
+#
+# envelope_cv < 0.25 chose the symbol-rate estimator until the first off-air
+# captures went through the pipeline. Real FSK measured cv 0.387 and 0.503
+# against 0.070 for the corpus's own synthetic 2FSK, so genuine FSK was handed
+# to the linear estimator and S2 returned a wrong rate with status "ok" - the
+# silent misroute the 7 Sep note on that line predicted. Selection is now by
+# each estimator's own peak dominance; measured over all 252 corpus captures
+# that is 252/252 against 224/252, zero regressions, 28 rescues, every rescue a
+# 2FSK or 4FSK capture at 4 or 8 dB.
+
+from pipeline.s2_estimate import _peak_dominance, estimate_symbol_rate, estimate_symbol_rate_fsk
+
+
+def test_peak_dominance_separates_one_line_from_a_forest():
+    forest = [(1590.0, 112.4), (2030.0, 108.5), (2989.0, 105.1)]   # real, linear
+    one_line = [(9766.0, 34.3), (8865.0, 4.8), (12850.0, 4.7)]     # real, fsk
+
+    assert _peak_dominance(forest) < 1.1
+    assert _peak_dominance(one_line) > 5.0
+    # and the forest's top SCORE is the larger of the two, which is exactly why
+    # scores cannot be compared across the estimators
+    assert forest[0][1] > one_line[0][1]
+
+
+def test_peak_dominance_edge_cases_do_not_raise():
+    assert _peak_dominance([]) == 0.0
+    assert _peak_dominance([(50000.0, 12.0)]) == float("inf")
+    assert _peak_dominance([(1.0, 5.0), (2.0, 0.0)]) == float("inf")
+
+    # A NaN top score scores 0.0, NOT inf. The value is used only to pick a
+    # winner between the two estimators, so an unusable peak must lose every
+    # comparison; inf would make a NaN win every one of them.
+    assert _peak_dominance([(1.0, float("nan")), (2.0, 1.0)]) == 0.0
+
+
+@pytest.mark.parametrize("stem", ["2fsk_4dB_2024", "2fsk_8dB_2025",
+                                  "4fsk_4dB_2030", "4fsk_8dB_2031"])
+def test_low_snr_fsk_is_no_longer_misrouted_by_envelope_cv(stem):
+    """These four were wrong before the change: cv above 0.25, sent to linear."""
+    wav = CORPUS / f"{stem}.wav"
+    truth_path = CORPUS / f"{stem}.json"
+    if not wav.exists():
+        pytest.skip(f"{stem} not in corpus -- run python -m zoo.build_rf_corpus")
+    truth = json.loads(truth_path.read_text())
+    expected = truth["fs"] / truth["sps"]
+
+    s0 = ingest(wav)
+    res = estimate(s0.iq, s0.fs, classify=False)
+
+    assert res.envelope_cv > 0.25, "precondition: envelope_cv would route to linear"
+    assert res.symbol_rate_estimator == "fsk"
+    assert abs(res.symbol_rate_hz - expected) / expected < 0.01
+
+
+def test_the_estimator_that_ran_is_reported_and_is_not_constant_envelope():
+    """constant_envelope still routes CFO only; it no longer implies the rate path."""
+    files = _corpus_files("2fsk_4dB_*.wav")
+    s0 = ingest(files[0])
+    res = estimate(s0.iq, s0.fs, classify=False)
+
+    assert res.symbol_rate_estimator in ("fsk", "linear")
+    assert res.symbol_rate_dominance is not None and res.symbol_rate_dominance > 0
+    # the whole point: these two disagree on this capture and that is allowed
+    assert res.constant_envelope is False
+    assert res.symbol_rate_estimator == "fsk"
+
+
+def test_a_high_snr_psk_capture_still_lands_on_the_right_rate():
+    """Guard against the rescue costing accuracy where it already worked."""
+    for stem in ("qpsk_20dB_2011", "bpsk_20dB_2005", "16qam_20dB_2023"):
+        wav = CORPUS / f"{stem}.wav"
+        if not wav.exists():
+            pytest.skip(f"{stem} not in corpus")
+        truth = json.loads((CORPUS / f"{stem}.json").read_text())
+        expected = truth["fs"] / truth["sps"]
+
+        s0 = ingest(wav)
+        res = estimate(s0.iq, s0.fs, classify=False)
+        assert abs(res.symbol_rate_hz - expected) / expected < 0.01, stem

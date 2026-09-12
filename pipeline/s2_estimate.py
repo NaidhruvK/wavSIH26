@@ -54,6 +54,8 @@ class S2Result:
     fsk_order_hypotheses: list = field(default_factory=list)     # [(order, score), ...] ranked
     constant_envelope: bool | None = None
     envelope_cv: float | None = None      # raw std(|x|)/mean(|x|) constant_envelope was decided from
+    symbol_rate_estimator: str | None = None   # "fsk" | "linear" - which one symbol_rate_hz came from
+    symbol_rate_dominance: float | None = None # winning estimator's top peak over its own runner-up
     modulation_hypotheses: list = field(default_factory=list)    # [(class_name, prob), ...] ranked
     modulation_low_confidence: bool | None = None
     reason: str | None = None
@@ -61,6 +63,41 @@ class S2Result:
     def as_params(self) -> dict:
         """The mapping S3 is handed. No truth key exists to leak."""
         return {"fs": self.fs, "symbol_rate": self.symbol_rate_hz, "cfo_hz": self.cfo_hz}
+
+
+def _peak_dominance(hyps: list) -> float:
+    """Top peak over the runner-up, within one estimator's own ranked list.
+
+    The two symbol-rate estimators score peaks as height over the local median,
+    but on DIFFERENT transforms - |x|^2 for the linear one, instantaneous
+    frequency for the FSK one - so their scores are not comparable and the
+    larger number does not mean the better answer. On the first off-air capture
+    ever run through this pipeline the linear estimator reported 112.4 and the
+    FSK one 34.3, and the FSK one was right to within 0.003%.
+
+    This ratio is comparable because it is dimensionless and computed inside a
+    single estimator against its own runner-up. It answers the question that
+    actually distinguishes the two cases: did this transform find ONE line, or
+    a forest of peaks all about the same height? On that same capture the
+    linear list was 1590(112.4), 2030(108.5), 2989(105.1) - dominance 1.04, a
+    forest - against the FSK list 9766(34.3), 8865(4.8), 12850(4.7) -
+    dominance 7.1, one line.
+
+    Returns inf for a single-hypothesis list (nothing to be beaten by) and 0.0
+    for an empty one (no peak at all).
+    """
+    if not hyps:
+        return 0.0
+    if len(hyps) < 2:
+        return float("inf")
+    try:
+        top = float(hyps[0][1])
+        runner_up = float(hyps[1][1])
+    except (TypeError, IndexError, ValueError):
+        return 0.0
+    if not np.isfinite(top) or not np.isfinite(runner_up) or runner_up <= 0.0:
+        return float("inf") if top > 0.0 else 0.0
+    return top / runner_up
 
 
 def estimate_symbol_rate(x: np.ndarray, fs: float,
@@ -384,11 +421,38 @@ def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None,
         if constant_envelope is None:
             constant_envelope = bool(envelope_cv < 0.25)
 
+        # SYMBOL RATE: run both estimators and keep the one whose own peak
+        # stood out, rather than the one envelope_cv nominated. See
+        # _peak_dominance for why that statistic is comparable across the two
+        # transforms and why this is not a second threshold on envelope_cv.
+        #
+        # Measured over all 252 captures in zoo/corpus/rf, rate within 1% of
+        # truth: envelope_cv routing 224/252 (88.9%), dominance routing 252/252
+        # (100.0%), zero regressions and 28 rescues. Every rescue is 2FSK or
+        # 4FSK at 4 dB or 8 dB - the exact population the 7 Sep note predicted,
+        # where noise lifts envelope_cv over 0.25 and a genuine FSK capture is
+        # handed to the linear estimator with status still "ok".
+        #
+        # CFO ROUTING IS DELIBERATELY UNCHANGED. This study measured symbol
+        # rate and nothing else, so constant_envelope still selects the CFO
+        # estimator and the FSK order search. The two can now disagree; when
+        # they do, symbol_rate_estimator says so rather than leaving a caller
+        # to infer it from constant_envelope, which no longer implies it.
+        lin_rate, lin_score, lin_hyps = estimate_symbol_rate(iq, fs)
+        fsk_rate, fsk_score, fsk_hyps = estimate_symbol_rate_fsk(iq, fs)
+        lin_dom = _peak_dominance(lin_hyps)
+        fsk_dom = _peak_dominance(fsk_hyps)
+
+        if fsk_dom > lin_dom:
+            rate, rate_score, rate_hyps = fsk_rate, fsk_score, fsk_hyps
+            rate_estimator, rate_dominance = "fsk", fsk_dom
+        else:
+            rate, rate_score, rate_hyps = lin_rate, lin_score, lin_hyps
+            rate_estimator, rate_dominance = "linear", lin_dom
+
         if constant_envelope:
-            rate, rate_score, rate_hyps = estimate_symbol_rate_fsk(iq, fs)
             cfo, order_m, cfo_score, cfo_hyps, cfo_alias_hyps = estimate_cfo_fsk(iq, fs)
         else:
-            rate, rate_score, rate_hyps = estimate_symbol_rate(iq, fs)
             cfo, order_m, cfo_score, cfo_hyps, cfo_alias_hyps = estimate_cfo(iq, fs)
 
         fsk_order = fsk_order_score = None
@@ -423,6 +487,8 @@ def estimate(iq: np.ndarray, fs: float, constant_envelope: bool | None = None,
                          fsk_order_hypotheses=fsk_order_hyps,
                          constant_envelope=constant_envelope,
                          envelope_cv=envelope_cv,
+                         symbol_rate_estimator=rate_estimator,
+                         symbol_rate_dominance=rate_dominance,
                          modulation_hypotheses=mod_hyps,
                          modulation_low_confidence=mod_low_conf)
     except Exception as e:
