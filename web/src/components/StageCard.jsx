@@ -157,7 +157,10 @@ export default function StageCard({ stageName, stageResult, runId }) {
         {/* Key Values */}
         {isPresent && Object.keys(values).length > 0 && (
           <div className="inset" style={{ padding: '8px 10px', fontSize: 11, marginBottom: 10 }}>
-            {Object.entries(values).slice(0, 4).map(([k, v]) => (
+            {/* Six, not four: S2's symbol-rate estimator, envelope_cv and peak
+                dominance are the three numbers that explain a wrong rate, and
+                at four they fell off the card. The stage panels have the room. */}
+            {Object.entries(values).slice(0, 6).map(([k, v]) => (
               <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '2px 0' }}>
                 <span style={{ color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   {k.replace(/_/g, ' ')}

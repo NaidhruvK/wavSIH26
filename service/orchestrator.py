@@ -508,21 +508,66 @@ def adapt_s2(raw: Any, elapsed_ms: float) -> StageResult:
     except (TypeError, IndexError, ValueError):
         symbol_rate_peak_score = None
 
+    # S2 decides WHICH symbol-rate estimator runs, and S2Result has carried the
+    # raw statistic behind that decision since 7 Sep precisely so a caller need
+    # not trust the boolean blind. This adapter dropped it, so the number
+    # existed and reached nobody: not the DB, not the UI, not the report.
+    #
+    # It matters because the routing is not reliable off-corpus. The first
+    # off-air captures ever run through this pipeline - TRISAT and KS-1Q, both
+    # FSK - measured envelope_cv 0.387 and 0.503 against 0.070 for the corpus's
+    # own synthetic 2FSK, and were routed to the linear estimator with status
+    # still "ok". symbol_rate_estimator is read from S2Result rather than
+    # derived from constant_envelope, which since the dominance change no
+    # longer implies which estimator produced the rate.
+    if isinstance(raw, dict):
+        envelope_cv = raw.get("envelope_cv")
+        constant_envelope = raw.get("constant_envelope")
+        rate_estimator = raw.get("symbol_rate_estimator")
+        rate_dominance = raw.get("symbol_rate_dominance")
+    else:
+        envelope_cv = getattr(raw, "envelope_cv", None)
+        constant_envelope = getattr(raw, "constant_envelope", None)
+        rate_estimator = getattr(raw, "symbol_rate_estimator", None)
+        rate_dominance = getattr(raw, "symbol_rate_dominance", None)
+
     raw_reason = getattr(raw, "reason", None) if not isinstance(raw, dict) else raw.get("reason")
     raw_status = getattr(raw, "status", None) if not isinstance(raw, dict) else raw.get("status")
 
     is_valid_rate = rate is not None and isinstance(rate, (int, float)) and not math.isnan(rate) and rate > 0
     sps = (fs / rate) if is_valid_rate else 0.0
 
+    # ORDER MATTERS HERE, for one reason worth writing down: the UI's stage card
+    # renders only the first few entries of this mapping, so a key appended at
+    # the end is present in the API and the report and invisible on screen. The
+    # routing diagnostics are placed directly after the rate they explain.
+    # `symbol_rate_hz` duplicates `symbol_rate` exactly and moves down; nothing
+    # reads either by position.
     values = {
         "symbol_rate": rate,
-        "symbol_rate_hz": rate,
         "sps": sps,
+    }
+
+    if rate_estimator is not None:
+        values["symbol_rate_estimator"] = str(rate_estimator)
+    if envelope_cv is not None:
+        values["envelope_cv"] = float(envelope_cv)
+    if rate_dominance is not None and math.isfinite(float(rate_dominance)):
+        # ~1.0 means no peak stood out and the rate above is not to be trusted.
+        # Reported, not gated on: S3's own screen already refuses a candidate
+        # with no symbol-rate line, and that is where the rejection belongs.
+        values["symbol_rate_dominance"] = float(rate_dominance)
+
+    values.update({
         "cfo_hz": cfo_hz,
+        "symbol_rate_hz": rate,
         "order_hint": order_hint,
         "symbol_rate_score": symbol_rate_score,
         "symbol_rate_peak_score": symbol_rate_peak_score,
-    }
+    })
+
+    if constant_envelope is not None:
+        values["constant_envelope"] = bool(constant_envelope)
 
     if raw_status == "failed":
         status = StageStatus.FAILED
