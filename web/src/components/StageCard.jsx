@@ -22,11 +22,26 @@ const TONE_COLOR = {
 };
 
 /**
+ * Generator polynomials are octal by universal convention — 0o171, 0o133 is the
+ * rate 1/2 K=7 pair every reference table lists. S4 carries them as plain
+ * integers, so rendering them as numbers printed "121, 91": arithmetically
+ * correct, and matching nothing in the CLI output, the reports, or anything a
+ * reviewer would check them against.
+ */
+const OCTAL_KEYS = new Set(['generators_octal', 'generators', 'polynomials_octal']);
+
+/**
  * Human-readable rendering for stage values. Nested objects/arrays are
  * compacted instead of degrading to "[object Object]".
  */
-function formatValue(v, depth = 0) {
+function formatValue(v, depth = 0, key = '') {
   if (v === null || v === undefined) return '—';
+  if (OCTAL_KEYS.has(key)) {
+    if (Array.isArray(v) && v.length && v.every(n => Number.isInteger(n))) {
+      return v.map(n => `0o${n.toString(8)}`).join(', ');
+    }
+    if (Number.isInteger(v)) return `0o${v.toString(8)}`;
+  }
   if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(2);
   if (typeof v === 'boolean') return v ? 'true' : 'false';
   if (Array.isArray(v)) {
@@ -148,7 +163,7 @@ export default function StageCard({ stageName, stageResult, runId }) {
                   {k.replace(/_/g, ' ')}
                 </span>
                 <span className="t-data" style={{ fontSize: 11, fontWeight: 600, textAlign: 'right', wordBreak: 'break-word' }}>
-                  {formatValue(v)}
+                  {formatValue(v, 0, k)}
                 </span>
               </div>
             ))}

@@ -25,10 +25,29 @@ function toHexDump(text, bytesPerRow = 16) {
   return rows.join('\n');
 }
 
+const PRINTABLE = /[\x20-\x7e\r\n\t]/;
+
+/**
+ * Nothing in this chain does frame synchronisation, so the Viterbi decode
+ * starts mid-message and the first byte is usually a partial one. It is the
+ * single non-printing character in an otherwise clean recovery, and rendering
+ * it raw puts a replacement glyph at the head of the message.
+ *
+ * The ASCII view drops those leading bytes and says so; the hex dump and the
+ * printable percentage are left exactly as decoded, because that partial byte
+ * is a true fact about the recovery and not a display artifact to hide.
+ */
+function splitLeadingPartial(text) {
+  let lead = 0;
+  while (lead < text.length && !PRINTABLE.test(text[lead])) lead++;
+  return { dropped: lead, body: text.slice(lead) };
+}
+
 export default function PayloadViewer({ finalPayload, s6Stage }) {
   const [viewMode, setViewMode] = useState('text'); // 'text' | 'hex'
 
   const text = finalPayload?.payload_text || s6Stage?.values?.text || '';
+  const { dropped, body } = splitLeadingPartial(text);
   const printableFraction = finalPayload?.printable_fraction ?? s6Stage?.values?.printable_fraction ?? 0;
   const looksLikeText = finalPayload?.looks_like_text ?? s6Stage?.values?.looks_like_text ?? false;
   const byteCount = s6Stage?.values?.n_bytes || Math.floor((finalPayload?.bits_count || 0) / 8) || text.length;
@@ -87,9 +106,18 @@ export default function PayloadViewer({ finalPayload, s6Stage }) {
         }}
       >
         {text
-          ? (viewMode === 'hex' ? toHexDump(text) : text)
+          ? (viewMode === 'hex' ? toHexDump(text) : body)
           : <span style={{ color: 'var(--text-tertiary)' }}>No decoded payload text produced for this run.</span>}
       </div>
+
+      {text && viewMode === 'text' && dropped > 0 && (
+        <p style={{ margin: '8px 2px 0', fontSize: 11, lineHeight: 1.5, color: 'var(--text-tertiary)' }}>
+          {dropped === 1 ? 'One leading partial byte' : `${dropped} leading partial bytes`} omitted from
+          this view. The decode starts mid-message because no stage in this chain performs frame
+          synchronisation. Switch to <strong>HEX DUMP</strong> for the stream exactly as decoded — the
+          printable percentage above counts it.
+        </p>
+      )}
     </section>
   );
 }
