@@ -103,5 +103,5 @@ live.
 |---|---|---|---|---|---|
 | 14 Sep | Claude (API upload, same file) | 7/7 ok, 16.5 s, sentence present | declined as above, 13.9 s | 23.8 s, TEXT RECOVERED | not runnable: no image, tag predates capture |
 | 14 Sep | Claude (API upload) | framed telemetry: 7/7 ok, 12.4 s, ASM LOCK, 3 frames | | | |
-| | person 1 | | | | |
+| 14 Sep | person 1 — **Claude, not a human**, this laptop, card from the top: pull at 4ea64d9, install+build 46 s, :8000 healthy in 15 s, warm-up 16.7 s. Uploads via `/analyze` (no browser), so the UI was served but not clicked | 12.4 s, 7/7, S4 block 8×12 K=7 0o171/0o133, 99.9 % printable, sentence present | 17.2 s (card says ~14 s), S4 low confidence → S5, S6 declined; refusal line written before the run matched the outcome | 20.1 s, TEXT RECOVERED | not run (CLI is the backup) |
 | | person 2 | | | | |
