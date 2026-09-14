@@ -1,3 +1,5 @@
+import { scoresArePercent, scoreLabel } from './scoreFormat.js';
+
 /**
  * Data transformation and downsampling utilities for RF Signal Visualizations.
  * Pure functions with zero DOM / window dependencies for reliable testing.
@@ -206,8 +208,12 @@ export function parseRankProfileData(raw) {
 
 /**
  * Parses ranked hypotheses into bar chart series with evidence.
+ *
+ * Scores are scaled to percent ONLY when the stage's score is a fraction and
+ * every value is in [0, 1] - see utils/scoreFormat.js for why S3 and S4 are
+ * not. `isPercent` and `axisTitle` tell the chart how to label the axis.
  */
-export function parseHypothesesData(hypotheses) {
+export function parseHypothesesData(hypotheses, stageName) {
   if (!Array.isArray(hypotheses) || hypotheses.length === 0) return null;
 
   const sorted = [...hypotheses]
@@ -218,11 +224,14 @@ export function parseHypothesesData(hypotheses) {
     }))
     .sort((a, b) => a.score - b.score); // Ascending for horizontal Plotly bars (top is highest)
 
+  const isPercent = scoresArePercent(stageName, sorted.map(s => s.score));
   return {
     labels: sorted.map(s => s.value),
-    scores: sorted.map(s => s.score * 100),
+    scores: sorted.map(s => (isPercent ? s.score * 100 : s.score)),
     evidence: sorted.map(s => s.evidence),
     highestCandidate: sorted[sorted.length - 1]?.value || null,
+    isPercent,
+    axisTitle: isPercent ? `${scoreLabel(stageName)} (%)` : scoreLabel(stageName),
   };
 }
 

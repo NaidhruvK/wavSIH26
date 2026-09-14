@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test src/api.test.js src/utils/visualizerData.test.js"
+    "test": "node --test src/api.test.js src/utils/visualizerData.test.js src/utils/scoreFormat.test.js"
   },
   "dependencies": {
     "plotly.js-dist-min": "^4.0.0",

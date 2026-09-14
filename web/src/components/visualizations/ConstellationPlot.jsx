@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatFractionOrNumber } from '../../utils/scoreFormat';
 import PlotlyChart from './PlotlyChart';
 import { parseConstellationData } from '../../utils/visualizerData';
 import EmptyState from '../ui/EmptyState';
@@ -145,7 +146,7 @@ export default function ConstellationPlot({ artifactData, imageUrl, stageValues 
         {lock && (
           <MetricPill
             label="Carrier Lock"
-            value={typeof lock === 'number' ? (lock * 100).toFixed(1) + '%' : String(lock)}
+            value={typeof lock === 'number' ? formatFractionOrNumber(lock) : String(lock)}
             tone="ok"
           />
         )}

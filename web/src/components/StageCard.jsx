@@ -2,6 +2,7 @@ import React from 'react';
 import { getArtifactUrl } from '../api';
 import StatusBadge, { statusTone } from './ui/StatusBadge';
 import Icon from './ui/icons';
+import { formatScore } from '../utils/scoreFormat';
 
 const STAGE_META = {
   s0_ingest:   { idx: 'S0', title: 'INGEST',   desc: 'WAV/IQ Normalization & Sniffer' },
@@ -189,7 +190,7 @@ export default function StageCard({ stageName, stageResult, runId }) {
                   {formatValue(h.value ?? h)}
                 </span>
                 {h.score !== undefined && (
-                  <span style={{ color: 'var(--text-tertiary)' }}>{(h.score * 100).toFixed(0)}%</span>
+                  <span style={{ color: 'var(--text-tertiary)' }}>{formatScore(h.score, stageName)}</span>
                 )}
               </div>
             ))}

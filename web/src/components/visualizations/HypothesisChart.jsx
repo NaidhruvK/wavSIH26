@@ -19,7 +19,7 @@ export default function HypothesisChart({ report }) {
   const stageObj = stages.find(s => s.stage === selectedStage);
   const hypotheses = stageObj?.hypotheses || [];
 
-  const parsed = parseHypothesesData(hypotheses);
+  const parsed = parseHypothesesData(hypotheses, selectedStage);
 
   const renderContent = () => {
     if (!parsed) {
@@ -42,7 +42,9 @@ export default function HypothesisChart({ report }) {
           ),
         },
         customdata: parsed.evidence,
-        hovertemplate: '<b>%{y}</b><br>Confidence: %{x:.1f}%<br>Evidence: %{customdata}<extra></extra>',
+        hovertemplate: parsed.isPercent
+          ? `<b>%{y}</b><br>${parsed.axisTitle}: %{x:.1f}%<br>Evidence: %{customdata}<extra></extra>`
+          : `<b>%{y}</b><br>${parsed.axisTitle}: %{x:.3g}<br>Evidence: %{customdata}<extra></extra>`,
       },
     ];
 
@@ -53,8 +55,11 @@ export default function HypothesisChart({ report }) {
         x: 0.02,
       },
       xaxis: {
-        title: { text: 'Confidence Score (%)', font: { color: '#97a3b6', size: 11 } },
-        range: [0, 105],
+        // A fixed 0-105 axis clipped S3's 1.21 priors and labelled S4's
+        // 1/(1+span) ranking keys as confidence. Percent axis only when the
+        // scores are fractions; otherwise the stage's own name, autoscaled.
+        title: { text: parsed.axisTitle, font: { color: '#97a3b6', size: 11 } },
+        ...(parsed.isPercent ? { range: [0, 105] } : { rangemode: 'tozero' }),
       },
       yaxis: {
         title: { text: 'Candidate Model', font: { color: '#97a3b6', size: 11 } },
