@@ -70,6 +70,18 @@ class S0Result:
     layout_hypotheses: list = field(default_factory=list)    # ranked (layout_label, score, evidence)
     reason: str | None = None
     file_path: str = ""
+    # WHERE fs CAME FROM. "wav_header" | "caller_hint" | "assumed_default".
+    # The samples cannot confirm fs (see s1_detect.check_sampling_rate), so
+    # every Hz figure downstream is exactly as good as this field. It exists
+    # because the raw-IQ path used to write `fs_hint or 200_000.0` and hand the
+    # invented number on with nothing marking it - a symbol rate reported in Hz
+    # off an assumed fs is wrong by an unknown factor and looked measured.
+    fs_source: str = "unknown"
+
+
+RAW_DEFAULT_FS = 200_000.0
+"""The sample rate assumed for a raw IQ file with no hint. The zoo's rate, and
+nothing more authoritative than that - hence `fs_source="assumed_default"`."""
 
 
 def read_wav_iq(path: str | Path) -> tuple[np.ndarray, float]:
@@ -255,8 +267,10 @@ def ingest(path: str | Path, fs_hint: float | None = None) -> S0Result:
     try:
         if suffix in (".wav",):
             iq, fs = read_wav_iq(path)
+            # The header is authoritative for a WAV; a caller hint that
+            # disagrees is ignored rather than preferred, as before.
             return S0Result(status="ok", iq=iq, fs=fs, source_format="wav",
-                             file_path=str(path))
+                             file_path=str(path), fs_source="wav_header")
 
         # raw IQ: sniff dtype/endianness first, then channel layout on
         # the winning dtype's decoded byte stream.
@@ -272,11 +286,23 @@ def ingest(path: str | Path, fs_hint: float | None = None) -> S0Result:
         layout_hyps = sniff_iq_layout(raw_samples)
         best_layout = layout_hyps[0][0]
 
-        fs = fs_hint or 200_000.0  # unknown for raw files without a sidecar
+        # A raw file carries no sample rate. The default stays - downstream
+        # stages need a number to express Hz in - but it is now LABELLED, and
+        # the reason says in words what the label means.
+        if fs_hint:
+            fs, fs_source, note = float(fs_hint), "caller_hint", None
+        else:
+            fs, fs_source = RAW_DEFAULT_FS, "assumed_default"
+            note = ("raw IQ carries no sample rate and none was supplied, so "
+                    "fs=%.0f Hz is ASSUMED. Symbol rate, CFO and bandwidth in "
+                    "Hz scale with that assumption; samples-per-symbol and "
+                    "fractional bandwidth do not. Pass fs_hint for true Hz."
+                    % RAW_DEFAULT_FS)
         iq = read_raw_iq(path, best_dt, fs, layout=best_layout)
         return S0Result(status="ok", iq=iq, fs=fs, source_format=f"raw_{best_dt}",
                          hypotheses=hyps, layout=best_layout,
-                         layout_hypotheses=layout_hyps, file_path=str(path))
+                         layout_hypotheses=layout_hyps, file_path=str(path),
+                         fs_source=fs_source, reason=note)
 
     except Exception as e:
         return S0Result(status="failed", iq=None, fs=None, source_format="unknown",

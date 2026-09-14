@@ -109,6 +109,13 @@ def _write_report_files(run_id: str, report: AnalysisReport) -> dict[str, str]:
 REQUIRED_PLUGIN_MODULES = (
     "pipeline.s3_receive",
     "pipeline.s4_recover.interleavers",
+    # 13 Sep: the pseudo-random (QPP) family. Registered in its own module
+    # exactly as the 7 Sep note said it would be, so it has to be listed here
+    # for the SERVICE to see it - the same omission that left `ldpc_code` dead
+    # in the API below while its unit tests passed. A family that is only
+    # reachable from pytest is not reachable from the upload button, which is
+    # the only reachability the problem statement is asking about.
+    "pipeline.s4_recover.pseudorandom",
     "pipeline.s5_decode.conv_code",
     "pipeline.s5_decode.rs_code",
     # 7 Sep: ldpc_code moved into pipeline/s5_decode/ (767a7ab) 3.5 h AFTER this
@@ -177,6 +184,76 @@ _PLUGINS_LOADED: bool = False
 # default here does not touch it.
 S5_DECODE_MAX_BITS = 12_000
 
+S5_BLIND_SWEEP_BUDGET_S = 9.0
+"""Wall clock for the whole blind code sweep in `_decode_blind_from_registry`.
+
+Bounded by the clock rather than by a candidate count because the cost belongs
+to the plug-ins, not to the sweep: `reed-solomon`'s blind search tries 255 byte
+alignments per standard profile, `conv`'s repeats a GF(2) rank search, and
+`ldpc`'s scans every codeword offset for every catalogue entry. Measured by
+reports/blind_ldpc_study.py on one 24 000-LLR LDPC stream:
+
+    conv            0.00 s   declined   (no consistent code structure)
+    ldpc            0.27 s   identified (7 catalogue entries, n = 48..1440)
+    reed-solomon    2.22 s   declined   (255 alignments x standard profiles)
+
+and end to end through orchestrate() the whole S5 stage took 2.2 - 2.9 s on an
+LDPC capture. So 9.0 leaves headroom against the 15 s
+stage cap without letting a pathological capture spend the whole of it. A
+plug-in the budget did not reach is REPORTED as not reached: "no code found" and
+"we ran out of time before asking" are different answers and only one of them is
+about the signal.
+"""
+
+
+def _summarise_code_params(params: Any) -> dict[str, Any]:
+    """Code parameters, with the matrices taken out.
+
+    Whatever `blind_recover` returns goes into the stage values, and from there
+    into report.json and the UI. An LDPC `params` carries its parity-check
+    matrix H - 720x1440 uint8 for the largest catalogue entry, which is 1.0 M
+    numbers - and `json.dump` would either write a 4 MB report or raise on the
+    ndarray. Neither is a thing to discover in front of a judge.
+
+    Arrays are replaced by their shape, which is the part a reader wants anyway:
+    "H: 720x1440" says the code's rate and block length at a glance, and the
+    matrix itself is identified by `code_name` for anyone who needs the actual
+    entry. Scalars and strings pass through untouched.
+    """
+    if params is None:
+        return {}
+    if not isinstance(params, dict):
+        # CodeParams / RSParams are dataclasses; anything else gets repr'd
+        # rather than dropped, because an unexpected type is worth seeing.
+        as_dict = getattr(params, "as_dict", None)
+        if callable(as_dict):
+            try:
+                params = as_dict()
+            except Exception:
+                return {"repr": repr(params)[:200]}
+        else:
+            from dataclasses import asdict, is_dataclass
+            if is_dataclass(params):
+                params = asdict(params)
+            else:
+                return {"repr": repr(params)[:200]}
+
+    out: dict[str, Any] = {}
+    for key, value in params.items():
+        if np is not None and isinstance(value, np.ndarray):
+            out[key] = "%s array %s" % (value.dtype,
+                                        "x".join(str(d) for d in value.shape))
+        elif isinstance(value, (str, bool, int, float)) or value is None:
+            out[key] = value
+        elif isinstance(value, (list, tuple)):
+            # A tap list or generator tuple is small and worth printing; a
+            # thousand-element row list is not.
+            out[key] = list(value) if len(value) <= 32 else "%d values" % len(value)
+        else:
+            out[key] = repr(value)[:120]
+    return out
+
+
 # Wall clock for S3's blind modulation search. Its own default is
 # SEARCH_BUDGET_S = 20.0, which is right for a caller with no per-stage
 # deadline and wrong here: the service caps every stage at 15 s, so the default
@@ -222,7 +299,43 @@ def load_plugins(force: bool = False, raise_on_error: bool = False) -> dict[str,
             "Service registry partially populated. Plugin load failures: %s",
             _PLUGIN_LOAD_ERRORS,
         )
+    _warm_gf2_jit()
     return _PLUGIN_LOAD_ERRORS
+
+
+_GF2_WARMED = False
+
+
+def _warm_gf2_jit() -> None:
+    """Pay galois' JIT compilation at service start, not inside S4's clock.
+
+    `gf2.null_space_gf2` goes through `galois`, whose first call compiles numba
+    kernels. Measured 13 Sep with cProfile on a cold `blind_recover`: 4.6 s of a
+    7.5 s call was the first two `null_space_gf2` calls, and the same stream took
+    0.4 - 0.9 s once warm.
+
+    That was harmless while S4's sweeps had no wall clock - a cold run was only
+    slower. Since 13 Sep `recover_interleaver` runs under FAMILY_SWEEP_BUDGET_S
+    (9 s) and `blind_recover` under TOTAL_BUDGET_S (13 s), and both clocks count
+    the compile. The first upload after a server start would therefore spend
+    about half the sweep budget compiling, and a slower machine than the dev box
+    could time out on a capture it recovers when warm - a correct answer lost to
+    process age. The same failure surfaced in the full test suite as
+    test_rank_spike seed 4 reporting "hit its 9 s bound" after one candidate,
+    after the machine suspended mid-run; Windows' monotonic clock counts suspend.
+
+    One tiny null space here is enough; the compiled kernels are process-wide.
+    Never raises - a warm-up failure must not stop the service loading.
+    """
+    global _GF2_WARMED
+    if _GF2_WARMED or np is None:
+        return
+    try:
+        from pipeline.s4_recover.gf2 import null_space_gf2
+        null_space_gf2(np.array([[1, 1, 0], [0, 1, 1]], dtype=np.uint8))
+        _GF2_WARMED = True
+    except Exception as exc:  # pragma: no cover - environment dependent
+        logger.warning("GF(2) JIT warm-up skipped: %s", exc)
 
 
 def get_plugin_load_errors() -> dict[str, str]:
@@ -333,6 +446,9 @@ def adapt_s0(raw: Any, elapsed_ms: float) -> StageResult:
     values = {
         "source_format": getattr(raw, "source_format", "unknown"),
         "fs": getattr(raw, "fs", None),
+        # Directly after fs, because the stage card shows only the first few
+        # values and an fs without its provenance is the misleading half.
+        "fs_source": getattr(raw, "fs_source", "unknown"),
         "sample_count": len(iq) if iq is not None else 0,
         "file_path": getattr(raw, "file_path", ""),
     }
@@ -373,6 +489,9 @@ def adapt_s1(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
         raw_reason = raw.get("reason")
         psd_db = raw.get("psd_db")
         psd_freqs = raw.get("psd_freqs")
+        spec_db = raw.get("spec_db")
+        spec_freqs = raw.get("spec_freqs")
+        spec_times = raw.get("spec_times")
     else:
         snr_db = getattr(raw, "snr_db", None)
         noise_floor_db = getattr(raw, "noise_floor_db", None)
@@ -382,6 +501,9 @@ def adapt_s1(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
         raw_reason = getattr(raw, "reason", None)
         psd_db = getattr(raw, "psd_db", None)
         psd_freqs = getattr(raw, "psd_freqs", None)
+        spec_db = getattr(raw, "spec_db", None)
+        spec_freqs = getattr(raw, "spec_freqs", None)
+        spec_times = getattr(raw, "spec_times", None)
 
     # Which SNR estimator produced the number. S1 runs two -- a percentile
     # spectral one and a constant-modulus moment one -- because neither covers
@@ -404,6 +526,15 @@ def adapt_s1(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
         "snr_db_spectral": _snr_field("snr_db_spectral"),
         "snr_db_moment": _snr_field("snr_db_moment"),
     }
+
+    # The measurable half of the sampling-rate question - see
+    # s1_detect.check_sampling_rate for why the other half (is the declared fs
+    # right?) is not answerable from samples, and why the aliasing detector
+    # that was built for it did not ship.
+    sampling = _snr_field("sampling_check")
+    if isinstance(sampling, dict):
+        values["occupied_fraction"] = sampling.get("occupied_fraction")
+        values["oversampling"] = sampling.get("oversampling")
 
     # Envelope check: SNR below declared operating envelope (-5.0 dB)
     if snr_db is not None and isinstance(snr_db, (int, float)) and not math.isnan(snr_db) and snr_db < -5.0:
@@ -436,6 +567,55 @@ def adapt_s1(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
             )
             artifacts["psd_plot"] = art_path
         except Exception:
+            pass
+
+    # THE WATERFALL TAB WAS EMPTY FOR A REASON THAT WAS NEVER THE UI'S.
+    # S1 has computed spec_db/spec_freqs/spec_times since the stage was
+    # written - compute_spectrogram is called on every `ok` path and its
+    # docstring says "the waterfall's data source" - and this adapter saved
+    # the 1-D PSD and dropped the 2-D matrix on the floor. So
+    # WaterfallPlot.jsx fell through to "Spectrogram Artifact Unavailable" on
+    # EVERY run, and the honest reading of that screen was "we did not build
+    # it" when the truth was "we built it and never wrote it out". One of the
+    # PS's named deliverables, missing by an omitted artifact write.
+    #
+    # Plotly's heatmap indexes z[y][x], so the matrix is transposed from S1's
+    # (n_freqs, n_times) to (n_times, n_freqs) HERE rather than in the
+    # component - the artifact is the contract, and a consumer that has to
+    # know which way round the producer felt like emitting it is not one.
+    #
+    # Decimated on both axes to hold the JSON down: a 90 s capture at 200 kHz
+    # is 1024 x 2300 float64 = 18 MB of JSON, which the browser fetches on
+    # every tab switch. 256 x 256 is more cells than a 420 px-tall canvas can
+    # show and lands at ~330 kB. Decimation is by stride, not by averaging,
+    # because an averaged waterfall hides exactly the short burst the tab
+    # exists to make visible.
+    if (np is not None and spec_db is not None and spec_freqs is not None
+            and spec_times is not None):
+        try:
+            mat = np.asarray(spec_db, dtype=float)
+            f_axis = np.asarray(spec_freqs, dtype=float).ravel()
+            t_axis = np.asarray(spec_times, dtype=float).ravel()
+            if mat.ndim == 2 and mat.shape == (f_axis.size, t_axis.size):
+                f_step = max(1, f_axis.size // 256)
+                t_step = max(1, t_axis.size // 256)
+                trimmed = mat[::f_step, ::t_step]
+                art_path = save_stage_artifact(
+                    run_id,
+                    "waterfall",
+                    {
+                        "freqs": [float(f) for f in f_axis[::f_step]],
+                        "time": [float(t) for t in t_axis[::t_step]],
+                        # transposed: rows are time, columns are frequency
+                        "power": [[float(v) for v in row] for row in trimmed.T],
+                        "units": "dB",
+                        "decimation": {"freq_stride": f_step, "time_stride": t_step},
+                    },
+                )
+                artifacts["waterfall_plot"] = art_path
+        except Exception:
+            # Same contract as the PSD block above: a capture whose
+            # spectrogram cannot be serialised still gets its S1 numbers.
             pass
 
     return StageResult(
@@ -508,18 +688,22 @@ def adapt_s2(raw: Any, elapsed_ms: float) -> StageResult:
     except (TypeError, IndexError, ValueError):
         symbol_rate_peak_score = None
 
-    # S2 decides WHICH symbol-rate estimator runs, and S2Result has carried the
-    # raw statistic behind that decision since 7 Sep precisely so a caller need
-    # not trust the boolean blind. This adapter dropped it, so the number
-    # existed and reached nobody: not the DB, not the UI, not the report.
+    # S2 decides WHICH symbol-rate estimator runs from
+    # envelope_cv = std(|x|)/mean(|x|) < 0.25, and S2Result has carried that raw
+    # number since 7 Sep precisely so a caller need not trust the boolean blind.
+    # This adapter dropped both, so the statistic existed and reached nobody:
+    # not the DB, not the UI, not the report.
     #
     # It matters because the routing is not reliable off-corpus. The first
     # off-air captures ever run through this pipeline - TRISAT and KS-1Q, both
-    # FSK - measured envelope_cv 0.387 and 0.503 against 0.070 for the corpus's
-    # own synthetic 2FSK, and were routed to the linear estimator with status
-    # still "ok". symbol_rate_estimator is read from S2Result rather than
-    # derived from constant_envelope, which since the dominance change no
-    # longer implies which estimator produced the rate.
+    # FSK - measured cv 0.387 and 0.503 against 0.070 for the corpus's own
+    # synthetic 2FSK, so both were routed to the linear estimator and S2
+    # returned a wrong rate with status "ok". Surfacing the number does not fix
+    # the routing; it makes a misroute visible instead of silent, which is what
+    # the 7 Sep note asked for and all it asked for.
+    # Read symbol_rate_estimator from S2 rather than deriving it from
+    # constant_envelope: since the dominance change the two no longer imply one
+    # another, and constant_envelope still routes CFO only.
     if isinstance(raw, dict):
         envelope_cv = raw.get("envelope_cv")
         constant_envelope = raw.get("constant_envelope")
@@ -778,6 +962,29 @@ def adapt_s4(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
         values["code_rate"] = f"1/{code.n}" if getattr(code, "n", None) else None
         values["K"] = code.memory + 1 if getattr(code, "memory", None) is not None else None
 
+    # The "a period was found and nothing inverted it" outcome, as FIELDS rather
+    # than only as prose in `reason`. Prose is readable and not queryable: the
+    # UI cannot render a badge from a paragraph, the eval harness cannot count
+    # these runs, and nothing can tell "period found, permutation not inverted"
+    # from "nothing found" without parsing English.
+    #
+    # `permutation_recovered` is written on BOTH paths on purpose. Recording it
+    # only on the refusal would make its absence ambiguous - a successful run
+    # and a report from before the field existed would look identical.
+    verdict = getattr(raw, "interleaver_verdict", None)
+    if isinstance(verdict, dict):
+        values["interleaver_verdict"] = verdict.get("verdict")
+        values["permutation_recovered"] = bool(verdict.get("permutation_recovered"))
+        values["period_structure"] = bool(verdict.get("period_structure"))
+        if verdict.get("key_space_bits") is not None:
+            values["key_space_bits"] = verdict["key_space_bits"]
+        if verdict.get("candidates_tried") is not None:
+            values["interleaver_candidates_tried"] = verdict["candidates_tried"]
+    elif intl:
+        values["interleaver_verdict"] = "inverted"
+        values["permutation_recovered"] = True
+        values["period_structure"] = True
+
     hyps: list[Hypothesis] = []
     for h in getattr(raw, "hypotheses", []):
         name = f"{getattr(h, 'family', '')}_{getattr(h, 'params', {})}"
@@ -838,7 +1045,31 @@ def adapt_s5(raw: Any, elapsed_ms: float,
 
     confidence = 1.0 if status == StageStatus.OK else 0.0
     reason = None if status == StageStatus.OK else "No bits decoded"
-    evidence = "trellis traceback complete"
+
+    # WHICH DECODER RAN, read from the detail rather than assumed. Both of these
+    # were hardcoded to the convolutional path - "trellis traceback complete"
+    # and a `viterbi_decoded` hypothesis - which was accurate while `_run_s5`
+    # could only ever call `conv`. Now that it sweeps the registry, an LDPC
+    # decode would have been reported to the judge as a Viterbi traceback and an
+    # RS decode likewise: a true bit count under a false description of how it
+    # was obtained, which is the worst kind of correct.
+    family = (detail or {}).get("code_family")
+    blind = bool((detail or {}).get("code_identified_blind"))
+    if family == "conv" or family is None:
+        evidence = "trellis traceback complete"
+    elif family == "ldpc":
+        converged = (detail or {}).get("blocks_converged")
+        blocks = (detail or {}).get("blocks")
+        evidence = "belief propagation, %s of %s blocks reached a zero syndrome" % (
+            converged if converged is not None else "?",
+            blocks if blocks is not None else "?")
+    else:
+        evidence = "%s decode complete" % family
+    if blind:
+        params = (detail or {}).get("code_params") or {}
+        named = params.get("code_name")
+        evidence += "; code identified blind from the registry%s" % (
+            " as %s" % named if named else "")
 
     # A wrong trellis still produces bits, and bits alone cannot tell you the
     # decode was right. When the plug-in re-encoded its own output and the
@@ -853,7 +1084,12 @@ def adapt_s5(raw: Any, elapsed_ms: float,
             confidence = 0.0
             reason = val.get("reason") or "decode is not consistent with the input"
 
-    hyp_value = "concatenated_ccsds_decoded" if (detail or {}).get("concatenated") else "viterbi_decoded"
+    if (detail or {}).get("concatenated"):
+        hyp_value = "concatenated_ccsds_decoded"
+    elif family and family != "conv":
+        hyp_value = "%s_decoded" % family
+    else:
+        hyp_value = "viterbi_decoded"
     if (detail or {}).get("concatenated"):
         evidence += " + RS(%s,%s) outer decode verified" % (
             (detail or {}).get("rs_n", 255), (detail or {}).get("rs_k", 223))
@@ -1355,13 +1591,18 @@ def orchestrate(
     # in the report rather than inferred from a bit count.
     s5_detail: dict[str, Any] = {}
 
-    def _run_s5() -> Any:
-        if s5_fn:
-            return s5_fn(llrs, s4_res.values)
-        conv_plugin = CODES.get("conv")
-        if conv_plugin is None or not hasattr(conv_plugin, "decode") or llrs is None:
-            return None
+    def _s5_stream() -> tuple[Any, str | None]:
+        """The soft stream S5 decodes: `llrs` with whatever S4 recovered applied.
 
+        Split out of `_run_s5` on 13 Sep so that BOTH decode routes share it -
+        the convolutional path S4 locks, and the blind registry sweep below.
+        It used to be inline in the conv path only, which is why the sweep did
+        not exist: there was nowhere to put it that had a de-interleaved stream
+        to work on.
+
+        Returns (stream, declined_reason). A non-None reason means do not
+        decode, and says why in terms a report can print.
+        """
         # This block previously read:
         #     code_params = s4_raw.code if hasattr(s4_raw, "code") else None
         #     return conv_plugin.decode(llrs, code_params or s4_res.values)
@@ -1378,20 +1619,6 @@ def orchestrate(
         #    never applying the offset and interleaver S4 had just recovered.
         #    Decoding a still-interleaved stream returns confident noise, which
         #    is worse than crashing - the crash is why nobody had seen it.
-        code = getattr(s4_raw, "code", None)
-        gens = getattr(s4_raw, "generators_octal", None)
-        # Same guard pipeline/s4_recover/cli.py applies before it decodes: only
-        # a locked rate-1/2 recovery with generators is actionable. Anything
-        # else would build a trellis out of None.
-        if (getattr(s4_raw, "status", None) != "ok" or code is None
-                or gens is None or getattr(code, "n", None) != 2):
-            s5_detail["declined"] = (
-                "S4 did not lock a rate-1/2 code with recovered generators "
-                "(status=%s, n=%s, generators=%s)"
-                % (getattr(s4_raw, "status", None), getattr(code, "n", None),
-                   "yes" if gens else "no"))
-            return None
-
         # Apply what S4 recovered. The permutation is a reshape/transpose, so it
         # runs on the soft LLRs directly and the Viterbi keeps its metric -
         # de-interleaving hard bits here would throw that away.
@@ -1404,10 +1631,9 @@ def orchestrate(
         if intl is not None:
             intl_plugin = INTERLEAVERS.get(getattr(intl, "family", ""))
             if intl_plugin is None:
-                s5_detail["declined"] = (
+                return None, (
                     "no '%s' interleaver plug-in registered to undo what S4 found"
                     % getattr(intl, "family", ""))
-                return None
             soft_in = (getattr(stream, "dtype", None) is not None and getattr(stream.dtype, "kind", None) == "f") if np is not None else any(isinstance(x, float) for x in stream[:10])
             stream = intl_plugin.deinterleave(stream, **getattr(intl, "params", {}))
             # A permutation must hand back what it was given. The CCSDS symbol
@@ -1432,23 +1658,32 @@ def orchestrate(
             # instead - which is where the conventions say guards go anyway.
             stream_dtype = getattr(stream, "dtype", None)
             if soft_in and stream_dtype is not None and getattr(stream_dtype, "kind", None) != "f":
-                s5_detail["declined"] = (
+                return None, (
                     "the '%s' de-interleaver returned %s and destroyed the soft "
                     "information S3 recovered: it works in the symbol domain and "
                     "cannot be applied to LLRs"
                     % (getattr(intl, "family", "?"), stream_dtype))
-                return None
         if len(stream) == 0:
             # Decoding the un-deinterleaved stream instead would "work" and
             # return noise: measured 0.2948 re-encode BER against 0.0005 for the
             # same file decoded correctly. Declining is the only honest answer.
             llrs_len = len(np.asarray(llrs).ravel()) if np is not None else len(llrs)
-            s5_detail["declined"] = (
+            return None, (
                 "stream too short to de-interleave: %d LLRs is under one period "
                 "of the %s interleaver S4 recovered"
                 % (llrs_len, getattr(intl, "family", "?")))
-            return None
+        return stream, None
 
+    def _decode_conv(conv_plugin, stream, code, gens) -> Any:
+        """The proven path: Viterbi against the generators S4 recovered.
+
+        Unchanged from what shipped, including the prefix budget and the
+        re-encode check. It stays FIRST and separate rather than being folded
+        into the registry sweep below, because S4 has already done the work of
+        recovering this code's generators from this stream - asking `conv` to
+        recover them a second time through `blind_recover` would repeat a
+        several-second rank search to arrive at the answer already in hand.
+        """
         # commpy's Viterbi is pure Python and linear in stream length. The whole
         # stream is ~29 s against a 15 s per-stage timeout, so the stage failed
         # on the clock even once the wiring above was right. The CLI settled
@@ -1503,6 +1738,119 @@ def orchestrate(
             logger.warning("Optional S5 CCSDS outer FEC check failed: %s", exc)
 
         return decoded
+
+    def _decode_blind_from_registry(stream) -> Any:
+        """Every registered code's own `blind_recover`, in registry order.
+
+        WHY THIS DID NOT EXIST, AND WHAT IT COST. `_run_s5` named exactly one
+        plug-in - `CODES.get("conv")` - and declined outright when S4 had not
+        locked a rate-1/2 convolutional code. So `reed-solomon` and `ldpc` were
+        registered, tested, and completely unreachable from the upload button:
+        the CODES protocol has carried `blind_recover(llrs) -> params` since the
+        registry was frozen on 29 Aug, and nothing on the service path ever
+        called it. An LDPC downlink reached S5 and was told "S4 did not lock a
+        rate-1/2 code", which is true and beside the point.
+
+        That is the same defect as `REQUIRED_PLUGIN_MODULES` missing
+        `ldpc_code` - a capability that exists and cannot be reached - one layer
+        up, and it is why the registry is iterated here rather than consulted by
+        name. A family added later is reachable the moment it registers.
+
+        Bounded by the clock, not by a candidate count: `reed-solomon`'s own
+        blind search sweeps 255 byte alignments per profile and `conv`'s repeats
+        a rank search, so the sweep's cost is the plug-ins' and not something
+        this function can bound per candidate. S5_BLIND_SWEEP_BUDGET_S keeps the
+        total inside the stage timeout, and a family the budget did not reach is
+        REPORTED as not reached rather than silently skipped - "no code found"
+        and "we ran out of time before asking" are different answers.
+        """
+        tried: list[str] = []
+        deadline = time.monotonic() + S5_BLIND_SWEEP_BUDGET_S
+        for name, plugin in CODES.items():
+            if not (hasattr(plugin, "blind_recover") and hasattr(plugin, "decode")):
+                tried.append("%s: does not implement the CODES protocol" % name)
+                continue
+            if time.monotonic() > deadline:
+                tried.append("%s: not reached, %.0fs sweep budget spent"
+                             % (name, S5_BLIND_SWEEP_BUDGET_S))
+                continue
+            try:
+                params = plugin.blind_recover(stream)
+            except Exception as exc:
+                logger.warning("S5 blind_recover raised in %r: %s", name, exc)
+                tried.append("%s: blind_recover raised %s" % (name, type(exc).__name__))
+                continue
+            if params is None:
+                tried.append("%s: declined" % name)
+                continue
+            try:
+                decoded = plugin.decode(stream, params)
+            except Exception as exc:
+                # Identified and then failed to decode is worth saying out loud
+                # rather than falling through as "declined": it points at the
+                # plug-in, not at the signal.
+                logger.warning("S5 decode raised in %r after identification: %s",
+                               name, exc)
+                tried.append("%s: identified the code then decode raised %s"
+                             % (name, type(exc).__name__))
+                continue
+            s5_detail["code_family"] = name
+            s5_detail["code_identified_blind"] = True
+            s5_detail["code_params"] = _summarise_code_params(params)
+            s5_detail["codes_tried"] = tried
+            s5_detail["coded_bits_available"] = int(len(stream))
+            s5_detail["coded_bits_decoded"] = int(len(stream))
+            # The plug-in's own self-check when it has one. `ldpc.syndrome`
+            # needs no reference bits, which makes it the strongest evidence
+            # available on a blind path - it says whether BP actually found
+            # codewords rather than whether the output looks like data.
+            if hasattr(plugin, "syndrome"):
+                try:
+                    syn = plugin.syndrome(stream, params)
+                    s5_detail["blocks_converged"] = syn.get("blocks_converged")
+                    s5_detail["blocks"] = syn.get("blocks")
+                    s5_detail["converged_fraction"] = syn.get("converged_fraction")
+                except Exception as exc:
+                    logger.warning("S5 syndrome check failed for %r: %s", name, exc)
+            return decoded
+        s5_detail["codes_tried"] = tried
+        s5_detail["declined"] = (
+            "S4 locked no rate-1/2 convolutional code, and no registered code "
+            "identified this stream blind (%s)" % "; ".join(tried))
+        return None
+
+    def _run_s5() -> Any:
+        if s5_fn:
+            return s5_fn(llrs, s4_res.values)
+        if llrs is None:
+            return None
+        stream, declined = _s5_stream()
+        if stream is None:
+            s5_detail["declined"] = declined
+            return None
+
+        # Route 1: the code S4 already recovered. Same guard
+        # pipeline/s4_recover/cli.py applies before it decodes - only a locked
+        # rate-1/2 recovery with generators is actionable, anything else would
+        # build a trellis out of None.
+        code = getattr(s4_raw, "code", None)
+        gens = getattr(s4_raw, "generators_octal", None)
+        conv_plugin = CODES.get("conv")
+        if (conv_plugin is not None and hasattr(conv_plugin, "decode")
+                and getattr(s4_raw, "status", None) == "ok" and code is not None
+                and gens is not None and getattr(code, "n", None) == 2):
+            s5_detail["code_family"] = "conv"
+            s5_detail["code_identified_blind"] = False   # S4 recovered it, not S5
+            return _decode_conv(conv_plugin, stream, code, gens)
+
+        # Route 2: ask every registered code to identify itself. This is the
+        # only route by which a non-convolutional downlink is decodable at all.
+        s5_detail["conv_route_declined"] = (
+            "S4 did not lock a rate-1/2 code with recovered generators "
+            "(status=%s, n=%s, generators=%s)"
+            % (getattr(s4_raw, "status", None), getattr(code, "n", None),
+               "yes" if gens else "no"))
+        return _decode_blind_from_registry(stream)
 
     s5_res, s5_raw = _execute_stage(
         "s5_decode",

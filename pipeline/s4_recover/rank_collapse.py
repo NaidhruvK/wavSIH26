@@ -34,6 +34,10 @@ from registry import INTERLEAVERS
 from .gf2 import rank_gf2, reshape_rows, null_space_gf2
 from .interleavers import block_deinterleave  # noqa: F401  (re-export for callers)
 from .statistical import statistical_recover
+# Imported for `unstructured_verdict` only. The QPP family itself is registered
+# by the import's side effect, which is how every other family gets in, and the
+# functions below never name it.
+from .pseudorandom import unstructured_verdict
 
 __all__ = [
     "RankProfile",
@@ -65,6 +69,29 @@ STEP_WINDOW = 32          # how far past the first collapse to look for the next
 MIN_BITS = 8192           # below this we refuse rather than guess
 MAX_SIGNATURE_CANDIDATES = 6   # collapse periods tried before giving up
 CANDIDATE_BUDGET_S = 12.0      # wall clock across all of them, per risk #5
+TOTAL_BUDGET_S = 13.0
+"""Wall clock for one whole `blind_recover`, statistical fallback included.
+
+CANDIDATE_BUDGET_S bounded the candidate WALK and nothing else, so three
+uncapped stretches sat outside it: the alignment argmax, and - the expensive
+one - `_from_statistical`, which runs after the walk with its own separate 8 s
+budget. Worst case was therefore 12 + 8 = 20 s against a 15 s stage timeout,
+and measured 16.7 s on a coded stream under an unstructured keyed permutation
+of period 96: the input where the walk exhausts its budget AND the fallback
+then gets a full run, because nothing short-circuits either.
+
+That mattered because of what it hid. S4 did not return a wrong answer on that
+capture, it returned nothing at all - `StageTimeoutError` - so the honest
+"interleaved at period 96, permutation not inverted" verdict never reached the
+report it exists for. A refusal that times out is indistinguishable from a
+crash, which is the one thing the verdict was added to prevent.
+
+13.0 against the 15 s stage cap leaves 2 s of margin for the ingest and adapter
+either side. The fallback now gets whatever the walk left rather than a fresh
+8 s, floored at 1 s so it is either given a real chance or skipped outright -
+never handed a budget too small to finish and then reported as having found
+nothing.
+"""
 
 # A convolutional code with memory 0 or 1 is not a code anyone transmits;
 # it is what a structured SOURCE looks like when you read it as one. The
@@ -131,6 +158,14 @@ class RecoveryResult:
     data_limited: bool = False  # was the search cut short by stream length?
     method: str = "exact"       # "exact" | "statistical"
     inferred_ber: float | None = None   # only the statistical path knows this
+    # Set only on the "a period was found and nothing inverted it" path. See
+    # pseudorandom.unstructured_verdict: that outcome is a real answer about
+    # the link - it interleaves at period K with a permutation that is not
+    # algebraic - and collapsing it to "nothing found" both throws that away
+    # and is false. None everywhere else, including on success, because a
+    # verdict about what could NOT be recovered has no meaning next to a
+    # recovery.
+    interleaver_verdict: dict | None = None
 
     def summary(self) -> str:
         # summary() is called from the UI on every result including the bad
@@ -513,7 +548,44 @@ def recover_generators(bits: np.ndarray, code: CodeStructure):
     return _unpack_generators(taps, code), [int(x) for x in taps]
 
 
-MAX_CANDIDATES = 600      # hard cap on the family x parameter product
+MAX_CANDIDATES = 600
+"""Cap on the parameter sweep, PER FAMILY.
+
+It was a single counter shared across every family until 13 Sep, and a shared
+counter is spent in registry insertion order - so the cap was not a bound on
+work, it was a bound on the families that happened to be registered first. With
+four families the product never came near 600 and it never mattered; adding the
+pseudo-random family, which offers up to 288 candidates for one period against
+the other four's ~52 combined, made it matter immediately. A budget that
+depends on dict ordering is the same defect class as a guard that lives in one
+branch.
+
+Per-family now, with `FAMILY_SWEEP_BUDGET_S` as the real bound. The cap stops
+one pathological family; the clock stops the total, which is what the 15 s
+stage timeout actually cares about.
+"""
+
+FAMILY_SWEEP_BUDGET_S = 9.0
+"""Wall clock for one `recover_interleaver` call, across all families.
+
+`recover_interleaver` had no clock at all - only the candidate count - so its
+worst case was however long the product of every family's sweep happened to
+take. Measured on the input that has no short circuit anywhere (a coded stream
+under an unstructured keyed permutation of period 96, where every candidate
+runs the full functional test and none of them passes):
+
+    before           18.4 - 19.3 s   <- past the 15 s stage timeout
+    + this budget    13.2 - 13.4 s   <- with TOTAL_BUDGET_S below
+    + qpp prefilter  11.5 - 12.4 s   <- the QPP sweep is exhaustive and cheaper
+
+and the verdict still reports period 96 in every case (8 of 8, reports/
+pseudorandom_interleaver_study.py).
+
+9.0 s rather than 12.0 s because `blind_recover` may walk several collapse
+periods inside its own 12 s CANDIDATE_BUDGET_S, and that budget was only ever
+checked BETWEEN candidates - one attempt overrunning it was invisible. The
+inner bound is what makes the outer one true.
+"""
 
 
 def _hinted_candidates(name, plugin, n_bits: int, first: int, step: int):
@@ -558,7 +630,7 @@ def _sweep_alignments_functionally(bits: np.ndarray, first: int, step: int,
     for off in range(first):
         if time.monotonic() > deadline:
             break
-        cand = recover_interleaver(bits, first, step, off)
+        cand = recover_interleaver(bits, first, step, off, deadline=deadline)
         if not cand:
             continue
         de = INTERLEAVERS[cand[0].family].deinterleave(bits[off:], **cand[0].params)
@@ -571,7 +643,9 @@ def _sweep_alignments_functionally(bits: np.ndarray, first: int, step: int,
 
 
 def recover_interleaver(bits: np.ndarray, first: int, step: int, offset: int = 0,
-                        max_candidates: int = MAX_CANDIDATES
+                        max_candidates: int = MAX_CANDIDATES,
+                        deadline: float | None = None,
+                        stats: dict | None = None
                         ) -> list[InterleaverHypothesis]:
     """Try every registered family functionally and keep what restores a code.
 
@@ -585,18 +659,55 @@ def recover_interleaver(bits: np.ndarray, first: int, step: int, offset: int = 0
     the stream indistinguishable from random. It produces no structure at all,
     not weaker structure.
 
-    Nothing here names a scheme - it iterates INTERLEAVERS. Adding the
-    pseudo-random family on 7 Sep is a new file and one registration line.
+    Nothing here names a scheme - it iterates INTERLEAVERS. The pseudo-random
+    family arrived on 13 Sep as exactly that: a new file and one registration
+    line, with no edit here beyond the budget (see MAX_CANDIDATES).
+
+    `deadline` is a `time.monotonic()` value past which the sweep stops and
+    returns what it has. `stats`, when given, is filled with the candidate and
+    family counts so a caller can report HOW HARD it looked before declining -
+    which is the difference between "no interleaver" and "a period we could not
+    invert", and the only honest way to say the second.
     """
     tail = np.asarray(bits, dtype=np.uint8).ravel()[offset:]
     out: list[InterleaverHypothesis] = []
-    tried = 0
+    total_tried = 0
+    families_tried = 0
 
     for name, plugin in INTERLEAVERS.items():
+        tried = 0                             # PER FAMILY, see MAX_CANDIDATES
+        family_counted = False
+        # Two OPTIONAL plug-in attributes, neither part of the frozen protocol:
+        #   max_candidates  the family's own cap, for a family whose parameter
+        #                   space is large by construction (qpp: 32 768)
+        #   prefilter       a cheap necessary condition run before the full
+        #                   functional test. It may only reject; everything it
+        #                   passes still has to clear every check below.
+        family_cap = int(getattr(plugin, "max_candidates", None) or max_candidates)
+        prefilter = getattr(plugin, "prefilter", None)
         for params in _hinted_candidates(name, plugin, len(tail), first, step):
+            if not family_counted:
+                families_tried += 1
+                family_counted = True
             tried += 1
-            if tried > max_candidates:
+            total_tried += 1
+            if tried > family_cap:
+                break                         # this family only, not the sweep
+            # Checked per candidate rather than per family: the family whose
+            # sweep is 288 candidates long is exactly the one that would
+            # otherwise run past the stage timeout on its own.
+            if deadline is not None and time.monotonic() > deadline:
+                if stats is not None:
+                    stats["candidates_tried"] = total_tried
+                    stats["families_tried"] = families_tried
+                    stats["timed_out"] = True
                 return sorted(out, key=lambda h: -h.score)
+            if prefilter is not None:
+                try:
+                    if not prefilter(tail, **params):
+                        continue
+                except Exception:
+                    pass                      # a broken screen must not hide a candidate
             try:
                 de = plugin.deinterleave(tail, **params)
             except Exception:
@@ -641,11 +752,16 @@ def recover_interleaver(bits: np.ndarray, first: int, step: int, offset: int = 0
                 % (code.n, code.memory + 1, code.span)))
 
     out.sort(key=lambda h: -h.score)
+    if stats is not None:
+        stats["candidates_tried"] = total_tried
+        stats["families_tried"] = families_tried
+        stats.setdefault("timed_out", False)
     return out
 
 
 STAT_FALLBACK_MAX_SPAN = 24    # bounded: this path only runs when exact failed
 STAT_FALLBACK_BUDGET_S = 8.0   # wall clock, per risk #5
+STAT_FALLBACK_MIN_BUDGET_S = 1.5   # below this, skip rather than truncate
 
 # The statistical method's own measured ceiling is 3.0% BER
 # (reports/ber_ceiling.md). An "recovery" implying an error rate far outside
@@ -658,7 +774,8 @@ STAT_FALLBACK_BUDGET_S = 8.0   # wall clock, per risk #5
 STAT_FALLBACK_MAX_IMPLIED_BER = 0.10
 
 
-def _statistical_code_attempt(bits: np.ndarray, max_span: int = STAT_FALLBACK_MAX_SPAN):
+def _statistical_code_attempt(bits: np.ndarray, max_span: int = STAT_FALLBACK_MAX_SPAN,
+                              time_budget_s: float = STAT_FALLBACK_BUDGET_S):
     """Try the statistical parity-check search when the exact test found nothing.
 
     The exact rank test needs every row of the matrix to lie in the code
@@ -673,7 +790,7 @@ def _statistical_code_attempt(bits: np.ndarray, max_span: int = STAT_FALLBACK_MA
     21 Oct - 20 Nov robustness window.
     """
     stat = statistical_recover(bits, max_span=max_span,
-                               time_budget_s=STAT_FALLBACK_BUDGET_S)
+                               time_budget_s=time_budget_s)
     if stat.status != "ok" or not stat.taps:
         return None
 
@@ -819,7 +936,9 @@ def _finalise(res: RecoveryResult) -> RecoveryResult:
 
 def _attempt_candidate(bits: np.ndarray, first: int, step: int,
                        prof: RankProfile, trust_step: bool = True,
-                       sweep_alignments: bool = False):
+                       sweep_alignments: bool = False,
+                       deadline: float | None = None,
+                       stats: dict | None = None):
     """Try to explain ONE collapse period. None means this one explains nothing.
 
     Everything here was the body of blind_recover until the candidate walk
@@ -905,7 +1024,14 @@ def _attempt_candidate(bits: np.ndarray, first: int, step: int,
                 best_off, best_def = off, d
         offset = best_off
 
-    hyps = recover_interleaver(bits, first, step, offset)
+    # The inner sweep gets whichever deadline is nearer: the caller's overall
+    # budget, or this one call's own. Without the second, one candidate's sweep
+    # could consume the whole walk's clock and the walk would never reach the
+    # collapse period that actually explains the stream.
+    own = time.monotonic() + FAMILY_SWEEP_BUDGET_S
+    sweep_deadline = own if deadline is None else min(own, deadline)
+    hyps = recover_interleaver(bits, first, step, offset,
+                               deadline=sweep_deadline, stats=stats)
 
     # A STRUCTURED SOURCE defeats the argmax above, and this is the documented
     # gap (HANDOFF section 5, tests/unit/test_structured_source.py). Deficiency
@@ -1010,7 +1136,15 @@ def blind_recover(bits: np.ndarray, statistical_fallback: bool = True,
     def _from_statistical(profile, note):
         if not statistical_fallback:
             return None
-        attempt = _statistical_code_attempt(bits)
+        # Whatever the walk left, never a fresh budget. Below the floor the
+        # search is skipped rather than started and cut off: a truncated
+        # statistical search reports "no bias found", which is a negative it
+        # did not earn.
+        remaining = overall_deadline - time.monotonic()
+        if remaining < STAT_FALLBACK_MIN_BUDGET_S:
+            return None
+        attempt = _statistical_code_attempt(
+            bits, time_budget_s=min(STAT_FALLBACK_BUDGET_S, remaining))
         if attempt is None:
             return None
         code, generators, taps, val = attempt
@@ -1024,19 +1158,31 @@ def blind_recover(bits: np.ndarray, statistical_fallback: bool = True,
             profile=profile, method="statistical", inferred_ber=val.implied_ber,
             searched_to=profile.l_max_searched if profile else 0)
 
-    deadline = time.monotonic() + CANDIDATE_BUDGET_S
+    overall_deadline = time.monotonic() + TOTAL_BUDGET_S
+    deadline = min(overall_deadline, time.monotonic() + CANDIDATE_BUDGET_S)
     prof = None
     first = None
     provisional = None
     n_tried = 0
+    # Accumulated across the whole walk so the verdict can say how hard the
+    # search looked. A refusal that cannot say what it tried is indistinguish-
+    # able from a refusal that tried nothing.
+    sweep_stats: dict = {"candidates_tried": 0, "families_tried": 0,
+                         "timed_out": False}
 
     for cand, step, prof in iter_signatures(bits):
         if cand is None:
             break                       # nothing collapsed anywhere
         if first is None:
             first = cand
+        attempt_stats: dict = {}
         res = _attempt_candidate(bits, cand, step, prof, trust_step=(n_tried == 0),
-                                 sweep_alignments=sweep_alignments)
+                                 sweep_alignments=sweep_alignments,
+                                 deadline=deadline, stats=attempt_stats)
+        sweep_stats["candidates_tried"] += attempt_stats.get("candidates_tried", 0)
+        sweep_stats["families_tried"] = max(sweep_stats["families_tried"],
+                                            attempt_stats.get("families_tried", 0))
+        sweep_stats["timed_out"] |= bool(attempt_stats.get("timed_out", False))
         n_tried += 1
         if res is not None:
             if res.status == "ok":
@@ -1082,6 +1228,30 @@ def blind_recover(bits: np.ndarray, statistical_fallback: bool = True,
               % (n_tried, "" if n_tried == 1 else "s", first))
     if via_stat is not None:
         return _finalise(via_stat)
+    # "no factorisation restored a code" was the whole of this reason until
+    # 13 Sep, and it described the search rather than the signal - it is also
+    # block-centric wording for an outcome that is most often NOT a block
+    # interleaver. What a caller needs here is the distinction the problem
+    # statement actually turns on:
+    #
+    #     no period              nothing collapsed; no interleaver claimed
+    #     period + permutation   recovered, reported as `ok` above
+    #     period, no permutation THIS path
+    #
+    # The third is a real answer. The rank collapse at L=K is invariant under
+    # any within-period permutation (proof in pseudorandom.py), so the period
+    # is MEASURED even when the permutation is not recoverable - which is what
+    # an unstructured keyed interleaver looks like, and what an ARP or any
+    # other family outside the registry looks like too. Reporting "nothing
+    # found" would discard the period and would also be untrue.
+    verdict = unstructured_verdict(first,
+                                  sweep_stats.get("families_tried", 0),
+                                  sweep_stats.get("candidates_tried", 0))
+    reason = verdict["detail"]
+    if sweep_stats.get("timed_out"):
+        reason += ("  The parameter sweep hit its %.0f s bound, so coverage was "
+                   "not exhaustive at this period." % FAMILY_SWEEP_BUDGET_S)
     return RecoveryResult("low_confidence", 0.35, period=first, offset=0,
-                          reason="period found but no factorisation restored a code",
-                          profile=prof, searched_to=prof.l_max_searched)
+                          reason=reason, profile=prof,
+                          searched_to=prof.l_max_searched,
+                          interleaver_verdict=verdict)

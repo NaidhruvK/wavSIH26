@@ -54,15 +54,21 @@ Hence two decisions that are measurements rather than preferences:
      inputs that make BP settle on a wrong codeword and stop. This file cannot
      enforce that, because it never sees an `S3Result`; the caller must.
 
-BLIND RECOVERY OF H IS OUT OF SCOPE, AND `blind_recover` SAYS SO
-----------------------------------------------------------------
+OPEN-SET RECOVERY OF H IS OUT OF SCOPE; CLOSED-SET IDENTIFICATION IS NOT
+-----------------------------------------------------------------------
 The Command Center puts "blind LDPC parity-check recovery" on the *Do not
 build, ever, this sprint* list, on research grounds: recovering an unknown H
 from a noisy stream has no reliable published method at the error rates a real
-receiver produces. `blind_recover` therefore returns `None`. That is the
-house rule about checks that cannot see, applied to a decoder: returning a
-plausible-looking H it had not recovered is the confidently-wrong failure this
-repo has been bitten by repeatedly.
+receiver produces. That still holds, and nothing here attempts it - returning a
+plausible-looking H that was not recovered is the confidently-wrong failure
+this repo has been bitten by repeatedly.
+
+Until 13 Sep `blind_recover` therefore returned `None` unconditionally, which
+also refused a different and tractable problem: deciding WHICH known code, out
+of a finite catalogue, a stream uses. It now does that, by syndrome density on
+the hard decisions, and returns None when no catalogue entry clears the
+threshold and the runner-up margin. The method, the thresholds and their
+measured populations are in `ldpc_catalogue.py` and reports/blind_ldpc.md.
 
 THE SIGN CONVENTION IS THE SAME AS THE PROJECT'S, WHICH IS WHY IT IS PINNED
 ---------------------------------------------------------------------------
@@ -131,6 +137,221 @@ def llr_to_bits(llrs) -> np.ndarray:
                                  and np.isin(arr, (0, 1)).all()):
         return arr.astype(np.uint8).ravel()
     return (arr.ravel() < 0).astype(np.uint8)
+
+
+MIN_ID_BLOCKS = 6
+"""Codeword blocks the identifier insists on before it will name a code.
+
+The z statistic is sqrt(N)*(1-2*p_hat) over N = m*blocks checks, so fewer blocks
+means a smaller N and a noisier estimate of p_hat. Six is where the WEAKEST
+catalogue entry (n=48, m=24, so N=144) still separates decisively. A capture too
+short for an entry is SKIPPED rather than scored on what it has: scoring it would
+let the shortest code in the catalogue win every short capture on nothing but
+having fitted.
+"""
+
+ID_Z_MIN = 8.0
+"""How far below coin-flipping the failed-check rate must sit.
+
+Under the wrong-code null each check fails independently with probability 1/2,
+so the failure count is Binomial(N, 1/2) and z is standard normal - on which
+reading 8 sigma is a one-sided p of 6e-16.
+
+THAT READING IS WRONG AND QUOTING IT WOULD BE THE OVERCLAIM. The offset search
+returns the MINIMUM density over all n alignments, so the reported z is a
+maximum of n correlated draws, not one draw. The null is therefore shifted
+upward by an order statistic and the nominal tail probability does not apply.
+Measured instead of assumed - 200 random streams against the catalogue's
+weakest entry (n=48, N=144 checks, so 48 offsets each):
+
+    mean z  +2.24     p99  +3.50     max  +3.67     over threshold  0 of 200
+
+So the empirical null tops out near +3.7 where the nominal model says +0. That is
+the number this threshold is set against, and it is why the threshold is not
+3 sigma.
+
+The other side of the gap, measured over the whole shipped catalogue at
+MIN_ID_BLOCKS blocks:
+
+    weakest true code   n=48    z = +12.0
+    strongest           n=1440  z = +65.7
+    worst WRONG-code z anywhere in the catalogue, after the 13 Sep
+      construction fix in ldpc_catalogue.regular_ldpc      z = +3.0
+
+8.0 sits between +3.7 and +12.0. It is deliberately NOT tuned to the middle: the
+true-code side scales as sqrt(N) and only grows with capture length, while the
+null side is bounded by the order statistic, so the safe place for the threshold
+is nearer the null. `ID_RUNNER_UP_RATIO` is what actually protects against a
+catalogue containing two RELATED codes, which is the case a fixed threshold
+cannot see - see its docstring for the +7.54 that found it.
+"""
+
+ID_RUNNER_UP_RATIO = 2.0
+"""The winner's z must beat the runner-up's by this factor.
+
+A threshold alone answers "does this code fit?". It cannot answer "is this THE
+code?", and those come apart the moment the catalogue holds two related
+matrices - which a catalogue grown by adding block lengths of one construction
+certainly will, and which the standards do too, since one 802.16e base matrix
+generates every rate.
+
+Found by measurement rather than foresight. Before the construction fix in
+`ldpc_catalogue.regular_ldpc`, the reference entries all shared an identity
+block row, so a genuine n=192 codeword stream scored
+
+    z = +24.0  against its own H          <- correct
+    z =  +7.54 against the WRONG n=96 H   <- 0.46 below a threshold of 8.0
+
+The construction no longer nests, which removes THAT instance. This ratio
+removes the class: a wrong entry that genuinely fits half the stream's checks
+scores at most ~sqrt(N/2) against the true entry's sqrt(N), a factor of 1.41, so
+2.0 rejects it while leaving real matches - which beat their runner-up by 6.3x
+to 24.2x across the shipped catalogue (reports/blind_ldpc_study.py) -
+untouched. tests/unit/test_ldpc_blind.py builds the related-entry case (H and
+half of H's rows) and asserts it is refused.
+
+A single-entry catalogue has no runner-up and the ratio does not apply. That is
+correct and not a hole: with one candidate there is no "which", only "does it
+fit", and ID_Z_MIN is the whole of that question.
+"""
+
+ID_DENSITY_MAX = 0.25
+"""Ceiling on the observed failed-check fraction, applied WITH z, not instead.
+
+z grows as sqrt(N), so a long enough capture makes an arbitrarily feeble bias
+look arbitrarily significant - the same trap `STAT_FALLBACK_MAX_IMPLIED_BER`
+guards in rank_collapse, where a source with P(1)=0.7 made every parity check
+"significant" and got reported as a code. A real match is near zero: the true
+code's density is (1-(1-2*eps)^w)/2, which is 0.057 at 1% BER with row weight 6
+and 0.22 at the 5% BER where BP has no chance anyway. So 0.25 admits every error
+rate this decoder could act on and excludes every faint correlation.
+"""
+
+_ID_SCREEN_ROWS = 48
+"""H rows used in the offset screen before the full check.
+
+The screen is a matmul over every offset, so its cost is n_offsets * blocks * n
+* rows. Using all 720 rows of the n=1440 entry is 1440*6*1440*720 = 9e9 MACs;
+48 rows is 6e8, and 48 rows over 6 blocks is still 288 independent checks -
+enough that the true offset's screen score is unmistakable. The full matrix then
+decides among the few offsets the screen kept, so a screen that ranks imperfectly
+costs nothing as long as it ranks the true offset into the top few.
+"""
+
+_ID_SCREEN_KEEP = 4
+"""Offsets carried from the screen into the full-H check.
+
+One would be enough if the screen were exact. It is not - it sees a subset of the
+rows - so the true offset can be ranked second or third by a subset that happens
+to be satisfied by a near miss. Measured across the catalogue the true offset
+lands at screen rank 1 every time, so 4 is three ranks of margin rather than a
+tuned value.
+"""
+
+
+def _degenerate_reason(bits):
+    """Why this stream must not be identified at all, or None.
+
+    Reads the BITS. Every linear code contains the zero word, so an all-zero
+    stream satisfies every check of every H at every offset and ties the whole
+    catalogue at a perfect score - a false positive no margin test between
+    candidates can reject, because the candidates do not disagree. The same
+    holds weakly for any near-constant or exactly periodic stream.
+
+    This is the LDPC twin of `rank_collapse.exact_repetition_period`, and it is
+    here - at the entry to identification - for the reason that file records: a
+    guard that lives inside one branch is not a guarantee.
+    """
+    arr = np.asarray(bits, dtype=np.uint8).ravel()
+    if arr.size < 8:
+        return "only %d bits" % arr.size
+    ones = float(arr.mean())
+    if ones < 0.02 or ones > 0.98:
+        return ("stream is %.1f%% ones - near-constant, and the zero word is a "
+                "codeword of every linear code, so it would match the entire "
+                "catalogue at once" % (100.0 * ones))
+    # Exact periodicity, bounded. A stream that repeats carries no information
+    # and any code found in it is an artifact of the repetition.
+    for period in range(1, min(512, arr.size // 4) + 1):
+        if np.array_equal(arr[:arr.size - period], arr[period:]):
+            return ("stream repeats exactly every %d bits, so it carries no "
+                    "information" % period)
+    return None
+
+
+def _syndrome_z(density, n_checks):
+    """Standard deviations below coin-flipping. See ID_Z_MIN.
+
+    Under the wrong-code null each check fails with probability 1/2 independ-
+    ently, so the failure count is Binomial(n_checks, 1/2), mean 0.5*n and sd
+    0.5*sqrt(n). z = (0.5 - density) / (0.5/sqrt(n)) = sqrt(n)*(1 - 2*density).
+    """
+    if n_checks <= 0:
+        return 0.0
+    return float(np.sqrt(n_checks) * (1.0 - 2.0 * float(density)))
+
+
+def _syndrome_density(blocks, h):
+    """Fraction of parity checks these blocks fail.
+
+    float32 matmul then mod 2, rather than an integer matmul: numpy's integer
+    matmul is not BLAS-backed and is far slower here, and every partial sum is
+    bounded by the maximum row weight of H (15 in the shipped catalogue) so it
+    is exactly representable. A row weight past 2^24 would break that, and no
+    LDPC code has one.
+    """
+    blocks = np.asarray(blocks)
+    if blocks.size == 0:
+        return 1.0
+    syn = (blocks.astype(np.float32) @ h.T.astype(np.float32)).astype(np.int64) & 1
+    return float(syn.mean())
+
+
+def _best_offset_by_syndrome(bits, h, min_blocks):
+    """(offset, density, n_checks) for the codeword alignment that fits best.
+
+    Two passes, because one would be either wrong or slow. The screen scores
+    every one of the n possible offsets against a subset of H's rows in a single
+    matmul; the full matrix then re-scores only `_ID_SCREEN_KEEP` of them. See
+    `_ID_SCREEN_ROWS` for the cost arithmetic.
+
+    Only offsets in [0, n) are considered, and that is exhaustive rather than a
+    bound: codeword boundaries repeat every n bits, so offset n is offset 0 one
+    block later and carries no new hypothesis.
+    """
+    m, n = h.shape
+    if bits.size // n < min_blocks:
+        return None, 1.0, 0
+    blocks = min(bits.size // n, min_blocks)
+
+    # Every offset's block set, built once. Offset o needs bits[o : o+blocks*n],
+    # so the last offset needs (n-1) + blocks*n bits; a capture that cannot
+    # supply that gets one fewer block rather than a truncated final row.
+    need = (n - 1) + blocks * n
+    if bits.size < need:
+        blocks = (bits.size - (n - 1)) // n
+        if blocks < 1:
+            return None, 1.0, 0
+        need = (n - 1) + blocks * n
+    window = bits[:need]
+    idx = np.arange(blocks * n)[None, :] + np.arange(n)[:, None]
+    stacked = window[idx].reshape(n * blocks, n)          # (offset*block, n)
+
+    rows = min(_ID_SCREEN_ROWS, m)
+    h_screen = h[:rows]
+    syn = (stacked.astype(np.float32) @ h_screen.T.astype(np.float32)
+           ).astype(np.int64) & 1
+    per_offset = syn.reshape(n, blocks * rows).mean(axis=1)
+    keep = np.argsort(per_offset)[:_ID_SCREEN_KEEP]
+
+    best_off, best_density = None, 1.0
+    for off in keep:
+        off = int(off)
+        b = stacked[off * blocks:(off + 1) * blocks]
+        d = _syndrome_density(b, h)
+        if best_off is None or d < best_density:
+            best_off, best_density = off, d
+    return best_off, best_density, blocks * m
 
 
 def read_alist(source) -> np.ndarray:
@@ -296,25 +517,120 @@ def _decode_block(channel_llr: np.ndarray, h: np.ndarray, mask: np.ndarray,
 
 
 class LDPCCode:
-    """LDPC decoding against a parity-check matrix the caller supplies."""
+    """LDPC decoding against a supplied or catalogue-identified parity-check matrix."""
 
     name = "ldpc"
-    detail = ("LDPC belief propagation (normalised min-sum or sum-product) "
-              "against a SUPPLIED parity-check matrix; blind H recovery is "
-              "out of scope and returns None")
+    detail = ("LDPC belief propagation (normalised min-sum or sum-product); "
+              "blind identification against the registry/ldpc_catalogue "
+              "closed set by syndrome density - open-set H recovery is out "
+              "of scope")
 
     # -- CODES protocol -----------------------------------------------------
 
-    def blind_recover(self, llrs):
-        """Always `None`, and that is the specified behaviour rather than a gap.
+    def blind_recover(self, llrs, catalogue=None, min_blocks: int = MIN_ID_BLOCKS,
+                      z_min: float = ID_Z_MIN, density_max: float = ID_DENSITY_MAX):
+        """Which catalogue code this stream uses, and where its codewords start
+        - or None.
 
-        Recovering an unknown LDPC parity-check matrix from a noisy soft stream
-        is on the Command Center's *do not build* list on research grounds. A
-        method that returned a plausible-looking H it had not recovered would
-        be worse than this one: it would put a confident wrong answer where an
-        honest refusal belongs.
+        CLOSED-SET IDENTIFICATION, NOT OPEN-SET RECOVERY. The distinction is
+        the whole of the 13 Sep change and it is not a softening of the earlier
+        refusal:
+
+          open-set   recover an ARBITRARY unknown H from a noisy stream. Still
+                     out of scope, still refused, and nothing below attempts
+                     it. There is no reliable published method at the error
+                     rates a real receiver produces, and returning a
+                     plausible-looking H we had not recovered remains the worst
+                     available answer.
+
+          closed-set decide which H out of a known finite list, and at which
+                     bit offset. Decisive, measured, and implemented here.
+
+        This is the same shape as two closed-set searches the project already
+        trusts - the CCSDS symbol interleaver's six legal depths settled by
+        whether RS decodes, and the LTE QPP coefficient table in
+        `s4_recover/pseudorandom.py`. A downlink is overwhelmingly more likely
+        to use a published code than a bespoke one, so "try the list" is not a
+        weaker method, it is the method that fits the problem.
+
+        The statistic is syndrome density on the HARD decisions - see
+        `ldpc_catalogue` for the two populations and the measured separation.
+        Belief propagation is deliberately not used to decide: BP against a
+        wrong H converges to a wrong codeword and then reports a zero syndrome
+        for it, which is exactly the confidently-wrong failure this file's own
+        header warns about. Counting failed checks never changes a bit, so it
+        cannot manufacture agreement.
+
+        Returns a params mapping `decode` accepts as-is (it carries `H` and an
+        exact `offset`), plus the evidence: `code_name`, `provenance`,
+        `syndrome_density`, `z_score` and the runner-up's margin. None means no
+        catalogue entry cleared the threshold, which is a real answer about a
+        finite catalogue and not a claim about every LDPC code in existence.
         """
-        return None
+        bits = llr_to_bits(llrs)
+        if bits.size == 0:
+            return None
+
+        # READS THE INPUT, not a score, and first. Every linear code contains
+        # the zero word, so an all-zero stream scores a perfect syndrome
+        # against the WHOLE catalogue at once - a tie at the ceiling that no
+        # margin test between candidates can break, and a decode that is
+        # genuinely correct for a codeword nobody transmitted. See
+        # ldpc_catalogue's header.
+        degenerate = _degenerate_reason(bits)
+        if degenerate is not None:
+            return None
+
+        if catalogue is None:
+            from .ldpc_catalogue import load_catalogue
+            catalogue = load_catalogue()
+
+        scored = []
+        for entry in catalogue:
+            n = entry.n
+            if bits.size < min_blocks * n:
+                continue                  # not enough bits to be decisive here
+            offset, density, n_checks = _best_offset_by_syndrome(
+                bits, entry.h, min_blocks)
+            if offset is None:
+                continue
+            z = _syndrome_z(density, n_checks)
+            scored.append((z, density, offset, n_checks, entry))
+
+        if not scored:
+            return None
+        scored.sort(key=lambda t: -t[0])
+        z, density, offset, n_checks, entry = scored[0]
+
+        # Both conditions, not either. z alone scales with the number of checks,
+        # so a long capture makes a feeble bias look significant; the density
+        # ceiling is what says "this is a code seen through noise" rather than
+        # "this is a faint correlation measured very precisely". Same reasoning
+        # as STAT_FALLBACK_MAX_IMPLIED_BER in rank_collapse.
+        if z < z_min or density > density_max:
+            return None
+
+        # THE MARGIN, not just the threshold. See ID_RUNNER_UP_RATIO: clearing
+        # the threshold says a code fits, and only beating the runner-up says
+        # which code it is. Applied after the threshold rather than instead of
+        # it, because a catalogue of one has no runner-up and must still be
+        # answerable.
+        runner_up = scored[1][0] if len(scored) > 1 else None
+        if (runner_up is not None and runner_up >= z_min
+                and z < ID_RUNNER_UP_RATIO * runner_up):
+            return None
+        params = dict(entry.as_params())
+        params.update({
+            "offset": int(offset),
+            "syndrome_density": float(density),
+            "z_score": float(z),
+            "checks_tested": int(n_checks),
+            "blocks_tested": int(n_checks // entry.m) if entry.m else 0,
+            "catalogue_size": len(catalogue),
+            "runner_up_z": (float(runner_up) if runner_up is not None else None),
+            "method": "closed-set catalogue identification by syndrome density",
+        })
+        return params
 
     def decode(self, llrs, params: dict) -> np.ndarray:
         """Decode a soft stream against the supplied H and return source bits.

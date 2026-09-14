@@ -34,6 +34,9 @@ class S1Result:
     snr_method: str | None = None
     snr_db_spectral: float | None = None
     snr_db_moment: float | None = None
+    # See check_sampling_rate. Dimensionless, so measured rather than inherited
+    # from whatever fs the file or the caller declared.
+    sampling_check: dict | None = None
 
 
 def compute_psd(iq: np.ndarray, fs: float, nperseg: int = 1024
@@ -266,6 +269,66 @@ def estimate_occupied_bw(iq: np.ndarray, fs: float, power_fraction: float = 0.99
     return float(abs(freqs[hi_idx] - freqs[lo_idx]))
 
 
+def check_sampling_rate(iq: np.ndarray, fs: float) -> dict:
+    """What the samples can say about the sampling rate - and what they cannot.
+
+    THE DECLARED fs CANNOT BE VERIFIED FROM THE SAMPLES, AND THIS DOES NOT TRY.
+    A sample stream is a sequence of numbers; fs is the label on its time axis.
+    Relabel a 200 kHz capture as 400 kHz and every sample is unchanged - symbol
+    rate, bandwidth and CFO all double in Hz and nothing in the data moves.
+    reports/sampling_rate_study.py runs exactly that relabel and every field
+    returned here comes back identical. So "estimate fs from the waveform" has
+    no answer without an external reference (a known symbol rate, a known
+    carrier), and a function that returned one would be inventing it.
+
+    What IS measured, and returned:
+
+      occupied_fraction   99%-signal-power bandwidth / fs, from the same
+                          floor-subtracted PSD `estimate_occupied_bw` uses.
+                          Dimensionless: a property of the samples.
+      oversampling        1 / occupied_fraction.
+      fs_observable       always False. Present so a consumer cannot read the
+                          ratios above as a check on the declared fs.
+
+    AN ALIASING DETECTOR WAS BUILT, MEASURED, AND NOT SHIPPED (13 Sep). The
+    idea: an under-sampled capture wraps, and wrapped energy lands at the band
+    edges, so edge power should flag it. Measured on 42 correctly sampled and
+    12 genuinely under-sampled captures (decimated without an anti-alias
+    filter), it flagged 0 of 12. The mechanism defeats itself: once the
+    spectrum fills the band, the percentile noise floor lands ON the folded
+    skirts and subtracts exactly the energy the test looks for - measured edge
+    power on the aliased arm was 0.00000-0.00531, inside the correctly sampled
+    arm's 0.00005-0.00483. The two populations overlap completely, so there is
+    no threshold, and a detector that says "consistent" on every aliased input
+    is worse than none. Recorded in reports/sampling_rate.md.
+
+    Note the ratio is SNR-sensitive in the way `estimate_occupied_bw` already
+    is: the same QPSK sps=4 waveform measures 0.292 at 20 dB and 0.674 at 5 dB,
+    because the floor estimate rises into the RRC skirts. It is a description of
+    this capture, not a recovered roll-off.
+
+    Every Hz figure downstream is a dimensionless ratio times the declared fs,
+    so the Hz values are exactly as trustworthy as S0's `fs_source`.
+    """
+    freqs, psd_db = compute_psd(iq, fs)
+    psd_lin = 10 ** (psd_db / 10.0)
+    floor_lin = 10 ** (estimate_noise_floor(psd_db) / 10.0)
+    excess = np.clip(psd_lin - floor_lin, 0.0, None)
+    total = float(excess.sum())
+    out = {"occupied_fraction": None, "oversampling": None,
+           "fs_observable": False}
+    if total <= 0.0:
+        return out
+    norm = freqs / fs                                     # cycles per sample
+    cum = np.cumsum(excess) / total
+    lo = int(np.searchsorted(cum, 0.005))
+    hi = min(int(np.searchsorted(cum, 0.995)), len(norm) - 1)
+    occupied = max(float(norm[hi] - norm[max(lo, 0)]), 1.0 / len(norm))
+    out.update(occupied_fraction=round(occupied, 4),
+               oversampling=round(1.0 / occupied, 2))
+    return out
+
+
 def detect_bursts(iq: np.ndarray, fs: float, window: int = 256,
                    high_thresh_db: float = 6.0, low_thresh_db: float = 3.0
                    ) -> list[tuple[int, int]]:
@@ -308,6 +371,7 @@ def detect(iq: np.ndarray, fs: float) -> S1Result:
         occ_bw = estimate_occupied_bw(iq, fs)
         bursts = detect_bursts(iq, fs)
         spec_freqs, spec_times, spec_db = compute_spectrogram(iq, fs)
+        sampling = check_sampling_rate(iq, fs)
         return S1Result(status="ok", fs=fs, snr_db=snr["snr_db"],
                          noise_floor_db=snr["noise_floor_db"],
                          occupied_bw_hz=occ_bw, bursts=bursts,
@@ -316,7 +380,8 @@ def detect(iq: np.ndarray, fs: float) -> S1Result:
                          spec_db=spec_db,
                          snr_method=snr["snr_method"],
                          snr_db_spectral=snr["snr_db_spectral"],
-                         snr_db_moment=snr["snr_db_moment"])
+                         snr_db_moment=snr["snr_db_moment"],
+                         sampling_check=sampling)
     except Exception as e:
         return S1Result(status="failed", fs=fs, snr_db=None,
                          noise_floor_db=None, occupied_bw_hz=None,

@@ -442,11 +442,16 @@ def test_the_ldpc_plugin_is_registered_by_name():
 def test_blind_recovery_of_h_returns_none_rather_than_a_guess():
     """The one behaviour the Command Center specifies by exclusion.
 
-    Blind LDPC parity-check recovery is on its *do not build, ever, this
-    sprint* list on research grounds. A `blind_recover` that returned a
+    OPEN-SET blind LDPC parity-check recovery is on its *do not build, ever,
+    this sprint* list on research grounds. A `blind_recover` that returned a
     plausible-looking H it had not recovered would be the confidently-wrong
-    answer this whole project is built to avoid, so `None` is the correct
-    output and not a missing feature.
+    answer this whole project is built to avoid.
+
+    Since 13 Sep `blind_recover` does return parameters - but only for a
+    closed-set catalogue match (tests/unit/test_ldpc_blind.py). None of these
+    streams is a catalogue codeword stream, so `None` is still the only
+    correct output: a degenerate stream, Gaussian noise, and a ramp too short
+    to score.
     """
     rng = np.random.default_rng(9)
     for stream in (np.zeros(4096), rng.normal(0, 4, 4096), np.arange(64.0)):
