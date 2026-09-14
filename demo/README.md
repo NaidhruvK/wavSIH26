@@ -1,6 +1,6 @@
 # Raaya — the demo, and exactly what it proves
 
-Eight captures, blind, through all seven real stages. **Nothing about any file
+Ten captures, blind, through all seven real stages. **Nothing about any file
 is supplied to the recovery.** The truth JSON beside each capture is read only
 to score the answer afterwards.
 
@@ -40,7 +40,7 @@ it blind, prints the recovered message as text:
 python -m pipeline.s4_recover.cli --demo --text
 ```
 
-## The eight captures, and why these
+## The captures, and why these
 
 | capture | modulation | SNR |
 |---|---|---|
@@ -53,6 +53,7 @@ python -m pipeline.s4_recover.cli --demo --text
 | `qpsk_15dB_2010` | QPSK | 15 dB |
 | `16qam_15dB_2022` | 16-QAM | 15 dB |
 | `qpsk_20dB_textpayload` | QPSK | 20 dB |
+| `qpsk_20dB_asm_telemetry` | QPSK | 20 dB |
 
 All six modulations, plus two lower-SNR captures to show the envelope is not a
 cliff at 20 dB, plus one capture carrying a readable message.
@@ -66,8 +67,8 @@ text, and the panel ends with the sentence on screen:
 > de-interleaved and decoded with no prior knowledge...
 
 99.87 % printable. The single non-printing byte is the leading partial byte,
-where the decode starts mid-message because nothing in this chain does frame
-synchronisation.
+where the decode starts mid-message because this capture carries no sync marker
+for S6 to frame on.
 
 **Say what it proves, and what it does not.** It is a genuine blind recovery -
 the recovery never sees the truth JSON or the message. It is NOT evidence that
@@ -75,6 +76,32 @@ text payloads work in general: the generator offset was swept through the real
 pipeline and 11 of 12 offsets decline at S4. That is the known structured-source
 gap. Do not generate a fresh text capture in front of a panel; see
 `demo/make_text_capture.py` and `demo/experimental/README.md`.
+
+## Framed telemetry — what S6 does, and what it does not
+
+`demo/signals/qpsk_20dB_asm_telemetry.wav` carries CCSDS-style frames: the
+attached sync marker `1ACFFC1D` followed by a 219-byte housekeeping body whose
+sequence counter and readings change every frame. Upload it and the payload
+panel shows **ASM LOCK · 1ACFFC1D**, three markers at a measured 1 784-bit
+(223-byte) spacing, and one frame body per line:
+
+> HK SEQ=00001 BATT=7.37V TEMP=+20.7C MODE=NOMINAL RSSI=-095 …
+> HK SEQ=00002 BATT=7.44V TEMP=+21.4C MODE=NOMINAL RSSI=-100 …
+
+**It is not a lucky offset.** `python demo/make_asm_telemetry_capture.py --sweep`
+runs all 12 generator offsets through the real orchestrator: **12 of 12** reach
+all seven stages ok AND an ASM lock (`reports/asm_framing.md`). Because
+`run_demo.py` scores every WAV in `demo/signals/`, it is also in the gate, scored
+against its truth JSON like the others: 14 Sep, 10 of 10 captures MATCH, 7/7
+stages, 10.0 s for this one.
+
+**Say exactly this about S6:** it is printable-text extraction plus bit-level
+synchronisation on a **known** marker, the CCSDS ASM, in either polarity. It is
+**not** a general frame synchroniser. It does not discover an unknown header,
+and a source that repeats **exactly** — like the text capture's single message —
+still hits the structured-source gap at S4 (1 of 12 offsets), marker or not.
+What the framing study measured is narrower and true: frames whose content
+varies frame to frame recover at every offset.
 
 ## The operating envelope — measured, not claimed
 
@@ -130,9 +157,13 @@ information, because any "code" found in it is an artifact of the repetition).
 **Do not change:** the parameters of `--demo --text`. That demo pins
 `start_offset=0`. A repeating text payload at a non-zero offset defeats the rank
 collapse — measured 1 of 10 offsets, against 10 of 10 for an unstructured
-payload. It is a known and documented gap (STATUS.md, `docs/HANDOFF.md`), it
-fails honestly rather than wrongly, and it is the gap most likely to matter on
-real telemetry, which carries repeating frame headers.
+payload. It is a known and documented gap (STATUS.md, `docs/HANDOFF.md`), and
+it fails honestly rather than wrongly. Measured 14 Sep, it is narrower than
+"repeating headers": a repeating sync marker and repeating field labels with
+content that varies frame to frame recovered at 12 of 12 offsets. What declines
+is a source that repeats EXACTLY (`reports/asm_framing.md`). Real telemetry
+with long static stretches could still sit closer to the exact case, and that
+has not been measured.
 
 ## If it breaks in front of a judge
 

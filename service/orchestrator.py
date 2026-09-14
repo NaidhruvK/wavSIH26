@@ -1158,6 +1158,13 @@ def adapt_s6(raw: Any, elapsed_ms: float) -> StageResult:
         "header_entropy": header_entropy,
         "payload_entropy": payload_entropy,
         "payload_text": payload_text,
+        # CCSDS attached sync marker, searched at bit level (payload.find_asm).
+        # A lock is >= 2 markers at one consistent spacing, so the frame length
+        # is measured, not assumed.
+        "asm_lock": bool(_val("asm_lock", False)),
+        "asm_hits": int(_val("asm_hits", 0) or 0),
+        "asm_bit_offset": _val("asm_bit_offset", None),
+        "asm_frame_bits": _val("asm_frame_bits", None),
     }
     return StageResult(
         stage="s6_frame",

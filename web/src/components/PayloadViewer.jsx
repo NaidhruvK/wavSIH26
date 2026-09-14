@@ -51,6 +51,13 @@ export default function PayloadViewer({ finalPayload, s6Stage }) {
   const printableFraction = finalPayload?.printable_fraction ?? s6Stage?.values?.printable_fraction ?? 0;
   const looksLikeText = finalPayload?.looks_like_text ?? s6Stage?.values?.looks_like_text ?? false;
   const byteCount = s6Stage?.values?.n_bytes || Math.floor((finalPayload?.bits_count || 0) / 8) || text.length;
+  // CCSDS attached sync marker, searched at bit level in S6. A lock means at
+  // least two markers at one consistent spacing, so the frame length shown is
+  // measured from the stream, not configured.
+  const asmLock = Boolean(s6Stage?.values?.asm_lock);
+  const asmHits = s6Stage?.values?.asm_hits ?? 0;
+  const asmFrameBits = s6Stage?.values?.asm_frame_bits;
+  const asmHex = s6Stage?.values?.header_hex || '1ACFFC1D';
 
   if (!text && !s6Stage) return null;
 
@@ -64,8 +71,19 @@ export default function PayloadViewer({ finalPayload, s6Stage }) {
         <span className={`badge badge--${looksLikeText ? 'ok' : 'danger'}`}>
           {looksLikeText ? 'VALID TEXT LOCK' : 'BINARY / RANDOM'}
         </span>
+        {asmLock && (
+          <span className="badge badge--ok" title="CCSDS attached sync marker found at bit level">
+            ASM LOCK · {asmHex}
+          </span>
+        )}
         <MetricPill label="Printable" value={`${(printableFraction * 100).toFixed(1)}%`} tone="accent" />
         <MetricPill label="Size" value={`${byteCount} B`} />
+        {asmLock && (
+          <MetricPill
+            label="Frames"
+            value={`${asmHits} × ${asmFrameBits ? `${asmFrameBits / 8} B` : '?'}`}
+          />
+        )}
       </SectionHeader>
 
       {/* View mode switcher (only meaningful when payload exists) */}
@@ -110,12 +128,20 @@ export default function PayloadViewer({ finalPayload, s6Stage }) {
           : <span style={{ color: 'var(--text-tertiary)' }}>No decoded payload text produced for this run.</span>}
       </div>
 
-      {text && viewMode === 'text' && dropped > 0 && (
+      {text && viewMode === 'text' && dropped > 0 && !asmLock && (
         <p style={{ margin: '8px 2px 0', fontSize: 11, lineHeight: 1.5, color: 'var(--text-tertiary)' }}>
           {dropped === 1 ? 'One leading partial byte' : `${dropped} leading partial bytes`} omitted from
-          this view. The decode starts mid-message because no stage in this chain performs frame
-          synchronisation. Switch to <strong>HEX DUMP</strong> for the stream exactly as decoded — the
+          this view. The decode starts mid-message because this capture carries no sync marker for S6
+          to frame on. Switch to <strong>HEX DUMP</strong> for the stream exactly as decoded — the
           printable percentage above counts it.
+        </p>
+      )}
+      {asmLock && (
+        <p style={{ margin: '8px 2px 0', fontSize: 11, lineHeight: 1.5, color: 'var(--text-tertiary)' }}>
+          Framed on the CCSDS attached sync marker: {asmHits} markers every{' '}
+          {asmFrameBits ? `${asmFrameBits} bits` : '—'}, found at bit level in the decoded stream. The view
+          starts at the first marker. This is sync on a <strong>known</strong> marker, not discovery of
+          an unknown frame header.
         </p>
       )}
     </section>
