@@ -105,5 +105,5 @@ live.
 | 14 Sep | Claude (API upload, same file) | 7/7 ok, 16.5 s, sentence present | declined as above, 13.9 s | 23.8 s, TEXT RECOVERED | not runnable: no image, tag predates capture |
 | 14 Sep | Claude (API upload) | framed telemetry: 7/7 ok, 12.4 s, ASM LOCK, 3 frames | | | |
 | 14 Sep | API rehearsal, this laptop, card from the top (`/analyze`, **not a human**, UI served but not clicked): pull at 4ea64d9, install+build 46 s, :8000 healthy in 15 s, warm-up 16.7 s | 12.4 s, 7/7, S4 block 8×12 K=7 0o171/0o133, 99.9 % printable, sentence present | 17.2 s (card says ~14 s), S4 low confidence → S5, S6 declined; refusal line written before the run matched the outcome | 20.1 s, TEXT RECOVERED | not run (CLI is the backup) |
-| | **person 1** — this laptop, browser click, refusal said out loud | | | | |
+| 14 Sep | **person 1 — nehal**, this laptop, browser click (refusal line said aloud: not confirmed in the report) | **12.62 s**, repeat upload, 7/7 ok (`run_d136143f672e` screens): S3 QPSK, S4 block 8×12 period 96 0o171/0o133, S6 99.9 % printable, sentence visible. Rate 1/2 and K=7 are not shown on the S4 card | **14.50 s**, S0–S3 ok, S4 LOW CONF (period-only), S5 and S6 FAILED (`run_39a874954c5d` screens) | **20.77 s**, TEXT RECOVERED | not run (CLI is the backup) |
 | | **person 2** — other machine, fresh clone | | | | |
