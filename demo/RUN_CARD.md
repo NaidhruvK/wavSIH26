@@ -9,9 +9,15 @@ One page. Two people should be able to run this without opening any generator.
 
 ```powershell
 cd C:\dev\raaya
+git pull                                            # must be at 345428e or later
+cd web; npm install; npm run build; cd ..           # REQUIRED: web/dist is not in git
 .venv\Scripts\python -m service.cli run            # serves API + UI on :8000
 ```
 
+0. **Why the build step is not optional:** `web/dist` is gitignored, and the server
+   serves the UI only if that folder exists. Skip it on a fresh clone and :8000
+   has no UI. Skip it on an old checkout and the UI lacks the score fix and the
+   ASM badge.
 1. Open **http://localhost:8000** and check the header shows the service as healthy.
 2. **Warm it once.** Upload `demo\signals\qpsk_20dB_textpayload.wav` and let it
    finish. Server start compiles the GF(2) kernels, and the first run warms the
