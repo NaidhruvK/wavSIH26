@@ -109,6 +109,23 @@ class S4Verdict(unittest.TestCase):
         self.assertIs(values["permutation_recovered"], False)
         self.assertEqual(values["key_space_bits"], 498.3)
 
+    def test_the_s4_card_shows_rate_and_k(self):
+        """StageCard renders the first six values. The hand rehearsal found rate
+        and K were 8th and 9th, so the recovered code was not on the card."""
+        intl = SimpleNamespace(family="block", params={"depth": 8, "width": 12})
+        code = SimpleNamespace(n=2, memory=6)
+        raw = self._raw(status="ok", interleaver=intl, code=code, generators_octal=(121, 91))
+        first_six = list(adapt_s4(raw, 1.0, "r").values)[:6]
+        self.assertEqual(first_six, ["period", "interleaver_family", "code_rate", "K",
+                                     "generators_octal", "interleaver_verdict"])
+
+    def test_the_refusal_card_still_shows_the_verdict(self):
+        v = {"verdict": "period-only", "period_structure": True,
+             "permutation_recovered": False}
+        first_six = list(adapt_s4(self._raw(interleaver_verdict=v), 1.0, "r").values)[:6]
+        self.assertIn("interleaver_verdict", first_six)
+        self.assertEqual(first_six[0], "period")
+
     def test_a_recovery_says_inverted(self):
         intl = SimpleNamespace(family="qpp", params={"period": 96, "f1": 11, "f2": 24})
         values = adapt_s4(self._raw(status="ok", interleaver=intl), 1.0, "r").values

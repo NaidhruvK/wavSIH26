@@ -985,6 +985,22 @@ def adapt_s4(raw: Any, elapsed_ms: float, run_id: str) -> StageResult:
         values["permutation_recovered"] = True
         values["period_structure"] = True
 
+    # ORDER IS WHAT THE STAGE CARD SHOWS. StageCard renders only the first six
+    # values, and code_rate and K were 8th and 9th, so the card showed period,
+    # offset, generators, method, inferred BER and family - and hid the rate and
+    # constraint length S4 had just recovered. Found in the 14 Sep hand rehearsal:
+    # the run card told the presenter to point at "rate 1/2, K = 7" on S4 and
+    # neither was on screen.
+    #
+    # The recovery reads first: period, family, rate, K, generators, verdict. On a
+    # refusal code_rate, K and family are absent, so the verdict still lands inside
+    # the six - it is the line that explains the refusal. Every key stays in the
+    # mapping; only the order changes, so the API and report are unaffected.
+    card_first = ("period", "interleaver_family", "code_rate", "K",
+                  "generators_octal", "interleaver_verdict", "interleaver_params")
+    values = {**{k: values[k] for k in card_first if k in values},
+              **{k: v for k, v in values.items() if k not in card_first}}
+
     hyps: list[Hypothesis] = []
     for h in getattr(raw, "hypotheses", []):
         name = f"{getattr(h, 'family', '')}_{getattr(h, 'params', {})}"
